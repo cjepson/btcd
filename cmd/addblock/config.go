@@ -1,4 +1,4 @@
-// Copyright (c) 2013-2014 The btcsuite developers
+// Copyright (c) 2013-2016 The btcsuite developers
 // Copyright (c) 2015 The Decred developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 
+	database "github.com/decred/dcrd/database2"
+	_ "github.com/decred/dcrd/database2/ffldb"
 	flags "github.com/btcsuite/go-flags"
 	"github.com/decred/dcrd/chaincfg"
 	"github.com/decred/dcrd/database"
@@ -19,7 +21,7 @@ import (
 )
 
 const (
-	defaultDbType   = "leveldb"
+	defaultDbType   = "ffldb"
 	defaultDataFile = "bootstrap.dat"
 	defaultProgress = 10
 )
@@ -27,7 +29,7 @@ const (
 var (
 	dcrdHomeDir     = dcrutil.AppDataDir("dcrd", false)
 	defaultDataDir  = filepath.Join(dcrdHomeDir, "data")
-	knownDbTypes    = database.SupportedDBs()
+	knownDbTypes    = database.SupportedDrivers()
 	activeNetParams = &chaincfg.MainNetParams
 )
 

@@ -29,7 +29,7 @@ import (
 
 const (
 	// mempoolHeight is the height used for the "block" height field of the
-	// contextual transaction information provided in a transaction store.
+	// contextual transaction information provided in a transaction view.
 	mempoolHeight = 0x7fffffff
 
 	// minTicketFee is the minimum fee per KB in atoms that is required for
@@ -85,25 +85,23 @@ type mempoolConfig struct {
 	// associated with.
 	ChainParams *chaincfg.Params
 
-	// EnableAddrIndex defines whether the address index should be enabled.
-	EnableAddrIndex bool
-
-	// FetchTransactionStore defines the function to use to fetch
-	// transacation information.
-	FetchTransactionStore func(*dcrutil.Tx, bool, bool) (blockchain.TxStore, error)
-
-	// NewestSha defines the function to retrieve the newest sha.
-	NewestSha func() (*chainhash.Hash, int64, error)
 
 	// NextStakeDifficulty defines the function to retrieve the stake
 	// difficulty for the block after the current best block.
 	//
 	// This function must be safe for concurrent access.
 	NextStakeDifficulty func() (int64, error)
-
 	// Policy defines the various mempool configuration options related
 	// to policy.
 	Policy mempoolPolicy
+
+	// FetchUtxoView defines the function to use to fetch unspent
+	// transaction output information.
+	FetchUtxoView func(*btcutil.Tx) (*blockchain.UtxoViewpoint, error)
+
+	// Chain defines the concurrent safe block chain instance which houses
+	// the current best chain.
+	Chain *blockchain.BlockChain
 
 	// SigCache defines a signature cache to use.
 	SigCache *txscript.SigCache
@@ -669,10 +667,10 @@ func (mp *txMemPool) removeTransaction(tx *dcrutil.Tx, removeRedeemers bool) {
 	}
 }
 
-// RemoveTransaction removes the passed transaction from the mempool. If
+// RemoveTransaction removes the passed transaction from the mempool. When the
 // removeRedeemers flag is set, any transactions that redeem outputs from the
 // removed transaction will also be removed recursively from the mempool, as
-// they would otherwise become orphan.
+// they would otherwise become orphans.
 //
 // This function is safe for concurrent access.
 func (mp *txMemPool) RemoveTransaction(tx *dcrutil.Tx, removeRedeemers bool) {
@@ -709,7 +707,7 @@ func (mp *txMemPool) RemoveDoubleSpends(tx *dcrutil.Tx) {
 // helper for maybeAcceptTransaction.
 //
 // This function MUST be called with the mempool lock held (for writes).
-func (mp *txMemPool) addTransaction(txStore blockchain.TxStore, tx *dcrutil.Tx,
+func (mp *txMemPool) addTransaction(utxoView *blockchain.UtxoViewpoint, tx *dcrutil.Tx, txType stake.TxType, height int64, fee int64) {
 	txType stake.TxType, height, fee int64) {
 
 	// Add the transaction to the pool and mark the referenced outpoints
@@ -722,7 +720,7 @@ func (mp *txMemPool) addTransaction(txStore blockchain.TxStore, tx *dcrutil.Tx,
 			Height: height,
 			Fee:    fee,
 		},
-		StartingPriority: calcPriority(tx.MsgTx(), txStore, height),
+		StartingPriority: calcPriority(tx.MsgTx(), utxoView, height),
 	}
 	for _, txIn := range tx.MsgTx().TxIn {
 		mp.outpoints[txIn.PreviousOutPoint] = tx
@@ -756,29 +754,6 @@ func (mp *txMemPool) addTransactionToAddrIndex(tx *dcrutil.Tx,
 	return nil
 }
 
-// fetchReferencedOutputScripts looks up and returns all the scriptPubKeys
-// referenced by inputs of the passed transaction.
-//
-// This function MUST be called with the mempool lock held (for reads).
-func (mp *txMemPool) fetchReferencedOutputScripts(tx *dcrutil.Tx) ([][]byte,
-	error) {
-	txStore, err := mp.fetchInputTransactions(tx, false)
-	if err != nil || len(txStore) == 0 {
-		return nil, err
-	}
-
-	previousOutScripts := make([][]byte, 0, len(tx.MsgTx().TxIn))
-	for _, txIn := range tx.MsgTx().TxIn {
-		outPoint := txIn.PreviousOutPoint
-		if txStore[outPoint.Hash].Err == nil {
-			referencedOutPoint :=
-				txStore[outPoint.Hash].Tx.MsgTx().TxOut[outPoint.Index]
-			previousOutScripts =
-				append(previousOutScripts, referencedOutPoint.PkScript)
-		}
-	}
-	return previousOutScripts, nil
-}
 
 // indexScriptByAddress alters our address index by indexing the payment address
 // encoded by the passed scriptPubKey to the passed transaction.
@@ -809,7 +784,7 @@ func (mp *txMemPool) indexScriptAddressToTx(pkVersion uint16, pkScript []byte,
 
 	for _, addr := range addresses {
 		if mp.addrindex[addr.EncodeAddress()] == nil {
-			mp.addrindex[addr.EncodeAddress()] = make(map[chainhash.Hash]struct{})
+			mp.addrindex[addr.EncodeAddress()] = make(map[wire.ShaHash]struct{})
 		}
 		mp.addrindex[addr.EncodeAddress()][*tx.Sha()] = struct{}{}
 	}
@@ -972,13 +947,14 @@ func (mp *txMemPool) IsTxTreeValid(best *chainhash.Hash) bool {
 	return isValid
 }
 
-// fetchInputTransactions fetches the input transactions referenced by the
-// passed transaction.  First, it fetches from the main chain, then it tries to
-// fetch any missing inputs from the transaction pool.
+// fetchInputUtxos loads utxo details about the input transactions referenced by
+// the passed transaction.  First, it loads the details form the viewpoint of
+// the main chain, then it adjusts them based upon the contents of the
+// transaction pool.
 //
 // This function MUST be called with the mempool lock held (for reads).
-func (mp *txMemPool) fetchInputTransactions(tx *dcrutil.Tx, includeSpent bool) (blockchain.TxStore,
-	error) {
+func (mp *txMemPool) fetchInputUtxos(tx *btcutil.Tx) (*blockchain.UtxoViewpoint, error) {
+	utxoView, err := mp.cfg.FetchUtxoView(tx)
 
 	newestHash, _, err := mp.cfg.NewestSha()
 	if err != nil {
@@ -991,20 +967,17 @@ func (mp *txMemPool) fetchInputTransactions(tx *dcrutil.Tx, includeSpent bool) (
 	}
 
 	// Attempt to populate any missing inputs from the transaction pool.
-	for _, txD := range txStore {
-		if txD.Err == database.ErrTxShaMissing || txD.Tx == nil {
-			if poolTxDesc, exists := mp.pool[*txD.Hash]; exists {
-				poolTx := poolTxDesc.Tx
-				txD.Tx = poolTx
-				txD.BlockHeight = mempoolHeight
+	for originHash, entry := range utxoView.Entries() {
+		if entry != nil && !entry.IsFullySpent() {
+			continue
 				txD.BlockIndex = wire.NullBlockIndex
-				txD.Spent = make([]bool, len(poolTx.MsgTx().TxOut))
-				txD.Err = nil
-			}
+		}
+
+		if poolTxDesc, exists := mp.pool[originHash]; exists {
+			utxoView.AddTxOuts(poolTxDesc.Tx, mempoolHeight)
 		}
 	}
-
-	return txStore, nil
+	return utxoView, nil
 }
 
 // FetchTransaction returns the requested transaction from the transaction pool.
@@ -1025,27 +998,6 @@ func (mp *txMemPool) FetchTransaction(txHash *chainhash.Hash) (*dcrutil.Tx,
 	return nil, fmt.Errorf("transaction is not in the pool")
 }
 
-// FilterTransactionsByAddress returns all transactions currently in the
-// mempool that either create an output to the passed address or spend a
-// previously created output to the address.
-func (mp *txMemPool) FilterTransactionsByAddress(
-	addr dcrutil.Address) ([]*dcrutil.Tx, error) {
-	// Protect concurrent access.
-	mp.RLock()
-	defer mp.RUnlock()
-
-	if txs, exists := mp.addrindex[addr.EncodeAddress()]; exists {
-		addressTxs := make([]*dcrutil.Tx, 0, len(txs))
-		for txHash := range txs {
-			if txD, exists := mp.pool[txHash]; exists {
-				addressTxs = append(addressTxs, txD.Tx)
-			}
-		}
-		return addressTxs, nil
-	}
-
-	return nil, fmt.Errorf("address does not have any transactions in the pool")
-}
 
 // maybeAcceptTransaction is the internal function which implements the public
 // MaybeAcceptTransaction.  See the comment for MaybeAcceptTransaction for
@@ -1098,15 +1050,10 @@ func (mp *txMemPool) maybeAcceptTransaction(tx *dcrutil.Tx, isNew,
 	}
 
 	// Get the current height of the main chain.  A standalone transaction
-	// will be mined into the next block at best, so it's height is at least
+	// will be mined into the next block at best, so its height is at least
 	// one more than the current height.
-	_, curHeight, err := mp.cfg.NewestSha()
-	if err != nil {
-		// This is an unexpected error so don't turn it into a rule
-		// error.
-		return nil, err
-	}
-	nextBlockHeight := curHeight + 1
+	best := mp.cfg.Chain.BestSnapshot()
+	nextBlockHeight := best.Height + 1
 
 	// Determine what type of transaction we're dealing with (regular or stake).
 	// Then, be sure to set the tx tree correctly as it's possible a use submitted
@@ -1211,21 +1158,13 @@ func (mp *txMemPool) maybeAcceptTransaction(tx *dcrutil.Tx, isNew,
 			return nil, err
 		}
 
-		if (int64(voteHeight) < curHeight-maximumVoteAgeDelta) &&
-			!cfg.AllowOldVotes {
-			str := fmt.Sprintf("transaction %v votes on old "+
-				"block height of %v which is before the "+
-				"current cutoff height of %v",
-				tx.Sha(), voteHeight, curHeight-maximumVoteAgeDelta)
-			return nil, txRuleError(wire.RejectNonstandard, str)
-		}
-	}
+	// Fetch all of the unspent transaction outputs referenced by the inputs
+	// to this transaction.  This function also attempts to fetch the
+	// transaction itself to be used for detecting a duplicate transaction
+	// without needing to do a separate lookup.
+	utxoView, err := mp.fetchInputUtxos(tx)
 
-	// Fetch all of the transactions referenced by the inputs to this
-	// transaction.  This function also attempts to fetch the transaction
-	// itself to be used for detecting a duplicate transaction without
-	// needing to do a separate lookup.
-	txStore, err := mp.fetchInputTransactions(tx, false)
+
 	if err != nil {
 		if cerr, ok := err.(blockchain.RuleError); ok {
 			return nil, chainRuleError(cerr)
@@ -1235,21 +1174,23 @@ func (mp *txMemPool) maybeAcceptTransaction(tx *dcrutil.Tx, isNew,
 
 	// Don't allow the transaction if it exists in the main chain and is not
 	// not already fully spent.
-	if txD, exists := txStore[*txHash]; exists && txD.Err == nil {
-		for _, isOutputSpent := range txD.Spent {
-			if !isOutputSpent {
-				return nil, txRuleError(wire.RejectDuplicate,
-					"transaction already exists")
-			}
-		}
+	txEntry := utxoView.LookupEntry(txHash)
+	if txEntry != nil && !txEntry.IsFullySpent() {
+		return nil, txRuleError(wire.RejectDuplicate,
+			"transaction already exists")
 	}
-	delete(txStore, *txHash)
+	delete(utxoView.Entries(), *txHash)
 
 	// Transaction is an orphan if any of the inputs don't exist.
 	var missingParents []*chainhash.Hash
-	for _, txD := range txStore {
-		if txD.Err == database.ErrTxShaMissing {
-			missingParents = append(missingParents, txD.Hash)
+	for originHash, entry := range utxoView.Entries() {
+		if entry == nil || entry.IsFullySpent() {
+			// Must make a copy of the hash here since the iterator
+			// is replaced and taking its address directly would
+			// result in all of the entries pointing to the same
+			// memory location and thus all be the final hash.
+			hashCopy := originHash
+			missingParents = append(missingParents, &hashCopy)
 		}
 	}
 
@@ -1261,9 +1202,9 @@ func (mp *txMemPool) maybeAcceptTransaction(tx *dcrutil.Tx, isNew,
 	// rules in chain for what transactions are allowed into blocks.
 	// Also returns the fees associated with the transaction which will be
 	// used later.
-	txFee, err := blockchain.CheckTransactionInputs(tx,
+	txFee, err := blockchain.CheckTransactionInputs(tx, 
 		nextBlockHeight,
-		txStore,
+		utxoView,
 		false, // Don't check fraud proof; filled in by miner
 		mp.cfg.ChainParams)
 	if err != nil {
@@ -1276,7 +1217,7 @@ func (mp *txMemPool) maybeAcceptTransaction(tx *dcrutil.Tx, isNew,
 	// Don't allow transactions with non-standard inputs if the network
 	// parameters forbid their relaying.
 	if !activeNetParams.RelayNonStdTxs {
-		err := checkInputsStandard(tx, txType, txStore)
+		err := checkInputsStandard(tx, txType, utxoView)
 		if err != nil {
 			// Attempt to extract a reject code from the error so
 			// it can be retained.  When not possible, fall back to
@@ -1300,8 +1241,7 @@ func (mp *txMemPool) maybeAcceptTransaction(tx *dcrutil.Tx, isNew,
 	// the coinbase address itself can contain signature operations, the
 	// maximum allowed signature operations per transaction is less than
 	// the maximum allowed signature operations per block.
-	numSigOps, err := blockchain.CountP2SHSigOps(tx, false,
-		(txType == stake.TxTypeSSGen), txStore)
+	numSigOps, err := blockchain.CountP2SHSigOps(tx, false,(txType == stake.TxTypeSSGen), utxoView)
 	if err != nil {
 		if cerr, ok := err.(blockchain.RuleError); ok {
 			return nil, chainRuleError(cerr)
@@ -1349,7 +1289,7 @@ func (mp *txMemPool) maybeAcceptTransaction(tx *dcrutil.Tx, isNew,
 	if isNew && !mp.cfg.Policy.DisableRelayPriority && txFee < minFee &&
 		txType == stake.TxTypeRegular {
 
-		currentPriority := calcPriority(tx.MsgTx(), txStore,
+		currentPriority := calcPriority(tx.MsgTx(), utxoView,
 			nextBlockHeight)
 		if currentPriority <= minHighPriority {
 			str := fmt.Sprintf("transaction %v has insufficient "+
@@ -1414,7 +1354,7 @@ func (mp *txMemPool) maybeAcceptTransaction(tx *dcrutil.Tx, isNew,
 
 	// Verify crypto signatures for each input and reject the transaction if
 	// any don't verify.
-	err = blockchain.ValidateTransactionScripts(tx, txStore,
+	err = blockchain.ValidateTransactionScripts(tx, utxoView,
 		txscript.StandardVerifyFlags, mp.cfg.SigCache)
 	if err != nil {
 		if cerr, ok := err.(blockchain.RuleError); ok {
@@ -1424,7 +1364,7 @@ func (mp *txMemPool) maybeAcceptTransaction(tx *dcrutil.Tx, isNew,
 	}
 
 	// Add to transaction pool.
-	mp.addTransaction(txStore, tx, txType, curHeight, txFee)
+	mp.addTransaction(utxoView, tx, txType, best.Height, txFee)
 
 	// If it's an SSGen (vote), insert it into the list of
 	// votes.

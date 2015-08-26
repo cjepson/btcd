@@ -1,4 +1,4 @@
-// Copyright (c) 2013-2015 The btcsuite developers
+// Copyright (c) 2013-2016 The btcsuite developers
 // Copyright (c) 2015 The Decred developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
@@ -182,6 +182,8 @@ func (b *BlockChain) checkBlockContext(block *dcrutil.Block, prevNode *blockNode
 //    notification will be sent since the block is not being accepted.
 func (b *BlockChain) maybeAcceptBlock(block *dcrutil.Block,
 	flags BehaviorFlags) (bool, error) {
+//
+// This function MUST be called with the chain state lock held (for writes).
 	dryRun := flags&BFDryRun == BFDryRun
 
 	// Get a block node for the block previous to this one.  Will be nil
@@ -247,8 +249,10 @@ func (b *BlockChain) maybeAcceptBlock(block *dcrutil.Block,
 	// chain.  The caller would typically want to react by relaying the
 	// inventory to other peers.
 	if !dryRun {
+		b.chainLock.Unlock()
 		b.sendNotification(NTBlockAccepted,
 			&BlockAcceptedNtfnsData{onMainChain, block})
+		b.chainLock.Lock()
 	}
 
 	return onMainChain, nil

@@ -1,4 +1,4 @@
-// Copyright (c) 2013-2014 The btcsuite developers
+// Copyright (c) 2013-2016 The btcsuite developers
 // Copyright (c) 2015 The Decred developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
@@ -132,7 +132,7 @@ func dcrdMain(serverChan chan<- *server) error {
 	// Ensure the databases are sync'd and closed on Ctrl+C.
 	addInterruptHandler(func() {
 		dcrdLog.Infof("Gracefully shutting down the database...")
-		db.RollbackClose()
+		db.Close()
 	})
 
 	// Create server and start it.

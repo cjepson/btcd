@@ -1,4 +1,4 @@
-// Copyright (c) 2013-2014 The btcsuite developers
+// Copyright (c) 2013-2016 The btcsuite developers
 // Copyright (c) 2015 The Decred developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
@@ -66,13 +66,7 @@ func TestBlockValidationRules(t *testing.T) {
 	}
 	defer teardownFunc()
 
-	err = chain.GenerateInitialIndex()
-	if err != nil {
-		t.Errorf("GenerateInitialIndex: %v", err)
-	}
-
-	// The genesis block should fail to connect since it's already
-	// inserted.
+	// The genesis block should fail to connect since it's already inserted.
 	genesisBlock := simNetParams.GenesisBlock
 	err = chain.CheckConnectBlock(dcrutil.NewBlock(genesisBlock))
 	if err == nil {

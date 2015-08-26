@@ -1,4 +1,4 @@
-// Copyright (c) 2013-2015 The btcsuite developers
+// Copyright (c) 2013-2016 The btcsuite developers
 // Copyright (c) 2015-2016 The Decred developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
@@ -30,6 +30,7 @@ import (
 	"sync/atomic"
 	"time"
 
+
 	"github.com/btcsuite/fastsha256"
 	"github.com/btcsuite/websocket"
 
@@ -45,6 +46,7 @@ import (
 	"github.com/decred/dcrd/mining"
 	"github.com/decred/dcrd/txscript"
 	"github.com/decred/dcrd/wire"
+	database "github.com/decred/dcrd/database2"
 
 	"github.com/decred/dcrutil"
 )
@@ -166,14 +168,14 @@ type commandHandler func(*rpcServer, interface{}, <-chan struct{}) (interface{},
 // a dependency loop.
 var rpcHandlers map[string]commandHandler
 var rpcHandlersBeforeInit = map[string]commandHandler{
-	"addnode":               handleAddNode,
+	"addnode":              handleAddNode,
 	"createrawsstx":         handleCreateRawSStx,
 	"createrawssgentx":      handleCreateRawSSGenTx,
 	"createrawssrtx":        handleCreateRawSSRtx,
-	"createrawtransaction":  handleCreateRawTransaction,
-	"debuglevel":            handleDebugLevel,
-	"decoderawtransaction":  handleDecodeRawTransaction,
-	"decodescript":          handleDecodeScript,
+	"createrawtransaction": handleCreateRawTransaction,
+	"debuglevel":           handleDebugLevel,
+	"decoderawtransaction": handleDecodeRawTransaction,
+	"decodescript":         handleDecodeScript,
 	"estimatefee":           handleEstimateFee,
 	"estimatestakediff":     handleEstimateStakeDiff,
 	"existsaddress":         handleExistsAddress,
@@ -181,52 +183,51 @@ var rpcHandlersBeforeInit = map[string]commandHandler{
 	"existsliveticket":      handleExistsLiveTicket,
 	"existslivetickets":     handleExistsLiveTickets,
 	"existsmempooltxs":      handleExistsMempoolTxs,
-	"generate":              handleGenerate,
-	"getaddednodeinfo":      handleGetAddedNodeInfo,
-	"getbestblock":          handleGetBestBlock,
-	"getbestblockhash":      handleGetBestBlockHash,
-	"getblock":              handleGetBlock,
-	"getblockcount":         handleGetBlockCount,
-	"getblockhash":          handleGetBlockHash,
-	"getblockheader":        handleGetBlockHeader,
-	"getblocktemplate":      handleGetBlockTemplate,
+	"generate":             handleGenerate,
+	"getaddednodeinfo":     handleGetAddedNodeInfo,
+	"getbestblock":         handleGetBestBlock,
+	"getbestblockhash":     handleGetBestBlockHash,
+	"getblock":             handleGetBlock,
+	"getblockcount":        handleGetBlockCount,
+	"getblockhash":         handleGetBlockHash,
+	"getblockheader":       handleGetBlockHeader,
+	"getblocktemplate":     handleGetBlockTemplate,
 	"getcoinsupply":         handleGetCoinSupply,
-	"getconnectioncount":    handleGetConnectionCount,
-	"getcurrentnet":         handleGetCurrentNet,
-	"getdifficulty":         handleGetDifficulty,
-	"getgenerate":           handleGetGenerate,
-	"gethashespersec":       handleGetHashesPerSec,
-	"getinfo":               handleGetInfo,
-	"getmempoolinfo":        handleGetMempoolInfo,
-	"getmininginfo":         handleGetMiningInfo,
-	"getnettotals":          handleGetNetTotals,
-	"getnetworkhashps":      handleGetNetworkHashPS,
-	"getpeerinfo":           handleGetPeerInfo,
-	"getrawmempool":         handleGetRawMempool,
-	"getrawtransaction":     handleGetRawTransaction,
+	"getconnectioncount":   handleGetConnectionCount,
+	"getcurrentnet":        handleGetCurrentNet,
+	"getdifficulty":        handleGetDifficulty,
+	"getgenerate":          handleGetGenerate,
+	"gethashespersec":      handleGetHashesPerSec,
+	"getinfo":              handleGetInfo,
+	"getmempoolinfo":       handleGetMempoolInfo,
+	"getmininginfo":        handleGetMiningInfo,
+	"getnettotals":         handleGetNetTotals,
+	"getnetworkhashps":     handleGetNetworkHashPS,
+	"getpeerinfo":          handleGetPeerInfo,
+	"getrawmempool":        handleGetRawMempool,
+	"getrawtransaction":    handleGetRawTransaction,
 	"getstakedifficulty":    handleGetStakeDifficulty,
 	"getticketpoolvalue":    handleGetTicketPoolValue,
-	"gettxout":              handleGetTxOut,
-	"getwork":               handleGetWork,
-	"help":                  handleHelp,
+	"gettxout":             handleGetTxOut,
+	"getwork":              handleGetWork,
+	"help":                 handleHelp,
 	"livetickets":           handleLiveTickets,
 	"missedtickets":         handleMissedTickets,
-	"node":                  handleNode,
-	"ping":                  handlePing,
+	"node":                 handleNode,
+	"ping":                 handlePing,
 	"rebroadcastmissed":     handleRebroadcastMissed,
 	"rebroadcastwinners":    handleRebroadcastWinners,
-	"searchrawtransactions": handleSearchRawTransactions,
-	"sendrawtransaction":    handleSendRawTransaction,
-	"setgenerate":           handleSetGenerate,
-	"stop":                  handleStop,
-	"submitblock":           handleSubmitBlock,
+	"sendrawtransaction":   handleSendRawTransaction,
+	"setgenerate":          handleSetGenerate,
+	"stop":                 handleStop,
+	"submitblock":          handleSubmitBlock,
 	"ticketfeeinfo":         handleTicketFeeInfo,
 	"ticketsforaddress":     handleTicketsForAddress,
 	"ticketvwap":            handleTicketVWAP,
 	"txfeeinfo":             handleTxFeeInfo,
-	"validateaddress":       handleValidateAddress,
-	"verifychain":           handleVerifyChain,
-	"verifymessage":         handleVerifyMessage,
+	"validateaddress":      handleValidateAddress,
+	"verifychain":          handleVerifyChain,
+	"verifymessage":        handleVerifyMessage,
 }
 
 // list of commands that we recognize, but for which dcrd has no support because
@@ -289,10 +290,12 @@ var rpcAskWallet = map[string]struct{}{
 
 // Commands that are currently unimplemented, but should ultimately be.
 var rpcUnimplemented = map[string]struct{}{
-	"estimatepriority":  {},
-	"getblockchaininfo": {},
-	"getchaintips":      {},
-	"getnetworkinfo":    {},
+	"estimatefee":           {},
+	"estimatepriority":      {},
+	"getblockchaininfo":     {},
+	"getchaintips":          {},
+	"getnetworkinfo":        {},
+	"searchrawtransactions": {},
 }
 
 // Commands that are available to a limited user
@@ -2197,33 +2200,18 @@ func handleGetBestBlock(s *rpcServer, cmd interface{}, closeChan <-chan struct{}
 	// All other "get block" commands give either the height, the
 	// hash, or both but require the block SHA.  This gets both for
 	// the best block.
-	sha, height, err := s.server.db.NewestSha()
-	if err != nil {
-		return nil, &dcrjson.RPCError{
-			Code:    dcrjson.ErrRPCBestBlockHash,
-			Message: "Error getting best block hash",
-		}
-	}
-
+	best := s.chain.BestSnapshot()
 	result := &dcrjson.GetBestBlockResult{
-		Hash:   sha.String(),
-		Height: int32(height),
+		Hash:   best.Hash.String(),
+		Height: best.Height,
 	}
 	return result, nil
 }
 
 // handleGetBestBlockHash implements the getbestblockhash command.
 func handleGetBestBlockHash(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
-	sha, _, err := s.server.db.NewestSha()
-	if err != nil {
-		rpcsLog.Errorf("Error getting newest sha: %v", err)
-		return nil, &dcrjson.RPCError{
-			Code:    dcrjson.ErrRPCBestBlockHash,
-			Message: "Error getting best block hash",
-		}
-	}
-
-	return sha.String(), nil
+	best := s.chain.BestSnapshot()
+	return best.Hash.String(), nil
 }
 
 // getDifficultyRatio returns the proof-of-work difficulty as a multiple of the
@@ -2250,12 +2238,17 @@ func getDifficultyRatio(bits uint32) float64 {
 func handleGetBlock(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	c := cmd.(*dcrjson.GetBlockCmd)
 
+	// Load the raw block bytes from the database.
 	sha, err := chainhash.NewHashFromStr(c.Hash)
 	if err != nil {
 		return nil, rpcDecodeHexError(c.Hash)
 	}
-
-	blk, err := s.server.blockManager.GetBlockFromHash(*sha)
+	var blkBytes []byte
+	err = s.server.db.View(func(dbTx database.Tx) error {
+		var err error
+		blkBytes, err = dbTx.FetchBlock(hash)
+		return err
+	})
 	if err != nil {
 		return nil, &dcrjson.RPCError{
 			Code:    dcrjson.ErrRPCBlockNotFound,
@@ -2263,40 +2256,46 @@ func handleGetBlock(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (i
 		}
 	}
 
+	// DECRED TODO CJ how to check if block in main chain??
 	blockInMainChain := false
-	_, err = s.server.db.FetchBlockBySha(sha)
-	if err == nil {
-		blockInMainChain = true
-	}
 
 	// When the verbose flag isn't set, simply return the network-serialized
 	// block as a hex-encoded string.
 	if c.Verbose != nil && !*c.Verbose {
-		// Note that this is intentionally not directly returning
-		// because the first return value is a string and it would
-		// result in returning an empty string to the client instead of
-		// nothing (nil) in the case of an error.
-		blkHex, err := messageToHex(blk.MsgBlock())
-		if err != nil {
-			return nil, err
-		}
-		return blkHex, nil
+		return hex.EncodeToString(blkBytes), nil
 	}
 
 	// The verbose flag is set, so generate the JSON object and return it.
-	buf, err := blk.Bytes()
+
+	// Deserialize the block.
+	blk, err := btcutil.NewBlockFromBytes(blkBytes)
 	if err != nil {
-		context := "Failed to get block bytes"
+		context := "Failed to deserialize block"
 		return nil, internalRPCError(err.Error(), context)
 	}
-	idx := blk.Height()
+
 	if !blockInMainChain {
 		idx = -1
 	}
-	_, maxIdx, err := s.server.db.NewestSha()
+	
+	// Get the block height from chain.
+	blockHeight, err := s.chain.BlockHeightByHash(hash)
 	if err != nil {
-		context := "Failed to get newest hash"
+		context := "Failed to obtain block height"
 		return nil, internalRPCError(err.Error(), context)
+	}
+	blk.SetHeight(blockHeight)
+	best := s.chain.BestSnapshot()
+
+	// Get next block hash unless there are none.
+	var nextHashString string
+	if blockHeight < best.Height {
+		nextHash, err := s.chain.BlockHashByHeight(blockHeight + 1)
+		if err != nil {
+			context := "No next block"
+			return nil, internalRPCError(err.Error(), context)
+		}
+		nextHashString = nextHash.String()
 	}
 
 	blockHeader := &blk.MsgBlock().Header
@@ -2315,13 +2314,14 @@ func handleGetBlock(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (i
 		Revocations:   blockHeader.Revocations,
 		PoolSize:      blockHeader.PoolSize,
 		Time:          blockHeader.Timestamp.Unix(),
-		Confirmations: uint64(1 + maxIdx - idx),
+		Confirmations: uint64(1 + best.Height - blockHeight),
 		Height:        idx,
-		Size:          int32(len(buf)),
+		Size:          int32(len(blkBytes)),
 		Bits:          strconv.FormatInt(int64(blockHeader.Bits), 16),
 		SBits:         sbitsFloat,
 		Difficulty:    getDifficultyRatio(blockHeader.Bits),
 		ExtraData:     hex.EncodeToString(blockHeader.ExtraData[:]),
+		NextHash:      nextHashString,
 	}
 
 	if c.VerboseTx == nil || !*c.VerboseTx {
@@ -2368,38 +2368,20 @@ func handleGetBlock(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (i
 		blockReply.RawSTx = rawSTxns
 	}
 
-	// Get next block unless we are already at the top.
-	if idx < maxIdx && idx >= 0 {
-		var shaNext *chainhash.Hash
-		shaNext, err = s.server.db.FetchBlockShaByHeight(int64(idx + 1))
-		if err != nil {
-			context := "No next block"
-			return nil, internalRPCError(err.Error(), context)
-		}
-		blockReply.NextHash = shaNext.String()
-	}
 
 	return blockReply, nil
 }
 
 // handleGetBlockCount implements the getblockcount command.
 func handleGetBlockCount(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
-	_, maxIdx, err := s.server.db.NewestSha()
-	if err != nil {
-		rpcsLog.Errorf("Error getting newest sha: %v", err)
-		return nil, &dcrjson.RPCError{
-			Code:    dcrjson.ErrRPCBlockCount,
-			Message: "Error getting block count: " + err.Error(),
-		}
-	}
-
-	return maxIdx, nil
+	best := s.chain.BestSnapshot()
+	return int64(best.Height), nil
 }
 
 // handleGetBlockHash implements the getblockhash command.
 func handleGetBlockHash(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	c := cmd.(*dcrjson.GetBlockHashCmd)
-	sha, err := s.server.db.FetchBlockShaByHeight(c.Index)
+	hash, err := s.chain.BlockHashByHeight(c.Index)
 	if err != nil {
 		return nil, &dcrjson.RPCError{
 			Code:    dcrjson.ErrRPCOutOfRange,
@@ -2407,82 +2389,91 @@ func handleGetBlockHash(s *rpcServer, cmd interface{}, closeChan <-chan struct{}
 		}
 	}
 
-	return sha.String(), nil
+	return hash.String(), nil
 }
 
 // handleGetBlockHeader implements the getblockheader command.
 func handleGetBlockHeader(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
-	c := cmd.(*dcrjson.GetBlockHeaderCmd)
+	c := cmd.(*btcjson.GetBlockHeaderCmd)
 
-	hash, err := chainhash.NewHashFromStr(c.Hash)
+	// Load the raw header bytes from the database.
+	hash, err := wire.NewShaHashFromStr(c.Hash)
 	if err != nil {
-		return nil, err
+		return nil, rpcDecodeHexError(c.Hash)
+	}
+	var headerBytes []byte
+	err = s.server.db.View(func(dbTx database.Tx) error {
+		var err error
+		headerBytes, err = dbTx.FetchBlockHeader(hash)
+		return err
+	})
+	if err != nil {
+		return nil, &btcjson.RPCError{
+			Code:    btcjson.ErrRPCBlockNotFound,
+			Message: "Block not found",
+		}
 	}
 
-	if c.Verbose == nil || *c.Verbose {
-		blk, err := s.server.db.FetchBlockBySha(hash)
-		if err != nil {
-			return nil, &dcrjson.RPCError{
-				Code:    dcrjson.ErrRPCInvalidAddressOrKey,
-				Message: "Invalid address or key: " + err.Error(),
-			}
-		}
+	// When the verbose flag isn't set, simply return the serialized block
+	// header as a hex-encoded string.
+	if c.Verbose != nil && !*c.Verbose {
+		return hex.EncodeToString(headerBytes), nil
+	}
 
-		_, maxIdx, err := s.server.db.NewestSha()
+	// The verbose flag is set, so generate the JSON object and return it.
+
+	// Deserialize the header.
+	var blockHeader wire.BlockHeader
+	err = blockHeader.Deserialize(bytes.NewReader(headerBytes))
+	if err != nil {
+		context := "Failed to deserialize block header"
+		return nil, internalRPCError(err.Error(), context)
+	}
+
+	// Get the block height from chain.
+	blockHeight, err := s.chain.BlockHeightByHash(hash)
+	if err != nil {
+		context := "Failed to obtain block height"
+		return nil, internalRPCError(err.Error(), context)
+	}
+	best := s.chain.BestSnapshot()
+
+	// Get next block hash unless there are none.
+	var nextHashString string
+	if blockHeight < best.Height {
+		nextHash, err := s.chain.BlockHashByHeight(blockHeight + 1)
 		if err != nil {
-			context := "Failed to get newest hash"
+			context := "No next block"
 			return nil, internalRPCError(err.Error(), context)
 		}
-
-		var hashNextStr string
-		hashNext, err := s.server.db.FetchBlockShaByHeight(int64(blk.Height() + 1))
-		if err == nil {
-			hashNextStr = hashNext.String()
-		}
-
-		msgBlock := blk.MsgBlock()
-		blockHeaderReply := dcrjson.GetBlockHeaderVerboseResult{
-			Hash:          c.Hash,
-			Confirmations: uint64(1 + maxIdx - blk.Height()),
-			Version:       msgBlock.Header.Version,
-			PreviousHash:  msgBlock.Header.PrevBlock.String(),
-			MerkleRoot:    msgBlock.Header.MerkleRoot.String(),
-			StakeRoot:     msgBlock.Header.StakeRoot.String(),
-			VoteBits:      msgBlock.Header.VoteBits,
-			FinalState:    hex.EncodeToString(msgBlock.Header.FinalState[:]),
-			Voters:        msgBlock.Header.Voters,
-			FreshStake:    msgBlock.Header.FreshStake,
-			Revocations:   msgBlock.Header.Revocations,
-			PoolSize:      msgBlock.Header.PoolSize,
-			Bits:          strconv.FormatInt(int64(msgBlock.Header.Bits), 16),
-			SBits:         dcrutil.Amount(msgBlock.Header.SBits).ToCoin(),
-			Height:        msgBlock.Header.Height,
-			Size:          msgBlock.Header.Size,
-			Time:          msgBlock.Header.Timestamp.Unix(),
-			Nonce:         msgBlock.Header.Nonce,
-			Difficulty:    getDifficultyRatio(msgBlock.Header.Bits),
-			NextHash:      hashNextStr,
-		}
-
-		return blockHeaderReply, nil
+		nextHashString = nextHash.String()
 	}
 
-	// Verbose disabled
-	blkHeader, err := s.server.db.FetchBlockHeaderBySha(hash)
-	if err != nil {
-		return nil, &dcrjson.RPCError{
-			Code:    dcrjson.ErrRPCInvalidAddressOrKey,
-			Message: "Invalid address or key: " + err.Error(),
-		}
+	blockHeaderReply := btcjson.GetBlockHeaderVerboseResult{
+		Hash:          c.Hash,
+		Confirmations: uint64(1 + maxIdx - blk.Height()),
+		Version:       blockHeader.Version,
+		PreviousHash:  blockHeader.PrevBlock.String(),
+		MerkleRoot:    blockHeader.MerkleRoot.String(),
+		StakeRoot:     blockHeader.StakeRoot.String(),
+		VoteBits:      blockHeader.VoteBits,
+		FinalState:    hex.EncodeToString(blockHeader.FinalState[:]),
+		Voters:        blockHeader.Voters,
+		FreshStake:    blockHeader.FreshStake,
+		Revocations:   blockHeader.Revocations,
+		PoolSize:      blockHeader.PoolSize,
+		Bits:          strconv.FormatInt(int64(blockHeader.Bits), 16),
+		SBits:         dcrutil.Amount(blockHeader.SBits).ToCoin(),
+		Height:        blockHeader.Height,
+		Size:          blockHeader.Size,
+		Time:          blockHeader.Timestamp.Unix(),
+		Nonce:         blockHeader.Nonce,
+		Difficulty:    getDifficultyRatio(blockHeader.Bits),
+		NextHash:      hashNextStr,
 	}
+	return blockHeaderReply, nil
 
-	buf := bytes.NewBuffer(make([]byte, 0, wire.MaxBlockHeaderPayload))
-	if err = blkHeader.BtcEncode(buf, maxProtocolVersion); err != nil {
-		errStr := fmt.Sprintf("Failed to serialize data: %v", err)
-		return nil, internalRPCError(errStr, "")
-	}
-
-	return hex.EncodeToString(buf.Bytes()), nil
+		
 }
 
 // encodeTemplateID encodes the passed details into an ID that can be used to
@@ -3571,23 +3562,8 @@ func handleGetCurrentNet(s *rpcServer, cmd interface{}, closeChan <-chan struct{
 
 // handleGetDifficulty implements the getdifficulty command.
 func handleGetDifficulty(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
-	sha, _, err := s.server.db.NewestSha()
-	if err != nil {
-		rpcsLog.Errorf("Error getting sha: %v", err)
-		return nil, &dcrjson.RPCError{
-			Code:    dcrjson.ErrRPCDifficulty,
-			Message: "Error getting difficulty: " + err.Error(),
-		}
-	}
-	blockHeader, err := s.server.db.FetchBlockHeaderBySha(sha)
-	if err != nil {
-		rpcsLog.Errorf("Error getting block: %v", err)
-		return nil, &dcrjson.RPCError{
-			Code:    dcrjson.ErrRPCDifficulty,
-			Message: "Error getting difficulty: " + err.Error(),
-		}
-	}
-	return getDifficultyRatio(blockHeader.Bits), nil
+	best := s.chain.BestSnapshot()
+	return getDifficultyRatio(best.Bits), nil
 }
 
 // handleGetGenerate implements the getgenerate command.
@@ -3603,26 +3579,15 @@ func handleGetHashesPerSec(s *rpcServer, cmd interface{}, closeChan <-chan struc
 // handleGetInfo implements the getinfo command. We only return the fields
 // that are not related to wallet functionality.
 func handleGetInfo(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
-	// We require the current block height and sha.
-	sha, height, err := s.server.db.NewestSha()
-	if err != nil {
-		context := "Failed to get newest hash"
-		return nil, internalRPCError(err.Error(), context)
-	}
-	blkHeader, err := s.server.db.FetchBlockHeaderBySha(sha)
-	if err != nil {
-		context := "Failed to get block"
-		return nil, internalRPCError(err.Error(), context)
-	}
-
+	best := s.chain.BestSnapshot()
 	ret := &dcrjson.InfoChainResult{
 		Version:         int32(1000000*appMajor + 10000*appMinor + 100*appPatch),
 		ProtocolVersion: int32(maxProtocolVersion),
-		Blocks:          int32(height),
+		Blocks:          best.Height,
 		TimeOffset:      int64(s.server.timeSource.Offset().Seconds()),
 		Connections:     s.server.ConnectedCount(),
 		Proxy:           cfg.Proxy,
-		Difficulty:      getDifficultyRatio(blkHeader.Bits),
+		Difficulty:      getDifficultyRatio(best.Bits),
 		TestNet:         cfg.TestNet,
 		RelayFee:        cfg.minRelayTxFee.ToCoin(),
 	}
@@ -3650,22 +3615,6 @@ func handleGetMempoolInfo(s *rpcServer, cmd interface{}, closeChan <-chan struct
 // handleGetMiningInfo implements the getmininginfo command. We only return the
 // fields that are not related to wallet functionality.
 func handleGetMiningInfo(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
-	sha, height, err := s.server.db.NewestSha()
-	if err != nil {
-		context := "Failed to get newest hash"
-		return nil, internalRPCError(err.Error(), context)
-	}
-	block, err := s.server.db.FetchBlockBySha(sha)
-	if err != nil {
-		context := "Failed to get block"
-		return nil, internalRPCError(err.Error(), context)
-	}
-	blockBytes, err := block.Bytes()
-	if err != nil {
-		context := "Failed to get block bytes"
-		return nil, internalRPCError(err.Error(), context)
-	}
-
 	// Create a default getnetworkhashps command to use defaults and make
 	// use of the existing getnetworkhashps handler.
 	gnhpsCmd := dcrjson.NewGetNetworkHashPSCmd(nil, nil)
@@ -3682,11 +3631,13 @@ func handleGetMiningInfo(s *rpcServer, cmd interface{}, closeChan <-chan struct{
 		}
 	}
 
+	best := s.chain.BestSnapshot()
+	
 	result := dcrjson.GetMiningInfoResult{
-		Blocks:           height,
-		CurrentBlockSize: uint64(len(blockBytes)),
-		CurrentBlockTx:   uint64(len(block.MsgBlock().Transactions)),
-		Difficulty:       getDifficultyRatio(block.MsgBlock().Header.Bits),
+		Blocks:           int64(best.Height),
+		CurrentBlockSize: best.BlockSize,
+		CurrentBlockTx:   best.NumTxns,
+		Difficulty:       getDifficultyRatio(best.Bits),
 		StakeDifficulty:  block.MsgBlock().Header.SBits,
 		Generate:         s.server.cpuMiner.IsMining(),
 		GenProcLimit:     s.server.cpuMiner.NumWorkers(),
@@ -3717,25 +3668,20 @@ func handleGetNetworkHashPS(s *rpcServer, cmd interface{}, closeChan <-chan stru
 
 	c := cmd.(*dcrjson.GetNetworkHashPSCmd)
 
-	_, newestHeight, err := s.server.db.NewestSha()
-	if err != nil {
-		context := "Failed to get newest hash"
-		return nil, internalRPCError(err.Error(), context)
-	}
-
 	// When the passed height is too high or zero, just return 0 now
 	// since we can't reasonably calculate the number of network hashes
 	// per second from invalid values.  When it's negative, use the current
 	// best block height.
+	best := s.chain.BestSnapshot()
 	endHeight := int64(-1)
 	if c.Height != nil {
 		endHeight = int64(*c.Height)
 	}
-	if endHeight > newestHeight || endHeight == 0 {
+	if endHeight > best.Height || endHeight == 0 {
 		return int64(0), nil
 	}
 	if endHeight < 0 {
-		endHeight = newestHeight
+		endHeight = best.Height
 	}
 
 	// Calculate the starting block height based on the passed number of
@@ -3769,15 +3715,29 @@ func handleGetNetworkHashPS(s *rpcServer, cmd interface{}, closeChan <-chan stru
 	var minTimestamp, maxTimestamp time.Time
 	totalWork := big.NewInt(0)
 	for curHeight := startHeight; curHeight <= endHeight; curHeight++ {
-		hash, err := s.server.db.FetchBlockShaByHeight(curHeight)
+		hash, err := s.chain.BlockHashByHeight(curHeight)
 		if err != nil {
 			context := "Failed to fetch block hash"
 			return nil, internalRPCError(err.Error(), context)
 		}
 
-		header, err := s.server.db.FetchBlockHeaderBySha(hash)
+		// Load the raw header bytes.
+		var headerBytes []byte
+		err = s.server.db.View(func(dbTx database.Tx) error {
+			var err error
+			headerBytes, err = dbTx.FetchBlockHeader(hash)
+			return err
+		})
 		if err != nil {
 			context := "Failed to fetch block header"
+			return nil, internalRPCError(err.Error(), context)
+		}
+
+		// Deserialize the header.
+		var header wire.BlockHeader
+		err = header.Deserialize(bytes.NewReader(headerBytes))
+		if err != nil {
+			context := "Failed to deserialize block header"
 			return nil, internalRPCError(err.Error(), context)
 		}
 
@@ -3870,11 +3830,7 @@ func handleGetRawMempool(s *rpcServer, cmd interface{}, closeChan <-chan struct{
 		result := make(map[string]*dcrjson.GetRawMempoolVerboseResult,
 			len(descs))
 
-		_, newestHeight, err := s.server.db.NewestSha()
-		if err != nil {
-			context := "Failed to get newest hash"
-			return nil, internalRPCError(err.Error(), context)
-		}
+		best := s.chain.BestSnapshot()
 
 		mp.RLock()
 		defer mp.RUnlock()
@@ -3884,15 +3840,15 @@ func handleGetRawMempool(s *rpcServer, cmd interface{}, closeChan <-chan struct{
 				continue
 			}
 
-			// Calculate the current priority from the the tx's
-			// inputs.  Use zero if one or more of the input
-			// transactions can't be found for some reason.
+			// Calculate the current priority based on the inputs to
+			// the transaction.  Use zero if one or more of the
+			// input transactions can't be found for some reason.
 			tx := desc.Tx
 			var currentPriority float64
-			inputTxs, err := mp.fetchInputTransactions(tx, false)
+			utxos, err := mp.fetchInputUtxos(tx)
 			if err == nil {
 				currentPriority = calcPriority(tx.MsgTx(),
-					inputTxs, newestHeight+1)
+					utxos, best.Height+1)
 			}
 
 			mpd := &dcrjson.GetRawMempoolVerboseResult{
@@ -3943,14 +3899,18 @@ func handleGetRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan str
 		return nil, rpcDecodeHexError(c.Txid)
 	}
 
-	// Try to fetch the transaction from the memory pool and if that fails,
-	// try the block database.
-	var mtx *wire.MsgTx
+	verbose := false
+	if c.Verbose != nil {
+		verbose = *c.Verbose != 0
+	}
+
 	var blkHash *chainhash.Hash
 	var blkHeight int64
 	var blkIndex uint32
 	var tip *dcrutil.Block
 	needsVotes := false
+	
+	// Try to fetch the transaction from the memory pool.
 	tx, err := s.server.txMemPool.FetchTransaction(txHash)
 	if err != nil {
 		// Search the database.
@@ -3959,7 +3919,6 @@ func handleGetRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan str
 			// Search the parent for transactions that need to be
 			// voted on.
 			tip, err = s.server.blockManager.GetTopBlockFromChain()
-			if err != nil {
 				return nil, &dcrjson.RPCError{
 					Code:    dcrjson.ErrRPCBlockNotFound,
 					Message: "No information available about top block",
@@ -4009,8 +3968,8 @@ func handleGetRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan str
 		return mtxHex, nil
 	}
 
-	var blkHeader *wire.BlockHeader
-	var blkHashStr string
+	// The verbose flag is set, so generate the JSON object and return it.
+	rawTxn, err := createTxRawResult(s.server.chainParams, tx.MsgTx(),
 	var chainHeight int64
 	if blkHash != nil {
 		if needsVotes {
@@ -4138,7 +4097,10 @@ func handleGetTxOut(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (i
 	var mtx *wire.MsgTx
 	var bestBlockSha string
 	var confirmations int64
-	var dbSpentInfo []bool
+	var txVersion int32
+	var value int64
+	var pkScript []byte
+	var isCoinbase bool
 	includeMempool := true
 	if c.IncludeMempool != nil {
 		includeMempool = *c.IncludeMempool
@@ -4153,56 +4115,56 @@ func handleGetTxOut(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (i
 				Message: "No information available about transaction",
 			}
 		}
-		mtx = tx.MsgTx()
+
+
+		mtx := tx.MsgTx()
+		if c.Vout > uint32(len(mtx.TxOut)-1) {
+			return nil, &btcjson.RPCError{
+				Code: btcjson.ErrRPCInvalidTxVout,
+				Message: "Ouput index number (vout) does not " +
+					"exist for transaction.",
+			}
+		}
+
+		txOut := mtx.TxOut[c.Vout]
+		if txOut == nil {
+			errStr := fmt.Sprintf("Output index: %d for txid: %s "+
+				"does not exist", c.Vout, txHash)
+			return nil, internalRPCError(errStr, "")
+		}
+
+		best := s.chain.BestSnapshot()
+		bestBlockSha = best.Hash.String()
 		confirmations = 0
-		bestBlockSha = ""
+		txVersion = mtx.Version
+		value = txOut.Value
+		pkScript = txOut.PkScript
+		isCoinbase = blockchain.IsCoinBaseTx(mtx)
 	} else {
-		txList, err := s.server.db.FetchTxBySha(txHash)
-		if err != nil || len(txList) == 0 {
-			return nil, &dcrjson.RPCError{
-				Code:    dcrjson.ErrRPCNoTxInfo,
+		entry, err := s.chain.FetchUtxoEntry(txHash)
+		if err != nil {
+			return nil, &btcjson.RPCError{
+				Code:    btcjson.ErrRPCNoTxInfo,
 				Message: "No information available about transaction",
 			}
 		}
 
-		lastTx := txList[len(txList)-1]
-		mtx = lastTx.Tx
-		blkHash := lastTx.BlkSha
-		txHeight := lastTx.Height
-		dbSpentInfo = lastTx.TxSpent
-
-		_, bestHeight, err := s.server.db.NewestSha()
-		if err != nil {
-			context := "Failed to get newest hash"
-			return nil, internalRPCError(err.Error(), context)
+		// To match the behavior of the reference client, return nil
+		// (JSON null) if the transaction output is spent by another
+		// transaction already in the main chain.  Mined transactions
+		// that are spent by a mempool transaction are not affected by
+		// this.
+		if entry == nil || entry.IsOutputSpent(c.Vout) {
+			return nil, nil
 		}
 
-		confirmations = 1 + bestHeight - txHeight
-		bestBlockSha = blkHash.String()
-	}
-
-	if c.Vout > uint32(len(mtx.TxOut)-1) {
-		return nil, &dcrjson.RPCError{
-			Code: dcrjson.ErrRPCInvalidTxVout,
-			Message: "Ouput index number (vout) does not exist " +
-				"for transaction.",
-		}
-	}
-
-	txOut := mtx.TxOut[c.Vout]
-	if txOut == nil {
-		errStr := fmt.Sprintf("Output index: %d for txid: %s does "+
-			"not exist", c.Vout, c.Txid)
-		return nil, internalRPCError(errStr, "")
-	}
-
-	// To match the behavior of the reference client, this handler returns
-	// nil (JSON null) if the transaction output is spent by another
-	// transaction already in the database.  Unspent transaction outputs
-	// from transactions in mempool, as well as mined transactions that are
-	// spent by a mempool transaction, are not affected by this.
-	if dbSpentInfo != nil && dbSpentInfo[c.Vout] {
-		return nil, nil
+		best := s.chain.BestSnapshot()
+		bestBlockSha = best.Hash.String()
+		confirmations = 1 + best.Height - entry.BlockHeight()
+		txVersion = entry.Version()
+		value = entry.AmountByIndex(c.Vout)
+		pkScript = entry.PkScriptByIndex(c.Vout)
+		isCoinbase = entry.IsCoinBase()
 	}
 
 	// Disassemble script into single line printable format.
@@ -4225,15 +4187,15 @@ func handleGetTxOut(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (i
 		BestBlock:     bestBlockSha,
 		Confirmations: confirmations,
 		Value:         dcrutil.Amount(txOut.Value).ToUnit(dcrutil.AmountCoin),
-		Version:       mtx.Version,
+		Version:       txVersion,
 		ScriptPubKey: dcrjson.ScriptPubKeyResult{
 			Asm:       disbuf,
-			Hex:       hex.EncodeToString(script),
+			Hex:       hex.EncodeToString(pkScript),
 			ReqSigs:   int32(reqSigs),
 			Type:      scriptClass.String(),
 			Addresses: addresses,
 		},
-		Coinbase: blockchain.IsCoinBase(dcrutil.NewTx(mtx)),
+		Coinbase: isCoinbase,
 	}
 	return txOutReply, nil
 }
@@ -5580,34 +5542,21 @@ func handleValidateAddress(s *rpcServer, cmd interface{}, closeChan <-chan struc
 	return result, nil
 }
 
-func verifyChain(db database.Db, level, depth int32, timeSource blockchain.MedianTimeSource) error {
-	_, curHeight64, err := db.NewestSha()
-	if err != nil {
-		rpcsLog.Errorf("Verify is unable to fetch current block "+
-			"height: %v", err)
-	}
-	curHeight := int32(curHeight64)
-
-	finishHeight := curHeight - depth
+func verifyChain(s *rpcServer, level, depth int32) error {
+	best := s.chain.BestSnapshot()
+	finishHeight := best.Height - depth
 	if finishHeight < 0 {
 		finishHeight = 0
 	}
 	rpcsLog.Infof("Verifying chain for %d blocks at level %d",
-		curHeight-finishHeight, level)
+		best.Height-finishHeight, level)
 
-	for height := curHeight; height > finishHeight; height-- {
+	for height := best.Height; height > finishHeight; height-- {
 		// Level 0 just looks up the block.
-		sha, err := db.FetchBlockShaByHeight(int64(height))
+		block, err := s.chain.BlockByHeight(height)
 		if err != nil {
 			rpcsLog.Errorf("Verify is unable to fetch block at "+
 				"height %d: %v", height, err)
-			return err
-		}
-
-		block, err := db.FetchBlockBySha(sha)
-		if err != nil {
-			rpcsLog.Errorf("Verify is unable to fetch block at "+
-				"sha %v height %d: %v", sha, height, err)
 			return err
 		}
 
@@ -5617,9 +5566,9 @@ func verifyChain(db database.Db, level, depth int32, timeSource blockchain.Media
 				timeSource,
 				activeNetParams.Params)
 			if err != nil {
-				rpcsLog.Errorf("Verify is unable to "+
-					"validate block at sha %v height "+
-					"%d: %v", sha, height, err)
+				rpcsLog.Errorf("Verify is unable to validate "+
+					"block at hash %v height %d: %v",
+					block.Sha(), height, err)
 				return err
 			}
 		}
@@ -5641,8 +5590,7 @@ func handleVerifyChain(s *rpcServer, cmd interface{}, closeChan <-chan struct{})
 		checkDepth = *c.CheckDepth
 	}
 
-	err := verifyChain(s.server.db, checkLevel, checkDepth,
-		s.server.timeSource)
+	err := verifyChain(s, checkLevel, checkDepth)
 	return err == nil, nil
 }
 
@@ -5717,6 +5665,7 @@ type rpcServer struct {
 	shutdown     int32
 	policy       *mining.Policy
 	server       *server
+	chain        *blockchain.BlockChain
 	authsha      [fastsha256.Size]byte
 	limitauthsha [fastsha256.Size]byte
 	ntfnMgr      *wsNotificationManager
@@ -6203,6 +6152,7 @@ func newRPCServer(listenAddrs []string, policy *mining.Policy, s *server) (*rpcS
 	rpc := rpcServer{
 		policy:       policy,
 		server:       s,
+		chain:        s.blockManager.chain,
 		statusLines:  make(map[int]string),
 		workState:    newWorkState(),
 		templatePool: make(map[[merkleRootPairSize]byte]*workStateBlockInfo),
