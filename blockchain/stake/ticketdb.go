@@ -51,6 +51,30 @@ import (
 // Optimizations for reorganize are possible.
 const BucketsSize = math.MaxUint8 + 1
 
+/*
+Serializing live ticket database
+Ticket hash --> height (4 bytes)
+
+Serializing spent ticket data
+
+Height -->
+{
+	  TicketHash 32 bytes
+	  SpendHash 32 bytes
+	  Height 4 bytes
+	  Flags 1 bytes (missed, expired)
+}
+--> 69 bytes x ~5 per block
+
+Serializing missed/expired ticket data
+ticketHash -->
+{
+	  SpendHash 32 bytes
+	  Height 4 bytes
+}
+
+*/
+
 // TicketData contains contextual information about tickets as indicated
 // below.
 // TODO Replace Missed/Expired bool with single byte bitflags.
