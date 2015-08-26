@@ -13,7 +13,7 @@ import (
 	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg"
 	"github.com/decred/dcrd/chaincfg/chainhash"
-	database "github.com/decred/dcrd/database2"
+	"github.com/decred/dcrd/database"
 	"github.com/decred/dcrd/wire"
 	"github.com/decred/dcrutil"
 )
@@ -482,7 +482,6 @@ func dbFetchTx(dbTx database.Tx, hash *chainhash.Hash) (*wire.MsgTx, error) {
 		return nil, err
 	}
 	if blockRegion == nil {
-		panic("ayyy")
 		return nil, fmt.Errorf("transaction %v not found in the txindex", hash)
 	}
 

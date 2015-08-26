@@ -40,7 +40,7 @@ import (
 	"github.com/decred/dcrd/chaincfg"
 	"github.com/decred/dcrd/chaincfg/chainec"
 	"github.com/decred/dcrd/chaincfg/chainhash"
-	database "github.com/decred/dcrd/database2"
+	"github.com/decred/dcrd/database"
 	"github.com/decred/dcrd/dcrjson"
 	"github.com/decred/dcrd/mining"
 	"github.com/decred/dcrd/txscript"
@@ -5316,10 +5316,9 @@ func ticketFeeInfoForRange(s *rpcServer, start int64, end int64, txType stake.Tx
 func handleTicketFeeInfo(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	c := cmd.(*dcrjson.TicketFeeInfoCmd)
 
-	cs := s.server.blockManager.chainState
-	cs.Lock()
-	bestHeight := cs.newestHeight
-	cs.Unlock()
+	s.server.blockManager.chainState.Lock()
+	bestHeight := s.server.blockManager.chainState.newestHeight
+	s.server.blockManager.chainState.Unlock()
 
 	// Memory pool first.
 	feeInfoMempool := feeInfoForMempool(s, stake.TxTypeSStx)
@@ -5490,10 +5489,9 @@ func handleTicketVWAP(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) 
 func handleTxFeeInfo(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	c := cmd.(*dcrjson.TxFeeInfoCmd)
 
-	cs := s.server.blockManager.chainState
-	cs.Lock()
-	bestHeight := cs.newestHeight
-	cs.Unlock()
+	s.server.blockManager.chainState.Lock()
+	bestHeight := s.server.blockManager.chainState.newestHeight
+	s.server.blockManager.chainState.Unlock()
 
 	// Memory pool first.
 	feeInfoMempool := feeInfoForMempool(s, stake.TxTypeRegular)
