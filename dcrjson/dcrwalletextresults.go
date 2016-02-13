@@ -5,6 +5,12 @@
 
 package dcrjson
 
+// ConsolidateResult models the data returned from the consolidate
+// command.
+type ConsolidateResult struct {
+	TxHash string `json:"txhash"`
+}
+
 // GetMultisigOutInfoResult models the data returned from the getmultisigoutinfo
 // command.
 type GetMultisigOutInfoResult struct {
