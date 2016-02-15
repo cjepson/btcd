@@ -48,7 +48,7 @@ type GetTicketsResult struct {
 
 // GetTicketVotebits models the data returned from the getticketvotebits
 // command.
-type GetTicketVotebitsResult struct {
+type GetTicketVoteBitsResult struct {
 	VoteBits    uint16 `json:"votebits"`
 	VoteBitsExt string `json:"votebitsext"`
 }
