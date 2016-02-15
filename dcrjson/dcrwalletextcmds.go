@@ -383,9 +383,11 @@ type SetTicketVoteBitsCmd struct {
 
 // NewSetTicketVoteBitsCmd creates a new instance of the setticketvotebits
 // command.
-func NewSetTicketVoteBitsCmd(max float64) *SetTicketMaxPriceCmd {
-	return &SetTicketMaxPriceCmd{
-		Max: max,
+func NewSetTicketVoteBitsCmd(txHash string, voteBits uint16, voteBitsExt *string) *SetTicketVoteBitsCmd {
+	return &SetTicketVoteBitsCmd{
+		TxHash:      txHash,
+		VoteBits:    voteBits,
+		VoteBitsExt: voteBitsExt,
 	}
 }
 
