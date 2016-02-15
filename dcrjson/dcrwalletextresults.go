@@ -46,6 +46,13 @@ type GetTicketsResult struct {
 	Hashes []string `json:"hashes"`
 }
 
+// GetTicketVotebits models the data returned from the getticketvotebits
+// command.
+type GetTicketVotebitsResult struct {
+	VoteBits    uint16 `json:"votebits"`
+	VoteBitsExt string `json:"votebitsext"`
+}
+
 // GetWalletFeeResult models the data returned from the getwalletfee command
 type GetWalletFeeResult struct {
 	Fee float64 `json:"fee"`

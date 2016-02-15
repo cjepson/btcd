@@ -124,6 +124,23 @@ type GetTicketsCmd struct {
 	IncludeImmature bool
 }
 
+// NewGetTicketsCmd creates a new GetTicketsCmd.
+func NewGetTicketsCmd(includeImmature bool) *GetTicketsCmd {
+	return &GetTicketsCmd{includeImmature}
+}
+
+// GetTicketVoteBitsCmd is a type handling custom marshaling and
+// unmarshaling of getticketvotebits JSON wallet extension
+// commands.
+type GetTicketVoteBitsCmd struct {
+	TxHash string
+}
+
+// NewGetTicketsVoteBitsCmd creates a new GetTicketsVoteBitsCmd.
+func NewGetTicketVoteBitsCmd(txHash string) *GetTicketVoteBitsCmd {
+	return &GetTicketVoteBitsCmd{TxHash: txHash}
+}
+
 // GetWalletFeeCmd defines the getwalletfee JSON-RPC command.
 type GetWalletFeeCmd struct{}
 
@@ -132,11 +149,6 @@ type GetWalletFeeCmd struct{}
 //
 func NewGetWalletFeeCmd() *GetWalletFeeCmd {
 	return &GetWalletFeeCmd{}
-}
-
-// NewGetTicketsCmd creates a new GetTicketsCmd.
-func NewGetTicketsCmd(includeImmature bool) *GetTicketsCmd {
-	return &GetTicketsCmd{includeImmature}
 }
 
 // ImportScriptCmd is a type for handling custom marshaling and
@@ -361,6 +373,22 @@ func NewSetTicketMaxPriceCmd(max float64) *SetTicketMaxPriceCmd {
 	}
 }
 
+// SetTicketVoteBitsCmd is a type handling custom marshaling and
+// unmarshaling of setticketvotebits JSON RPC commands.
+type SetTicketVoteBitsCmd struct {
+	TxHash      string
+	VoteBits    uint16
+	VoteBitsExt *string
+}
+
+// NewSetTicketVoteBitsCmd creates a new instance of the setticketvotebits
+// command.
+func NewSetTicketVoteBitsCmd(max float64) *SetTicketMaxPriceCmd {
+	return &SetTicketMaxPriceCmd{
+		Max: max,
+	}
+}
+
 // SignRawTransactionsCmd defines the signrawtransactions JSON-RPC command.
 type SignRawTransactionsCmd struct {
 	RawTxs []string
@@ -390,6 +418,7 @@ func init() {
 	MustRegisterCmd("getseed", (*GetSeedCmd)(nil), flags)
 	MustRegisterCmd("getticketmaxprice", (*GetTicketMaxPriceCmd)(nil), flags)
 	MustRegisterCmd("gettickets", (*GetTicketsCmd)(nil), flags)
+	MustRegisterCmd("getticketvotebits", (*GetTicketVoteBitsCmd)(nil), flags)
 	MustRegisterCmd("importscript", (*ImportScriptCmd)(nil), flags)
 	MustRegisterCmd("notifynewtickets", (*NotifyNewTicketsCmd)(nil), flags)
 	MustRegisterCmd("notifyspentandmissedtickets",
@@ -406,5 +435,6 @@ func init() {
 	MustRegisterCmd("sendtossgen", (*SendToSSGenCmd)(nil), flags)
 	MustRegisterCmd("sendtossrtx", (*SendToSSRtxCmd)(nil), flags)
 	MustRegisterCmd("setticketmaxprice", (*SetTicketMaxPriceCmd)(nil), flags)
+	MustRegisterCmd("setticketvotebits", (*SetTicketVoteBitsCmd)(nil), flags)
 	MustRegisterCmd("signrawtransactions", (*SignRawTransactionsCmd)(nil), flags)
 }
