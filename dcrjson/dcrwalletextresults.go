@@ -26,7 +26,7 @@ type GetMultisigOutInfoResult struct {
 // command.
 type GetStakeInfoResult struct {
 	PoolSize         uint32  `json:"poolsize"`
-	Difficulty       int64   `json:"difficulty"`
+	Difficulty       float64 `json:"difficulty"`
 	AllMempoolTix    uint32  `json:"allmempooltix"`
 	OwnMempoolTix    uint32  `json:"ownmempooltix"`
 	Immature         uint32  `json:"immature"`
