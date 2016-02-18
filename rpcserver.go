@@ -149,6 +149,7 @@ var rpcHandlersBeforeInit = map[string]commandHandler{
 	"decodescript":          handleDecodeScript,
 	"estimatefee":           handleEstimateFee,
 	"existsaddress":         handleExistsAddress,
+	"existsliveticket":      handleExistsLiveTicket,
 	"generate":              handleGenerate,
 	"getaddednodeinfo":      handleGetAddedNodeInfo,
 	"getbestblock":          handleGetBestBlock,
