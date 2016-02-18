@@ -33,7 +33,7 @@ type GetStakeInfoResult struct {
 	Live             uint32  `json:"live"`
 	ProportionLive   float64 `json:"proportionlive"`
 	Voted            uint32  `json:"voted"`
-	TotalSubsidy     int64   `json:"totalsubsidy"`
+	TotalSubsidy     float64 `json:"totalsubsidy"`
 	Missed           uint32  `json:"missed"`
 	ProportionMissed float64 `json:"proportionmissed"`
 	Revoked          uint32  `json:"revoked"`
