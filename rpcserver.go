@@ -1472,6 +1472,22 @@ func handleExistsAddress(s *rpcServer, cmd interface{},
 	return false, nil
 }
 
+// handleExistsLiveTicket implements the existsliveticket command.
+func handleExistsLiveTicket(s *rpcServer, cmd interface{},
+	closeChan <-chan struct{}) (interface{}, error) {
+	c := cmd.(*dcrjson.ExistsLiveTicketCmd)
+
+	hash, err := chainhash.NewHashFromStr(c.TxHash)
+	if err != nil {
+		return nil, &dcrjson.RPCError{
+			Code:    dcrjson.ErrRPCDecodeHexString,
+			Message: "bad transaction hash",
+		}
+	}
+
+	return s.server.blockManager.ExistsLiveTicket(hash)
+}
+
 // handleGenerate handles generate commands.
 func handleGenerate(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	// Respond with an error if there are no addresses to pay the
