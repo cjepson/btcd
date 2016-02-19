@@ -59,6 +59,8 @@ const (
 	defaultMaxOrphanTxSize       = 5000
 	defaultSigCacheMaxSize       = 50000
 	sampleConfigFilename         = "sample-dcrd.conf"
+	defaultTxIndex               = false
+	defaultAddrIndex             = false
 )
 
 var (
@@ -143,13 +145,16 @@ type config struct {
 	BlockMaxSize       uint32        `long:"blockmaxsize" description:"Maximum block size in bytes to be used when creating a block"`
 	BlockPrioritySize  uint32        `long:"blockprioritysize" description:"Size in bytes for high-priority/low-fee transactions when creating a block"`
 	GetWorkKeys        []string      `long:"getworkkey" description:"DEPRECATED -- Use the --miningaddr option instead"`
-	DropAddrIndex      bool          `long:"dropaddrindex" description:"Deletes the address-based transaction index from the database on start up and then exits."`
+	NoPeerBloomFilters bool          `long:"nopeerbloomfilters" description:"Disable bloom filtering support"`
+	SigCacheMaxSize    uint          `long:"sigcachemaxsize" description:"The maximum number of entries in the signature verification cache"`
 	NonAggressive      bool          `long:"nonaggressive" description:"Disable mining off of the parent block of the blockchain if there aren't enough voters"`
 	NoMiningStateSync  bool          `long:"nominingstatesync" description:"Disable synchronizing the mining state with other nodes"`
 	AllowOldVotes      bool          `long:"allowoldvotes" description:"Enable the addition of very old votes to the mempool"`
-	NoPeerBloomFilters bool          `long:"nopeerbloomfilters" description:"Disable bloom filtering support."`
-	SigCacheMaxSize    uint          `long:"sigcachemaxsize" description:"The maximum number of entries in the signature verification cache."`
 	BlocksOnly         bool          `long:"blocksonly" description:"Do not accept transactions from remote peers."`
+	TxIndex            bool          `long:"txindex" description:"Maintain a full hash-based transaction index which makes all transactions available via the getrawtransaction RPC"`
+	DropTxIndex        bool          `long:"droptxindex" description:"Deletes the hash-based transaction index from the database on start up and then exits."`
+	AddrIndex          bool          `long:"addrindex" description:"Maintain a full address-based transaction index which makes the searchrawtransactions RPC available"`
+	DropAddrIndex      bool          `long:"dropaddrindex" description:"Deletes the address-based transaction index from the database on start up and then exits."`
 	onionlookup        func(string) ([]net.IP, error)
 	lookup             func(string) ([]net.IP, error)
 	oniondial          func(string, string) (net.Conn, error)
@@ -363,8 +368,9 @@ func loadConfig() (*config, []string, error) {
 		MaxOrphanTxs:      defaultMaxOrphanTransactions,
 		SigCacheMaxSize:   defaultSigCacheMaxSize,
 		Generate:          defaultGenerate,
-		NoAddrIndex:       defaultAddrIndex,
 		NoMiningStateSync: defaultNoMiningStateSync,
+		TxIndex:           defaultTxIndex,
+		AddrIndex:         defaultAddrIndex,
 		AllowOldVotes:     defaultAllowOldVotes,
 	}
 
@@ -670,6 +676,38 @@ func loadConfig() (*config, []string, error) {
 	// Limit the block priority and minimum block sizes to max block size.
 	cfg.BlockPrioritySize = minUint32(cfg.BlockPrioritySize, cfg.BlockMaxSize)
 	cfg.BlockMinSize = minUint32(cfg.BlockMinSize, cfg.BlockMaxSize)
+
+	// --txindex and --droptxindex do not mix.
+	if cfg.TxIndex && cfg.DropTxIndex {
+		err := fmt.Errorf("%s: the --txindex and --droptxindex "+
+			"options may  not be activated at the same time",
+			funcName)
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, usageMessage)
+		return nil, nil, err
+	}
+
+	// --addrindex and --dropaddrindex do not mix.
+	if cfg.AddrIndex && cfg.DropAddrIndex {
+		err := fmt.Errorf("%s: the --addrindex and --dropaddrindex "+
+			"options may not be activated at the same time",
+			funcName)
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, usageMessage)
+		return nil, nil, err
+	}
+
+	// --addrindex and --droptxindex do not mix.
+	if cfg.AddrIndex && cfg.DropTxIndex {
+		err := fmt.Errorf("%s: the --addrindex and --droptxindex "+
+			"options may not be activated at the same time "+
+			"because the address index relies on the transaction "+
+			"index",
+			funcName)
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, usageMessage)
+		return nil, nil, err
+	}
 
 	// Check getwork keys are valid and saved parsed versions.
 	cfg.miningAddrs = make([]dcrutil.Address, 0, len(cfg.GetWorkKeys)+

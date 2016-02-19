@@ -23,7 +23,7 @@ import (
 
 	"github.com/decred/dcrd/addrmgr"
 	"github.com/decred/dcrd/blockchain"
-	"github.com/decred/dcrd/blockchain/stake"
+	"github.com/decred/dcrd/blockchain/indexers"
 	"github.com/decred/dcrd/chaincfg"
 	"github.com/decred/dcrd/chaincfg/chainhash"
 	database "github.com/decred/dcrd/database2"
@@ -205,6 +205,13 @@ type server struct {
 	timeSource           blockchain.MedianTimeSource
 	tmdb                 *stake.TicketDB
 	services             wire.ServiceFlag
+
+	// The following fields are used for optional indexes.  They will be nil
+	// if the associated index is not enabled.  These fields are set during
+	// initial creation of the server and never changed afterwards, so they
+	// do not need to be protected for concurrent access.
+	txIndex   *indexers.TxIndex
+	addrIndex *indexers.AddrIndex
 }
 
 // serverPeer extends the peer to maintain state shared by the server and
@@ -2568,7 +2575,40 @@ func newServer(listenAddrs []string, db database.DB, tmdb *stake.TicketDB, chain
 		services:             services,
 		sigCache:             txscript.NewSigCache(cfg.SigCacheMaxSize),
 	}
-	bm, err := newBlockManager(&s)
+
+	// Create the transaction and address indexes if needed.
+	//
+	// CAUTION: the txindex needs to be first in the indexes array because
+	// the addrindex uses data from the txindex during catchup.  If the
+	// addrindex is run first, it may not have the transactions from the
+	// current block indexed.
+	var indexes []indexers.Indexer
+	if cfg.TxIndex || cfg.AddrIndex {
+		// Enable transaction index if address index is enabled since it
+		// requires it.
+		if !cfg.TxIndex {
+			indxLog.Infof("Transaction index enabled because it " +
+				"is required by the address index")
+			cfg.TxIndex = true
+		} else {
+			indxLog.Info("Transaction index is enabled")
+		}
+
+		s.txIndex = indexers.NewTxIndex(db)
+		indexes = append(indexes, s.txIndex)
+	}
+	if cfg.AddrIndex {
+		indxLog.Info("Address index is enabled")
+		s.addrIndex = indexers.NewAddrIndex(db, chainParams)
+		indexes = append(indexes, s.addrIndex)
+	}
+
+	// Create an index manager if any of the optional indexes are enabled.
+	var indexManager blockchain.IndexManager
+	if len(indexes) > 0 {
+		indexManager = indexers.NewManager(db, indexes)
+	}
+	bm, err := newBlockManager(&s, indexManager)
 	if err != nil {
 		return nil, err
 	}
@@ -2603,6 +2643,7 @@ func newServer(listenAddrs []string, db database.DB, tmdb *stake.TicketDB, chain
 		Chain:         s.blockManager.chain,
 		SigCache:      s.sigCache,
 		TimeSource:    s.timeSource,
+		AddrIndex:     s.addrIndex,
 	}
 	s.txMemPool = newTxMemPool(&txC)
 

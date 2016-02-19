@@ -18,6 +18,7 @@ import (
 
 	"github.com/decred/dcrd/blockchain"
 	"github.com/decred/dcrd/blockchain/stake"
+	"github.com/decred/dcrd/blockchain/indexers"
 	"github.com/decred/dcrd/chaincfg"
 	"github.com/decred/dcrd/chaincfg/chainhash"
 	"github.com/decred/dcrd/mining"
@@ -110,6 +111,11 @@ type mempoolConfig struct {
 
 	// TimeSource defines the timesource to use.
 	TimeSource blockchain.MedianTimeSource
+
+	// AddrIndex defines the optional address index instance to use for
+	// indexing the unconfirmed transactions in the memory pool.
+	// This can be nil if the address index is not enabled.
+	AddrIndex *indexers.AddrIndex
 }
 
 // mempoolPolicy houses the policy (configuration parameters) which is used to
@@ -655,17 +661,15 @@ func (mp *txMemPool) removeTransaction(tx *dcrutil.Tx, removeRedeemers bool) {
 		}
 	}
 
-	// Remove the transaction and mark the referenced outpoints as unspent
-	// by the pool.
+	// Remove the transaction if needed.
 	if txDesc, exists := mp.pool[*txHash]; exists {
-		// Remove the transaction and its addresses from the address
-		// index if it's enabled.
-		/*
-			TODO New address index
-			if !mp.cfg.NoAddrIndex {
-				mp.pruneTxFromAddrIndex(tx, txType)
-			}
-		*/
+		// Remove unconfirmed address index entries associated with the
+		// transaction if enabled.
+		if mp.cfg.AddrIndex != nil {
+			mp.cfg.AddrIndex.RemoveUnconfirmedTx(txHash)
+		}
+
+		// Mark the referenced outpoints as unspent by the pool.
 
 		for _, txIn := range txDesc.Tx.MsgTx().TxIn {
 			delete(mp.outpoints, txIn.PreviousOutPoint)
@@ -693,7 +697,7 @@ func (mp *txMemPool) RemoveTransaction(tx *dcrutil.Tx, removeRedeemers bool) {
 // passed transaction from the memory pool.  Removing those transactions then
 // leads to removing all transactions which rely on them, recursively.  This is
 // necessary when a block is connected to the main chain because the block may
-// contain transactions which were previously unknown to the memory pool
+// contain transactions which were previously unknown to the memory pool.
 //
 // This function is safe for concurrent access.
 func (mp *txMemPool) RemoveDoubleSpends(tx *dcrutil.Tx) {
@@ -734,14 +738,11 @@ func (mp *txMemPool) addTransaction(utxoView *blockchain.UtxoViewpoint,
 	}
 	atomic.StoreInt64(&mp.lastUpdated, time.Now().Unix())
 
-	// Add the addresses associated with the transaction to the address
-	// index if it's enabled.
-	/*
-		TODO New address index
-		if !mp.cfg.NoAddrIndex {
-			mp.addTransactionToAddrIndex(tx, txType)
-		}
-	*/
+	// Add unconfirmed address index entries associated with the transaction
+	// if enabled.
+	if mp.cfg.AddrIndex != nil {
+		mp.cfg.AddrIndex.AddUnconfirmedTx(tx, utxoView)
+	}
 }
 
 // addTransactionToAddrIndex adds all addresses related to the transaction to

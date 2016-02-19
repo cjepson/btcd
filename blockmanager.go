@@ -1223,6 +1223,10 @@ func (b *blockManager) handleBlockMsg(bmsg *blockMsg) {
 			bmgrLog.Errorf("Failed to process block %v: %v",
 				blockSha, err)
 		}
+		if dbErr, ok := err.(database.Error); ok && dbErr.ErrorCode ==
+			database.ErrCorruption {
+			panic(dbErr)
+		}
 
 		// Convert the error into an appropriate reject message and
 		// send it.
@@ -2878,7 +2882,7 @@ func (b *blockManager) SetParentTemplate(bt *BlockTemplate) {
 
 // newBlockManager returns a new decred block manager.
 // Use Start to begin processing asynchronous block and inv updates.
-func newBlockManager(s *server) (*blockManager, error) {
+func newBlockManager(s *server, indexManager blockchain.IndexManager) (*blockManager, error) {
 	bm := blockManager{
 		server:              s,
 		rejectedTxns:        make(map[chainhash.Hash]struct{}),
@@ -2902,6 +2906,7 @@ func newBlockManager(s *server) (*blockManager, error) {
 		ChainParams:   s.chainParams,
 		Notifications: bm.handleNotifyMsg,
 		SigCache:      s.sigCache,
+		IndexManager:  indexManager,
 	})
 	if err != nil {
 		return nil, err

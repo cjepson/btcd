@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/decred/dcrd/limits"
+	"github.com/decred/dcrd/blockchain/indexers"
 )
 
 var (
@@ -137,6 +138,27 @@ func dcrdMain(serverChan chan<- *server) error {
 		dcrdLog.Infof("Gracefully shutting down the database...")
 		db.Close()
 	})
+
+	// Drop indexes and exit if requested.
+	//
+	// NOTE: The order is important here because dropping the tx index also
+	// drops the address index since it relies on it.
+	if cfg.DropAddrIndex {
+		if err := indexers.DropAddrIndex(db); err != nil {
+			btcdLog.Errorf("%v", err)
+			return err
+		}
+
+		return nil
+	}
+	if cfg.DropTxIndex {
+		if err := indexers.DropTxIndex(db); err != nil {
+			btcdLog.Errorf("%v", err)
+			return err
+		}
+
+		return nil
+	}
 
 	// Create server and start it.
 	server, err := newServer(cfg.Listeners, db, tmdb, activeNetParams.Params)
