@@ -932,6 +932,9 @@ func (b *blockManager) current() bool {
 //
 // This is UNSAFE for concurrent access.
 func (b *blockManager) checkBlockForHiddenVotes(block *dcrutil.Block) {
+	// DEBUG
+	bmgrLog.Errorf("Checking incoming block %v for hidden votes", block.Sha())
+
 	var votesFromBlock []*dcrutil.Tx
 
 	for _, stx := range block.STransactions() {
@@ -1046,6 +1049,9 @@ func (b *blockManager) checkBlockForHiddenVotes(block *dcrutil.Block) {
 	template.block.Header.Voters = uint16(numVotes)
 	template.block.Header.StakeRoot = *smerkles[len(smerkles)-1]
 	template.block.Header.Size = uint32(template.block.SerializeSize())
+
+	// DEBUG
+	bmgrLog.Errorf("Updated block %v for hidden votes", block.Sha())
 
 	return
 }
