@@ -964,6 +964,16 @@ func (b *blockManager) checkBlockForHiddenVotes(block *dcrutil.Block) {
 		}
 	}
 
+	// Make sure that the template has the same parent
+	// as the new block.
+	if template.block.Header.PrevBlock !=
+		block.MsgBlock().Header.PrevBlock {
+		bmgrLog.Warnf("error found while trying to check incoming " +
+			"block for hidden votes: template did not have the " +
+			"same parent as the incoming block")
+		return
+	}
+
 	// Now that we have the template, grab the votes and compare
 	// them with those found in the newly added block. If we don't
 	// the votes, they will need to be added to our block template.
@@ -1017,7 +1027,7 @@ func (b *blockManager) checkBlockForHiddenVotes(block *dcrutil.Block) {
 	// integrity.
 	votesTotal := len(newVotes)
 	if votesTotal > int(b.server.chainParams.TicketsPerBlock) {
-		bmgrLog.Errorf("fatal error while adding hidden votes "+
+		bmgrLog.Warnf("error found while adding hidden votes "+
 			"from block %v to the old block template: %v max "+
 			"votes expected but %v votes found", block.Sha(),
 			int(b.server.chainParams.TicketsPerBlock),
