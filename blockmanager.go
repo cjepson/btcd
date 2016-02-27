@@ -930,13 +930,14 @@ func (b *blockManager) current() bool {
 // any votes that were previously unknown to our daemon. If it does, it
 // adds these votes to the cached parent block template.
 //
-// This is UNSAFE for concurrent access.
+// This is UNSAFE for concurrent access. It must be called in single threaded
+// access through the block mananger. All template access must also be routed
+// through the block manager.
 func (b *blockManager) checkBlockForHiddenVotes(block *dcrutil.Block) {
 	// DEBUG
 	bmgrLog.Errorf("Checking incoming block %v for hidden votes", block.Sha())
 
 	var votesFromBlock []*dcrutil.Tx
-
 	for _, stx := range block.STransactions() {
 		isSSGen, _ := stake.IsSSGen(stx)
 		if isSSGen {
@@ -966,45 +967,87 @@ func (b *blockManager) checkBlockForHiddenVotes(block *dcrutil.Block) {
 	// Now that we have the template, grab the votes and compare
 	// them with those found in the newly added block. If we don't
 	// the votes, they will need to be added to our block template.
-	var updatedTxTreeStake []*dcrutil.Tx
-	numVotes := 0
+	var newVotes []*dcrutil.Tx
+	var oldTickets []*dcrutil.Tx
+	var oldRevocations []*dcrutil.Tx
+	oldVoteMap := make(map[chainhash.Hash]struct{},
+		int(b.server.chainParams.TicketsPerBlock))
 	if template != nil {
-		var newVotes []*dcrutil.Tx
-
 		templateBlock := dcrutil.NewBlock(template.block)
 		templateBlock.SetHeight(template.height)
-		for _, vote := range votesFromBlock {
-			haveIt := false
 
-			for _, stx := range templateBlock.STransactions() {
-				isSSGen, _ := stake.IsSSGen(stx)
-				if isSSGen {
-					if vote.Sha().IsEqual(stx.Sha()) {
-						haveIt = true
-						numVotes++
-						break
-					}
-				}
+		// Add all the votes found in our template. Keep their
+		// hashes in a map for easy lookup in the next loop.
+		for _, stx := range templateBlock.STransactions() {
+			txType := stake.DetermineTxType(stx)
+			if txType == stake.TxTypeSSGen {
+				h := stx.Sha()
+				oldVoteMap[*h] = struct{}{}
+				newVotes = append(newVotes, stx)
 			}
 
-			if !haveIt {
-				// Jam it directly into the block.
-				template.block.AddSTransaction(vote.MsgTx())
-				newVotes = append(newVotes, vote)
-				numVotes++
+			// Create a list of old tickets and revocations
+			// while we're in this loop.
+			if txType == stake.TxTypeSStx {
+				oldTickets = append(oldTickets, stx)
+			}
+			if txType == stake.TxTypeSSRtx {
+				oldRevocations = append(oldTickets, stx)
 			}
 		}
 
-		// We have the list of new votes now; append it to the
-		// list of template stake transactions.
-		updatedTxTreeStake = append(templateBlock.STransactions(),
-			newVotes...)
+		// Check the votes seen in the block. If the votes
+		// are new, append them.
+		for _, vote := range votesFromBlock {
+			h := vote.Sha()
+			if _, exists := oldVoteMap[*h]; !exists {
+				// DEBUG
+				bmgrLog.Errorf("found a vote %v that was absent in our "+
+					"cached template, adding it to the cached template",
+					h)
+				newVotes = append(newVotes, vote)
+			}
+		}
 	} else {
 		// We have no template, so nothing to update.
 		return
 	}
 
-	// Create a new coinbase.
+	// Check the length of the reconstructed voter list for
+	// integrity.
+	votesTotal := len(newVotes)
+	if votesTotal > int(b.server.chainParams.TicketsPerBlock) {
+		bmgrLog.Errorf("fatal error while adding hidden votes "+
+			"from block %v to the old block template: %v max "+
+			"votes expected but %v votes found", block.Sha(),
+			int(b.server.chainParams.TicketsPerBlock),
+			votesTotal)
+		return
+	}
+
+	// Clear the old stake transactions and begin inserting the
+	// new vote list along with all the old transactions. Do this
+	// for both the underlying template msgBlock and a new slice
+	// of transaction pointers so that a new merkle root can be
+	// calculated.
+	template.block.ClearSTransactions()
+	updatedTxTreeStake := make([]*dcrutil.Tx, 0,
+		votesTotal+len(oldTickets)+len(oldRevocations))
+	for _, vote := range newVotes {
+		updatedTxTreeStake = append(updatedTxTreeStake, vote)
+		template.block.AddSTransaction(vote.MsgTx())
+	}
+	for _, ticket := range oldTickets {
+		updatedTxTreeStake = append(updatedTxTreeStake, ticket)
+		template.block.AddSTransaction(ticket.MsgTx())
+	}
+	for _, revocation := range oldRevocations {
+		updatedTxTreeStake = append(updatedTxTreeStake, revocation)
+		template.block.AddSTransaction(revocation.MsgTx())
+	}
+
+	// Create a new coinbase and update the coinbase pointer
+	// in the underlying template msgBlock.
 	random, err := wire.RandomUint64()
 	if err != nil {
 		return
@@ -1022,7 +1065,7 @@ func (b *blockManager) checkBlockForHiddenVotes(block *dcrutil.Block) {
 		opReturnPkScript,
 		int64(template.block.Header.Height),
 		cfg.miningAddrs[rand.Intn(len(cfg.miningAddrs))],
-		uint16(numVotes),
+		uint16(votesTotal),
 		b.server.chainParams)
 	if err != nil {
 		bmgrLog.Warnf("failed to create coinbase while generating " +
@@ -1046,7 +1089,7 @@ func (b *blockManager) checkBlockForHiddenVotes(block *dcrutil.Block) {
 	merkles := blockchain.BuildMerkleTreeStore(updatedTxTreeRegular)
 	template.block.Header.StakeRoot = *merkles[len(merkles)-1]
 	smerkles := blockchain.BuildMerkleTreeStore(updatedTxTreeStake)
-	template.block.Header.Voters = uint16(numVotes)
+	template.block.Header.Voters = uint16(votesTotal)
 	template.block.Header.StakeRoot = *smerkles[len(smerkles)-1]
 	template.block.Header.Size = uint32(template.block.SerializeSize())
 
