@@ -1002,7 +1002,7 @@ func (b *blockManager) checkBlockForHiddenVotes(block *dcrutil.Block) {
 				oldTickets = append(oldTickets, stx)
 			}
 			if txType == stake.TxTypeSSRtx {
-				oldRevocations = append(oldTickets, stx)
+				oldRevocations = append(oldRevocations, stx)
 			}
 		}
 
