@@ -934,9 +934,6 @@ func (b *blockManager) current() bool {
 // access through the block mananger. All template access must also be routed
 // through the block manager.
 func (b *blockManager) checkBlockForHiddenVotes(block *dcrutil.Block) {
-	// DEBUG
-	bmgrLog.Errorf("Checking incoming block %v for hidden votes", block.Sha())
-
 	var votesFromBlock []*dcrutil.Tx
 	for _, stx := range block.STransactions() {
 		isSSGen, _ := stake.IsSSGen(stx)
@@ -1011,10 +1008,6 @@ func (b *blockManager) checkBlockForHiddenVotes(block *dcrutil.Block) {
 		for _, vote := range votesFromBlock {
 			h := vote.Sha()
 			if _, exists := oldVoteMap[*h]; !exists {
-				// DEBUG
-				bmgrLog.Errorf("found a vote %v that was absent in our "+
-					"cached template, adding it to the cached template",
-					h)
 				newVotes = append(newVotes, vote)
 			}
 		}
@@ -1066,7 +1059,10 @@ func (b *blockManager) checkBlockForHiddenVotes(block *dcrutil.Block) {
 	opReturnPkScript, err := standardCoinbaseOpReturn(height,
 		[]uint64{0, 0, 0, random})
 	if err != nil {
-		bmgrLog.Warnf("failed to create coinbase OP_RETURN while generating " +
+		// Stopping at this step will lead to a corrupted block template
+		// because the stake tree has already been manipulated, so throw
+		// an error.
+		bmgrLog.Errorf("failed to create coinbase OP_RETURN while generating " +
 			"block with extra found voters")
 		return
 	}
@@ -1078,7 +1074,7 @@ func (b *blockManager) checkBlockForHiddenVotes(block *dcrutil.Block) {
 		uint16(votesTotal),
 		b.server.chainParams)
 	if err != nil {
-		bmgrLog.Warnf("failed to create coinbase while generating " +
+		bmgrLog.Errorf("failed to create coinbase while generating " +
 			"block with extra found voters")
 		return
 	}
@@ -1102,9 +1098,6 @@ func (b *blockManager) checkBlockForHiddenVotes(block *dcrutil.Block) {
 	template.block.Header.Voters = uint16(votesTotal)
 	template.block.Header.StakeRoot = *smerkles[len(smerkles)-1]
 	template.block.Header.Size = uint32(template.block.SerializeSize())
-
-	// DEBUG
-	bmgrLog.Errorf("Updated block %v for hidden votes", block.Sha())
 
 	return
 }
