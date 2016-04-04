@@ -7,6 +7,46 @@
 
 package dcrjson
 
+// AccountAddressIndexCmd is a type handling custom marshaling and
+// unmarshaling of accountaddressindex JSON wallet extension
+// commands.
+type AccountAddressIndexCmd struct {
+	Account string `json:"account"`
+}
+
+// NewAccountAddressIndexCmd creates a new AccountAddressIndexCmd.
+func NewAccountAddressIndexCmd(acct string) *AccountAddressIndexCmd {
+	return &AccountAddressIndexCmd{Account: acct}
+}
+
+// AccountFetchAddressesCmd is a type handling custom marshaling and
+// unmarshaling of accountfetchaddresses JSON wallet extension
+// commands.
+type AccountFetchAddressesCmd struct {
+	Account string `json:"account"`
+	Start   int    `json:"start"`
+	End     int    `json:"end"`
+}
+
+// NewAccountFetchAddressesCmd creates a new AccountFetchAddressesCmd.
+func NewAccountFetchAddressesCmd(acct string) *AccountAddressIndexCmd {
+	return &AccountAddressIndexCmd{Account: acct}
+}
+
+// AccountSyncAddressIndexCmd is a type handling custom marshaling and
+// unmarshaling of accountsyncaddressindex JSON wallet extension
+// commands.
+type AccountSyncAddressIndexCmd struct {
+	Account string `json:"account"`
+	Index   int    `json:"index"`
+}
+
+// NewAccountAddressIndexCmd creates a new AccountSyncAddressIndexCmd.
+func NewAccountSyncAddressIndexCmd(acct string,
+	idx int) *AccountSyncAddressIndexCmd {
+	return &AccountSyncAddressIndexCmd{Account: acct, Index: idx}
+}
+
 // ConsolidateCmd is a type handling custom marshaling and
 // unmarshaling of consolidate JSON wallet extension
 // commands.
@@ -112,11 +152,12 @@ func NewGetMultisigOutInfoCmd(hash string, index uint32) *GetMultisigOutInfoCmd 
 // GetMasterPubkeyCmd is a type handling custom marshaling and unmarshaling of
 // getmasterpubkey JSON wallet extension commands.
 type GetMasterPubkeyCmd struct {
+	Account *string
 }
 
 // NewGetMasterPubkeyCmd creates a new GetMasterPubkeyCmd.
-func NewGetMasterPubkeyCmd() *GetMasterPubkeyCmd {
-	return &GetMasterPubkeyCmd{}
+func NewGetMasterPubkeyCmd(acct *string) *GetMasterPubkeyCmd {
+	return &GetMasterPubkeyCmd{Account: acct}
 }
 
 // GetSeedCmd is a type handling custom marshaling and
@@ -507,6 +548,8 @@ func init() {
 	// server.
 	flags := UFWalletOnly
 
+	MustRegisterCmd("accountaddressindex", (*AccountAddressIndexCmd)(nil), flags)
+	MustRegisterCmd("accountsyncaddressindex", (*AccountSyncAddressIndexCmd)(nil), flags)
 	MustRegisterCmd("consolidate", (*ConsolidateCmd)(nil), flags)
 	MustRegisterCmd("createrawsstx", (*CreateRawSStxCmd)(nil), flags)
 	MustRegisterCmd("createrawssgentx", (*CreateRawSSGenTxCmd)(nil), flags)
