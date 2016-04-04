@@ -87,6 +87,16 @@ func NewGetTicketPoolValueCmd() *GetTicketPoolValueCmd {
 	return &GetTicketPoolValueCmd{}
 }
 
+// LiveTicketsCmd is a type handling custom marshaling and
+// unmarshaling of livetickets JSON RPC commands.
+type LiveTicketsCmd struct{}
+
+// NewLiveTicketsCmd returns a new instance which can be used to issue a JSON-RPC
+// livetickets command.
+func NewLiveTicketsCmd() *LiveTicketsCmd {
+	return &LiveTicketsCmd{}
+}
+
 // MissedTicketsCmd is a type handling custom marshaling and
 // unmarshaling of missedtickets JSON RPC commands.
 type MissedTicketsCmd struct{}
@@ -139,6 +149,7 @@ func init() {
 	MustRegisterCmd("getcoinsupply", (*GetCoinSupplyCmd)(nil), flags)
 	MustRegisterCmd("getstakedifficulty", (*GetStakeDifficultyCmd)(nil), flags)
 	MustRegisterCmd("getticketpoolvalue", (*GetTicketPoolValueCmd)(nil), flags)
+	MustRegisterCmd("livetickets", (*LiveTicketsCmd)(nil), flags)
 	MustRegisterCmd("missedtickets", (*MissedTicketsCmd)(nil), flags)
 	MustRegisterCmd("rebroadcastmissed", (*RebroadcastMissedCmd)(nil), flags)
 	MustRegisterCmd("rebroadcastwinners", (*RebroadcastWinnersCmd)(nil), flags)

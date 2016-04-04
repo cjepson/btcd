@@ -184,6 +184,7 @@ var rpcHandlersBeforeInit = map[string]commandHandler{
 	"gettxout":              handleGetTxOut,
 	"getwork":               handleGetWork,
 	"help":                  handleHelp,
+	"livetickets":           handleLiveTickets,
 	"missedtickets":         handleMissedTickets,
 	"node":                  handleNode,
 	"ping":                  handlePing,
@@ -4091,6 +4092,22 @@ func handleHelp(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (inter
 	return help, nil
 }
 
+// handleLiveTickets
+func handleLiveTickets(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
+	lt, err := s.server.blockManager.LiveTickets()
+	if err != nil {
+		return nil, err
+	}
+
+	ltString := make([]string, len(lt), len(lt))
+	for i := range lt {
+		ltString[i] = lt[i].String()
+	}
+
+	return dcrjson.LiveTicketsResult{Tickets: ltString}, nil
+}
+
+// handleMissedTickets
 func handleMissedTickets(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	mt, err := s.server.blockManager.MissedTickets()
 	if err != nil {

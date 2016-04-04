@@ -378,6 +378,17 @@ type ticketPoolValueResponse struct {
 	err    error
 }
 
+// liveTicketsMsg
+type liveTicketsMsg struct {
+	reply chan liveTicketsResponse
+}
+
+// liveTicketsResponse
+type liveTicketsResponse struct {
+	Live []*chainhash.Hash
+	err  error
+}
+
 // getCurrentTemplateMsg handles a request for the current mining block template.
 type getCurrentTemplateMsg struct {
 	reply chan getCurrentTemplateResponse
@@ -2080,6 +2091,13 @@ out:
 					err:    err,
 				}
 
+			case liveTicketsMsg:
+				live, err := b.blockChain.LiveTickets()
+				msg.reply <- liveTicketsResponse{
+					Live: live,
+					err:  err,
+				}
+
 			case getCurrentTemplateMsg:
 				cur := deepCopyBlockTemplate(b.cachedCurrentTemplate)
 				msg.reply <- getCurrentTemplateResponse{
@@ -2768,6 +2786,14 @@ func (b *blockManager) TicketPoolValue() (dcrutil.Amount, error) {
 	b.msgChan <- ticketPoolValueMsg{reply: reply}
 	response := <-reply
 	return response.Amount, response.err
+}
+
+// LiveTickets returns the live tickets currently in the staking pool.
+func (b *blockManager) LiveTickets() ([]*chainhash.Hash, error) {
+	reply := make(chan liveTicketsResponse)
+	b.msgChan <- liveTicketsMsg{reply: reply}
+	response := <-reply
+	return response.Live, response.err
 }
 
 // GetCurrentTemplate gets the current block template for mining.
