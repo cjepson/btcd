@@ -12,6 +12,7 @@ package dcrjson
 // commands.
 type AccountAddressIndexCmd struct {
 	Account string `json:"account"`
+	Branch  int    `json:"branch"`
 }
 
 // NewAccountAddressIndexCmd creates a new AccountAddressIndexCmd.
@@ -24,6 +25,7 @@ func NewAccountAddressIndexCmd(acct string) *AccountAddressIndexCmd {
 // commands.
 type AccountFetchAddressesCmd struct {
 	Account string `json:"account"`
+	Branch  int    `json:"branch"`
 	Start   int    `json:"start"`
 	End     int    `json:"end"`
 }
@@ -559,6 +561,7 @@ func init() {
 	flags := UFWalletOnly
 
 	MustRegisterCmd("accountaddressindex", (*AccountAddressIndexCmd)(nil), flags)
+	MustRegisterCmd("accountfetchaddresses", (*AccountFetchAddressesCmd)(nil), flags)
 	MustRegisterCmd("accountsyncaddressindex", (*AccountSyncAddressIndexCmd)(nil), flags)
 	MustRegisterCmd("consolidate", (*ConsolidateCmd)(nil), flags)
 	MustRegisterCmd("createrawsstx", (*CreateRawSStxCmd)(nil), flags)

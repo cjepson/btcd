@@ -155,6 +155,7 @@ var rpcHandlersBeforeInit = map[string]commandHandler{
 	"decodescript":          handleDecodeScript,
 	"estimatefee":           handleEstimateFee,
 	"existsaddress":         handleExistsAddress,
+	"existsaddresses":       handleExistsAddresses,
 	"existsliveticket":      handleExistsLiveTicket,
 	"existslivetickets":     handleExistsLiveTickets,
 	"existsmempooltxs":      handleExistsMempoolTxs,
@@ -1492,6 +1493,66 @@ func handleExistsAddress(s *rpcServer, cmd interface{},
 	}
 
 	return false, nil
+}
+
+// handleExistsAddresses implements the existsaddresses command.
+func handleExistsAddresses(s *rpcServer, cmd interface{},
+	closeChan <-chan struct{}) (interface{}, error) {
+	if cfg.NoAddrIndex {
+		return nil, &dcrjson.RPCError{
+			Code:    dcrjson.ErrRPCMisc,
+			Message: "Address indexing must be enabled",
+		}
+	}
+	if !s.server.addrIndexer.IsCaughtUp() {
+		return nil, &dcrjson.RPCError{
+			Code: dcrjson.ErrRPCMisc,
+			Message: "Address index has not yet caught up to the " +
+				"current best height",
+		}
+	}
+
+	c := cmd.(*dcrjson.ExistsAddressesCmd)
+	addrsLen := len(c.Addresses)
+	exists := make([]bool, addrsLen)
+	for i := range c.Addresses {
+		exists[i] = false
+
+		// Attempt to decode the supplied address.
+		addr, err := dcrutil.DecodeAddress(c.Addresses[i], s.server.chainParams)
+		if err != nil {
+			return nil, &dcrjson.RPCError{
+				Code:    dcrjson.ErrRPCInvalidAddressOrKey,
+				Message: "Invalid address or key: " + err.Error(),
+			}
+		}
+
+		var numRequested, numToSkip int
+		numToSkip = 0
+		numRequested = 1
+
+		// Check the blockchain for the relevant address usage.
+		tlr, err := s.server.db.FetchTxsForAddr(addr, numToSkip, numRequested)
+		if err == nil && tlr != nil {
+			exists[i] = true
+		}
+
+		// Check the mempool as well.
+		txs := s.server.txMemPool.FindTxForAddr(addr)
+		if len(txs) > 0 {
+			exists[i] = true
+		}
+	}
+
+	// Convert the slice of bools into a compacted set of bit flags.
+	set := bitset.NewBytes(addrsLen)
+	for i := range exists {
+		if exists[i] {
+			set.Set(i)
+		}
+	}
+
+	return hex.EncodeToString([]byte(set)), nil
 }
 
 // handleExistsLiveTicket implements the existsliveticket command.

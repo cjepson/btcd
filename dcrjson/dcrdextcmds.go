@@ -20,6 +20,19 @@ func NewExistsAddressCmd(address string) *ExistsAddressCmd {
 	}
 }
 
+// ExistsAddressesCmd defines the existsaddresses JSON-RPC command.
+type ExistsAddressesCmd struct {
+	Addresses []string
+}
+
+// NewExistsAddressesCmd returns a new instance which can be used to issue an
+// existsaddresses JSON-RPC command.
+func NewExistsAddressesCmd(addresses []string) *ExistsAddressesCmd {
+	return &ExistsAddressesCmd{
+		Addresses: addresses,
+	}
+}
+
 // ExistsLiveTicketCmd defines the existsliveticket JSON-RPC command.
 type ExistsLiveTicketCmd struct {
 	TxHash string
@@ -143,6 +156,7 @@ func init() {
 	flags := UsageFlag(0)
 
 	MustRegisterCmd("existsaddress", (*ExistsAddressCmd)(nil), flags)
+	MustRegisterCmd("existsaddresses", (*ExistsAddressesCmd)(nil), flags)
 	MustRegisterCmd("existsliveticket", (*ExistsLiveTicketCmd)(nil), flags)
 	MustRegisterCmd("existslivetickets", (*ExistsLiveTicketsCmd)(nil), flags)
 	MustRegisterCmd("existsmempooltxs", (*ExistsMempoolTxsCmd)(nil), flags)

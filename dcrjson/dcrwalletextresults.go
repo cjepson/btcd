@@ -5,6 +5,12 @@
 
 package dcrjson
 
+// AccountFetchAddressesResult models the data returned from the
+// accountfetchaddresses command.
+type AccountFetchAddressesResult struct {
+	Addresses []string `json:"addresses"`
+}
+
 // GetMultisigOutInfoResult models the data returned from the getmultisigoutinfo
 // command.
 type GetMultisigOutInfoResult struct {
