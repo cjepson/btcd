@@ -543,6 +543,16 @@ func NewSignRawTransactionsCmd(hexEncodedTxs []string,
 	}
 }
 
+// WalletInfoCmd defines the walletinfo JSON-RPC command.
+type WalletInfoCmd struct {
+}
+
+// NewWalletInfoCmd returns a new instance which can be used to issue a
+// walletinfo JSON-RPC command.
+func NewWalletInfoCmd() *WalletInfoCmd {
+	return &WalletInfoCmd{}
+}
+
 func init() {
 	// The commands in this file are only usable with a wallet
 	// server.
@@ -585,4 +595,5 @@ func init() {
 	MustRegisterCmd("setticketmaxprice", (*SetTicketMaxPriceCmd)(nil), flags)
 	MustRegisterCmd("setticketvotebits", (*SetTicketVoteBitsCmd)(nil), flags)
 	MustRegisterCmd("signrawtransactions", (*SignRawTransactionsCmd)(nil), flags)
+	MustRegisterCmd("walletinfo", (*WalletInfoCmd)(nil), flags)
 }

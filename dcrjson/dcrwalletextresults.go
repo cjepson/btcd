@@ -112,3 +112,15 @@ type SignedTransaction struct {
 type SignRawTransactionsResult struct {
 	Results []SignedTransaction `json:"results"`
 }
+
+// WalletInfoResult models the data returned from the walletinfo
+// command.
+type WalletInfoResult struct {
+	DaemonConnected   bool    `json:"daemonconnected"`
+	Unlocked          bool    `json:"unlocked"`
+	TxFee             float64 `json:"txfee"`
+	TicketFee         float64 `json:"ticketfee"`
+	TicketMaxPrice    float64 `json:"ticketmaxprice"`
+	BalanceToMaintain float64 `json:"balancetomaintain"`
+	StakeMining       bool    `json:"stakemining"`
+}

@@ -4092,7 +4092,7 @@ func handleHelp(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (inter
 	return help, nil
 }
 
-// handleLiveTickets
+// handleLiveTickets implements the livetickets command.
 func handleLiveTickets(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	lt, err := s.server.blockManager.LiveTickets()
 	if err != nil {
@@ -4107,7 +4107,7 @@ func handleLiveTickets(s *rpcServer, cmd interface{}, closeChan <-chan struct{})
 	return dcrjson.LiveTicketsResult{Tickets: ltString}, nil
 }
 
-// handleMissedTickets
+// handleMissedTickets implements the missedtickets command.
 func handleMissedTickets(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	mt, err := s.server.blockManager.MissedTickets()
 	if err != nil {
@@ -4137,6 +4137,7 @@ func handlePing(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (inter
 	return nil, nil
 }
 
+// handleRebroadcastMissed implements the rebroadcastmissed command.
 func handleRebroadcastMissed(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	hash, height := s.server.blockManager.chainState.Best()
 	mt, err := s.server.blockManager.MissedTickets()
