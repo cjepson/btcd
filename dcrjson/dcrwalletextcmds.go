@@ -40,6 +40,7 @@ func NewAccountFetchAddressesCmd(acct string) *AccountAddressIndexCmd {
 // commands.
 type AccountSyncAddressIndexCmd struct {
 	Account string `json:"account"`
+	Branch  int    `json:"branch"`
 	Index   int    `json:"index"`
 }
 
