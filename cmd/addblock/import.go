@@ -30,11 +30,11 @@ type importResults struct {
 // blockImporter houses information about an ongoing import from a block data
 // file to the block database.
 type blockImporter struct {
-	db                database.DB
-	chain             *blockchain.BlockChain
-	medianTime        blockchain.MedianTimeSource
-	r                 io.ReadSeeker
-	processQueue      chan []byte
+	db         database.DB
+	chain      *blockchain.BlockChain
+	medianTime blockchain.MedianTimeSource
+	r          io.ReadSeeker
+	// processQueue      chan []byte
 	doneChan          chan bool
 	errChan           chan error
 	quit              chan struct{}
@@ -84,6 +84,56 @@ func (bi *blockImporter) readBlock() ([]byte, error) {
 	}
 
 	return serializedBlock, nil
+}
+
+// fastImport
+func (bi *blockImporter) fastImport(serializedBlocks [][]byte) (bool, error) {
+	blocks := make([]*btcutil.Block, len(serializedBlocks))
+	for i, sB := range serializedBlocks {
+		// Deserialize the block which includes checks for malformed blocks.
+		block, err := btcutil.NewBlockFromBytes(sB)
+		if err != nil {
+			return false, err
+		}
+
+		// update progress statistics
+		bi.lastBlockTime = block.MsgBlock().Header.Timestamp
+		bi.receivedLogTx += int64(len(block.MsgBlock().Transactions))
+
+		// Skip blocks that already exist.
+		blockSha := block.Sha()
+		exists, err := bi.chain.HaveBlock(blockSha)
+		if err != nil {
+			return false, err
+		}
+		if exists {
+			return false, fmt.Errorf("already have block :( %v", block.Sha())
+		}
+
+		blocks[i] = block
+		/*
+			// Don't bother trying to process orphans.
+			prevHash := &block.MsgBlock().Header.PrevBlock
+			if !prevHash.IsEqual(&zeroHash) {
+				exists, err := bi.chain.HaveBlock(prevHash)
+				if err != nil {
+					return false, err
+				}
+				if !exists {
+					return false, fmt.Errorf("import file contains block "+
+						"%v which does not link to the available "+
+						"block chain", prevHash)
+				}
+			}
+		*/
+	}
+
+	err := bi.chain.FastImportBlocks(blocks)
+	if err != nil {
+		return false, err
+	}
+
+	return true, nil
 }
 
 // processBlock potentially imports the block into the database.  It first
@@ -146,8 +196,25 @@ func (bi *blockImporter) processBlock(serializedBlock []byte) (bool, error) {
 // This allows block processing to take place in parallel with block reads.
 // It must be run as a goroutine.
 func (bi *blockImporter) readHandler() {
+	var blockQueue [][]byte
+	blocksAtATime := cfg.BlockMemBuffer
+	height := int32(0)
+	fmt.Printf("START READ HANDLER\n")
+
 out:
-	for {
+	for ; ; height++ {
+		if height == 0 {
+			// Skip the genesis block.
+			_, err := bi.readBlock()
+			if err != nil {
+				bi.errChan <- fmt.Errorf("Error reading from input "+
+					"file: %v", err.Error())
+				break out
+			}
+
+			continue
+		}
+
 		// Read the next block from the file and if anything goes wrong
 		// notify the status handler with the error and bail.
 		serializedBlock, err := bi.readBlock()
@@ -162,17 +229,41 @@ out:
 			break out
 		}
 
+		bi.blocksProcessed++
+		bi.lastHeight++
+
+		if len(blockQueue) == blocksAtATime {
+			// fmt.Printf("DO FAST IMPORT ON SIZE %v\n", len(blockQueue))
+			blockQueueCopy := make([][]byte, len(blockQueue), len(blockQueue))
+			copy(blockQueueCopy[:], blockQueue[:])
+			_, err := bi.fastImport(blockQueueCopy)
+			if err != nil {
+				fmt.Printf("ERROR %v\n", err)
+			}
+			blockQueue = [][]byte{}
+		}
+
+		blockQueue = append(blockQueue, serializedBlock)
+
+		imported := true
+		if imported {
+			bi.blocksImported++
+		}
+
+		bi.logProgress()
+
 		// Send the block or quit if we've been signalled to exit by
 		// the status handler due to an error elsewhere.
 		select {
-		case bi.processQueue <- serializedBlock:
+		// case bi.processQueue <- serializedBlock:
 		case <-bi.quit:
 			break out
+		default:
 		}
 	}
 
 	// Close the processing channel to signal no more blocks are coming.
-	close(bi.processQueue)
+	// close(bi.processQueue)
 	bi.wg.Done()
 }
 
@@ -213,7 +304,10 @@ func (bi *blockImporter) logProgress() {
 // processHandler is the main handler for processing blocks.  This allows block
 // processing to take place in parallel with block reads from the import file.
 // It must be run as a goroutine.
+/*
 func (bi *blockImporter) processHandler() {
+	var blockQueue [][]byte
+	blocksAtATime := cfg.BlockMemBuffer
 out:
 	for {
 		select {
@@ -225,12 +319,25 @@ out:
 
 			bi.blocksProcessed++
 			bi.lastHeight++
-			imported, err := bi.processBlock(serializedBlock)
-			if err != nil {
-				bi.errChan <- err
-				break out
+
+			if len(blockQueue) == blocksAtATime {
+				fmt.Printf("DO FAST IMPORT ON SIZE %v\n", len(blockQueue))
+				_, err := bi.fastImport(blockQueue)
+				if err != nil {
+					fmt.Printf("ERROR %v\n", err)
+				}
+				blockQueue = [][]byte{}
 			}
 
+			blockQueue = append(blockQueue, serializedBlock)
+
+				imported, err := bi.processBlock(serializedBlock)
+				if err != nil {
+					bi.errChan <- err
+					break out
+
+
+			imported := true
 			if imported {
 				bi.blocksImported++
 			}
@@ -243,6 +350,7 @@ out:
 	}
 	bi.wg.Done()
 }
+*/
 
 // statusHandler waits for updates from the import operation and notifies
 // the passed doneChan with the results of the import.  It also causes all
@@ -275,9 +383,9 @@ func (bi *blockImporter) statusHandler(resultsChan chan *importResults) {
 func (bi *blockImporter) Import() chan *importResults {
 	// Start up the read and process handling goroutines.  This setup allows
 	// blocks to be read from disk in parallel while being processed.
-	bi.wg.Add(2)
+	bi.wg.Add(1)
 	go bi.readHandler()
-	go bi.processHandler()
+	// go bi.processHandler()
 
 	// Wait for the import to finish in a separate goroutine and signal
 	// the status handler when done.
@@ -336,14 +444,14 @@ func newBlockImporter(db database.DB, r io.ReadSeeker) (*blockImporter, error) {
 	}
 
 	return &blockImporter{
-		db:           db,
-		r:            r,
-		processQueue: make(chan []byte, 2),
-		doneChan:     make(chan bool),
-		errChan:      make(chan error),
-		quit:         make(chan struct{}),
-		chain:        chain,
-		medianTime:   blockchain.NewMedianTime(),
-		lastLogTime:  time.Now(),
+		db: db,
+		r:  r,
+		// processQueue: make(chan []byte, cfg.BlockMemBuffer),
+		doneChan:    make(chan bool),
+		errChan:     make(chan error),
+		quit:        make(chan struct{}),
+		chain:       chain,
+		medianTime:  blockchain.NewMedianTime(),
+		lastLogTime: time.Now(),
 	}, nil
 }

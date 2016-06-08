@@ -18,9 +18,10 @@ import (
 )
 
 const (
-	defaultDbType   = "ffldb"
-	defaultDataFile = "bootstrap.dat"
-	defaultProgress = 10
+	defaultDbType         = "ffldb"
+	defaultDataFile       = "bootstrap.dat"
+	defaultProgress       = 10
+	defaultBlockMemBuffer = 2500
 )
 
 var (
@@ -43,6 +44,7 @@ type config struct {
 	TxIndex        bool   `long:"txindex" description:"Build a full hash-based transaction index which makes all transactions available via the getrawtransaction RPC"`
 	AddrIndex      bool   `long:"addrindex" description:"Build a full address-based transaction index which makes the searchrawtransactions RPC available"`
 	Progress       int    `short:"p" long:"progress" description:"Show a progress message each time this number of seconds have passed -- Use 0 to disable progress announcements"`
+	BlockMemBuffer int    `long:"blockmembuffer" description:"Number of blocks to store in memory and then insert into the database at a time"`
 }
 
 // filesExists reports whether the named file or directory exists.
@@ -88,10 +90,11 @@ func netName(chainParams *chaincfg.Params) string {
 func loadConfig() (*config, []string, error) {
 	// Default config.
 	cfg := config{
-		DataDir:  defaultDataDir,
-		DbType:   defaultDbType,
-		InFile:   defaultDataFile,
-		Progress: defaultProgress,
+		DataDir:        defaultDataDir,
+		DbType:         defaultDbType,
+		InFile:         defaultDataFile,
+		Progress:       defaultProgress,
+		BlockMemBuffer: defaultBlockMemBuffer,
 	}
 
 	// Parse command line options.
