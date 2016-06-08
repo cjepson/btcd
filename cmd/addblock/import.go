@@ -199,7 +199,7 @@ func (bi *blockImporter) readHandler() {
 	var blockQueue [][]byte
 	blocksAtATime := cfg.BlockMemBuffer
 	height := int32(0)
-	fmt.Printf("START READ HANDLER\n")
+	//fmt.Printf("START READ HANDLER\n")
 
 out:
 	for ; ; height++ {
@@ -226,6 +226,15 @@ out:
 
 		// A nil block with no error means we're done.
 		if serializedBlock == nil {
+			// fmt.Printf("DO FAST IMPORT ON SIZE %v\n", len(blockQueue))
+			//blockQueueCopy := make([][]byte, len(blockQueue), len(blockQueue))
+			//copy(blockQueueCopy[:], blockQueue[:])
+			_, err := bi.fastImport(blockQueue)
+			if err != nil {
+				fmt.Printf("ERROR %v\n", err)
+			}
+			blockQueue = [][]byte{}
+
 			break out
 		}
 
@@ -234,9 +243,9 @@ out:
 
 		if len(blockQueue) == blocksAtATime {
 			// fmt.Printf("DO FAST IMPORT ON SIZE %v\n", len(blockQueue))
-			blockQueueCopy := make([][]byte, len(blockQueue), len(blockQueue))
-			copy(blockQueueCopy[:], blockQueue[:])
-			_, err := bi.fastImport(blockQueueCopy)
+			//blockQueueCopy := make([][]byte, len(blockQueue), len(blockQueue))
+			//copy(blockQueueCopy[:], blockQueue[:])
+			_, err := bi.fastImport(blockQueue)
 			if err != nil {
 				fmt.Printf("ERROR %v\n", err)
 			}

@@ -103,6 +103,10 @@ func (b *BlockChain) FastImportBlocks(blocks []*btcutil.Block) error {
 			return err
 		}
 
+		b.stateLock.Lock()
+		b.stateSnapshot = state
+		b.stateLock.Unlock()
+
 		return nil
 	})
 	if err != nil {
