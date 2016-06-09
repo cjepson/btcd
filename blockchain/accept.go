@@ -182,8 +182,8 @@ func (b *BlockChain) checkBlockContext(block *dcrutil.Block, prevNode *blockNode
 //    notification will be sent since the block is not being accepted.
 func (b *BlockChain) maybeAcceptBlock(block *dcrutil.Block,
 	flags BehaviorFlags) (bool, error) {
-//
-// This function MUST be called with the chain state lock held (for writes).
+	//
+	// This function MUST be called with the chain state lock held (for writes).
 	dryRun := flags&BFDryRun == BFDryRun
 
 	// Get a block node for the block previous to this one.  Will be nil

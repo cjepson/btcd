@@ -445,6 +445,8 @@ func writeTicketDataToBuf(buf *bytes.Buffer, td *stake.TicketData) {
 
 // DebugTxStoreData returns a string containing information about the data
 // stored in the given TxStore.
+/*
+CJ TODO New debug function for UTXO viewpoints?
 func DebugTxStoreData(txs TxStore) string {
 	if txs == nil {
 		return ""
@@ -467,6 +469,7 @@ func DebugTxStoreData(txs TxStore) string {
 
 	return buffer.String()
 }
+*/
 
 // TicketDbThumbprint takes all the tickets in the respective ticket db,
 // sorts them, hashes their contents into a list, and then hashes that list.
@@ -566,11 +569,12 @@ func TicketDbThumbprint(tmdb *stake.TicketDB, chainParams *chaincfg.Params) ([]*
 // findWhereDoubleSpent determines where a tx was previously doublespent.
 // VERY INTENSIVE BLOCKCHAIN SCANNING, USE TO DEBUG SIMULATED BLOCKCHAINS
 // ONLY.
+/*
 func (b *BlockChain) findWhereDoubleSpent(block *dcrutil.Block) error {
 	height := int64(1)
 	heightEnd := block.Height()
 
-	hashes, err := b.db.FetchHeightRange(height, heightEnd)
+	hashes, err := db(height, heightEnd)
 	if err != nil {
 		return err
 	}
@@ -642,3 +646,4 @@ func (b *BlockChain) findWhereDoubleSpent(block *dcrutil.Block) error {
 
 	return nil
 }
+*/

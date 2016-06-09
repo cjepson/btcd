@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/decred/dcrd/chaincfg"
+	"github.com/decred/dcrd/chaincfg/chainhash"
 	database "github.com/decred/dcrd/database2"
 	"github.com/decred/dcrd/txscript"
 	"github.com/decred/dcrutil"

@@ -7,6 +7,7 @@ package blockchain
 
 import (
 	"github.com/decred/dcrd/chaincfg/chainhash"
+	database "github.com/decred/dcrd/database2"
 	"github.com/decred/dcrd/wire"
 )
 
@@ -39,7 +40,7 @@ type BlockLocator []*chainhash.Hash
 //    consist of the passed hash
 //
 // This function MUST be called with the chain state lock held (for reads).
-func (b *BlockChain) BlockLocatorFromHash(hash *chainhash.Hash) BlockLocator {
+func (b *BlockChain) blockLocatorFromHash(hash *chainhash.Hash) BlockLocator {
 	// The locator contains the requested hash at the very least.
 	locator := make(BlockLocator, 0, wire.MaxBlockLocatorsPerMsg)
 	locator = append(locator, hash)
@@ -59,7 +60,7 @@ func (b *BlockChain) BlockLocatorFromHash(hash *chainhash.Hash) BlockLocator {
 		// Try to look up the height for passed block hash.  Assume an
 		// error means it doesn't exist and just return the locator for
 		// the block itself.
-		var height int32
+		var height int64
 		err := b.db.View(func(dbTx database.Tx) error {
 			var err error
 			height, err = dbFetchHeightByHash(dbTx, hash)
@@ -160,7 +161,7 @@ func (b *BlockChain) BlockLocatorFromHash(hash *chainhash.Hash) BlockLocator {
 //    consist of the passed hash
 //
 // This function is safe for concurrent access.
-func (b *BlockChain) BlockLocatorFromHash(hash *wire.ShaHash) BlockLocator {
+func (b *BlockChain) BlockLocatorFromHash(hash *chainhash.Hash) BlockLocator {
 	b.chainLock.RLock()
 	locator := b.blockLocatorFromHash(hash)
 	b.chainLock.RUnlock()

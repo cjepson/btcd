@@ -6,6 +6,7 @@
 package blockchain
 
 import (
+	"fmt"
 	"math/big"
 	"time"
 
@@ -746,7 +747,7 @@ func (b *BlockChain) calcNextRequiredStakeDifficulty(curNode *blockNode) (int64,
 // CalcNextRequiredStakeDifficulty is the exported version of the above function.
 // This function is NOT safe for concurrent access.
 func (b *BlockChain) CalcNextRequiredStakeDifficulty() (int64, error) {
-	return b.calcNextRequiredStakeDifficulty(b.bestChain)
+	return b.calcNextRequiredStakeDifficulty(b.bestNode)
 }
 
 // estimateNextStakeDifficulty returns a user-specified estimate for the next
@@ -1068,6 +1069,6 @@ func (b *BlockChain) estimateNextStakeDifficulty(curNode *blockNode,
 // This function is NOT safe for concurrent access.
 func (b *BlockChain) EstimateNextStakeDifficulty(ticketsInWindow int64,
 	useMaxTickets bool) (int64, error) {
-	return b.estimateNextStakeDifficulty(b.bestChain, ticketsInWindow,
+	return b.estimateNextStakeDifficulty(b.bestNode, ticketsInWindow,
 		useMaxTickets)
 }

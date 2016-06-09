@@ -377,8 +377,7 @@ func CountSigOps(tx *dcrutil.Tx, isCoinBaseTx bool, isSSGen bool) int {
 // transactions which are of the pay-to-script-hash type.  This uses the
 // precise, signature operation counting mechanism from the script engine which
 // requires access to the input transaction scripts.
-func CountP2SHSigOps(tx *dcrutil.Tx, isCoinBaseTx bool,isStakeBaseTx bool, utxoView *UtxoViewpoint) (int, error) {
-	txStore TxStore) (int, error) {
+func CountP2SHSigOps(tx *dcrutil.Tx, isCoinBaseTx bool, isStakeBaseTx bool, utxoView *UtxoViewpoint) (int, error) {
 	// Coinbase transactions have no interesting inputs.
 	if isCoinBaseTx {
 		return 0, nil
@@ -678,7 +677,7 @@ func CheckWorklessBlockSanity(block *dcrutil.Block, timeSource MedianTimeSource,
 // ExtractCoinbaseHeight attempts to extract the height of the block from the
 // scriptSig of a coinbase transaction.  Coinbase heights are only present in
 // blocks of version 2 or later.  This was added as part of BIP0034.
-func ExtractCoinbaseHeight(coinbaseTx *btcutil.Tx) (int32, error) {
+func ExtractCoinbaseHeight(coinbaseTx *chainhash.Hash) (int32, error) {
 	sigScript := coinbaseTx.MsgTx().TxIn[0].SignatureScript
 	if len(sigScript) < 1 {
 		str := "the coinbase signature script for blocks of " +
@@ -706,7 +705,7 @@ func ExtractCoinbaseHeight(coinbaseTx *btcutil.Tx) (int32, error) {
 
 // checkSerializedHeight checks if the signature script in the passed
 // transaction starts with the serialized block height of wantHeight.
-func checkSerializedHeight(coinbaseTx *btcutil.Tx, wantHeight int32) error {
+func checkSerializedHeight(coinbaseTx *chainhash.Hash, wantHeight int32) error {
 	serializedHeight, err := ExtractCoinbaseHeight(coinbaseTx)
 	if err != nil {
 		return err
@@ -875,7 +874,6 @@ func (b *BlockChain) checkDupTxs(node *blockNode, parentNode *blockNode,
 	if parentNode == nil {
 		return nil
 	}
-
 
 	// Parent TxTreeRegular (if applicable).
 	regularTxTreeValid := dcrutil.IsFlagSet16(node.header.VoteBits,
@@ -1183,8 +1181,8 @@ func (b *BlockChain) CheckBlockStakeSanity(tixStore TicketStore,
 	//     used.
 	for _, ticketHash := range ticketSlice {
 		ticketsWhichCouldBeUsed[ticketHash] = struct{}{}
-	// Fetch utxo details for all of the transactions in this block.
-	// Typically, there will not be any utxos for any of the transactions.
+		// Fetch utxo details for all of the transactions in this block.
+		// Typically, there will not be any utxos for any of the transactions.
 	}
 
 	for _, staketx := range stakeTransactions {
@@ -1787,86 +1785,86 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64, utxoView *UtxoViewpo
 			continue
 		}
 
-			return 0, ruleError(ErrMissingTx, str)
+		return 0, ruleError(ErrMissingTx, str)
+	}
+
+	// Check fraud proof witness data.
+	originTxIndex := txIn.PreviousOutPoint.Index
+
+	// Using zero value outputs as inputs is banned.
+	if originTx.Tx.MsgTx().TxOut[originTxIndex].Value == 0 {
+		str := fmt.Sprintf("tried to spend zero value output from input %v,"+
+			" idx %v",
+			originTx.Tx.Sha(),
+			originTxIndex)
+		return 0, ruleError(ErrZeroValueOutputSpend, str)
+	}
+
+	if checkFraudProof {
+		if txIn.ValueIn !=
+			originTx.Tx.MsgTx().TxOut[originTxIndex].Value {
+			str := fmt.Sprintf("bad fraud check value in (expected %v, "+
+				"given %v) for txIn %v",
+				originTx.Tx.MsgTx().TxOut[originTxIndex].Value,
+				txIn.ValueIn, idx)
+			return 0, ruleError(ErrFraudAmountIn, str)
 		}
 
-		// Check fraud proof witness data.
-		originTxIndex := txIn.PreviousOutPoint.Index
-
-		// Using zero value outputs as inputs is banned.
-		if originTx.Tx.MsgTx().TxOut[originTxIndex].Value == 0 {
-			str := fmt.Sprintf("tried to spend zero value output from input %v,"+
-				" idx %v",
-				originTx.Tx.Sha(),
-				originTxIndex)
-			return 0, ruleError(ErrZeroValueOutputSpend, str)
+		if int64(txIn.BlockHeight) != originTx.BlockHeight {
+			str := fmt.Sprintf("bad fraud check block height (expected %v, "+
+				"given %v) for txIn %v", originTx.BlockHeight,
+				txIn.BlockHeight, idx)
+			return 0, ruleError(ErrFraudBlockHeight, str)
 		}
 
-		if checkFraudProof {
-			if txIn.ValueIn !=
-				originTx.Tx.MsgTx().TxOut[originTxIndex].Value {
-				str := fmt.Sprintf("bad fraud check value in (expected %v, "+
-					"given %v) for txIn %v",
-					originTx.Tx.MsgTx().TxOut[originTxIndex].Value,
-					txIn.ValueIn, idx)
-				return 0, ruleError(ErrFraudAmountIn, str)
-			}
-
-			if int64(txIn.BlockHeight) != originTx.BlockHeight {
-				str := fmt.Sprintf("bad fraud check block height (expected %v, "+
-					"given %v) for txIn %v", originTx.BlockHeight,
-					txIn.BlockHeight, idx)
-				return 0, ruleError(ErrFraudBlockHeight, str)
-			}
-
-			if txIn.BlockIndex != originTx.BlockIndex {
-				str := fmt.Sprintf("bad fraud check block index (expected %v, "+
-					"given %v) for txIn %v", originTx.BlockIndex, txIn.BlockIndex,
-					idx)
-				return 0, ruleError(ErrFraudBlockIndex, str)
-			}
+		if txIn.BlockIndex != originTx.BlockIndex {
+			str := fmt.Sprintf("bad fraud check block index (expected %v, "+
+				"given %v) for txIn %v", originTx.BlockIndex, txIn.BlockIndex,
+				idx)
+			return 0, ruleError(ErrFraudBlockIndex, str)
 		}
+	}
 
-		// Ensure the transaction is not spending coins which have not
-		// yet reached the required coinbase maturity.
-		coinbaseMaturity := int64(chainParams.CoinbaseMaturity)
-			originHeight := int32(utxoEntry.BlockHeight())
-		if IsCoinBase(originTx.Tx) {
-			originHeight := originTx.BlockHeight
-			blocksSincePrev := txHeight - originHeight
-			if blocksSincePrev < coinbaseMaturity {
-				str := fmt.Sprintf("tx %v tried to spend coinbase "+
-					"transaction %v from height %v at "+
-					"height %v before required maturity "+
-					"of %v blocks", txHash, txInHash, originHeight,
-					originHeight, txHeight,
-					coinbaseMaturity)
-				return 0, ruleError(ErrImmatureSpend, str)
-			}
+	// Ensure the transaction is not spending coins which have not
+	// yet reached the required coinbase maturity.
+	coinbaseMaturity := int64(chainParams.CoinbaseMaturity)
+	originHeight := int32(utxoEntry.BlockHeight())
+	if IsCoinBase(originTx.Tx) {
+		originHeight := originTx.BlockHeight
+		blocksSincePrev := txHeight - originHeight
+		if blocksSincePrev < coinbaseMaturity {
+			str := fmt.Sprintf("tx %v tried to spend coinbase "+
+				"transaction %v from height %v at "+
+				"height %v before required maturity "+
+				"of %v blocks", txHash, txInHash, originHeight,
+				originHeight, txHeight,
+				coinbaseMaturity)
+			return 0, ruleError(ErrImmatureSpend, str)
 		}
+	}
 
-		// Ensure that the transaction is not spending coins from a
-		// transaction that included an expiry but which has not yet
-		// reached coinbase maturity many blocks.
-		if originTx.Tx.MsgTx().Expiry != wire.NoExpiryValue {
-			originHeight := originTx.BlockHeight
-			blocksSincePrev := txHeight - originHeight
-			if blocksSincePrev < coinbaseMaturity {
-				str := fmt.Sprintf("tx %v tried to spend "+
-					"transaction %v including an expiry "+
-					"from height %v at height %v before "+
-					"required maturity of %v blocks",
-					txHash, txInHash, originHeight,
-					txHeight, coinbaseMaturity)
-				return 0, ruleError(ErrExpiryTxSpentEarly, str)
-			}
+	// Ensure that the transaction is not spending coins from a
+	// transaction that included an expiry but which has not yet
+	// reached coinbase maturity many blocks.
+	if originTx.Tx.MsgTx().Expiry != wire.NoExpiryValue {
+		originHeight := originTx.BlockHeight
+		blocksSincePrev := txHeight - originHeight
+		if blocksSincePrev < coinbaseMaturity {
+			str := fmt.Sprintf("tx %v tried to spend "+
+				"transaction %v including an expiry "+
+				"from height %v at height %v before "+
+				"required maturity of %v blocks",
+				txHash, txInHash, originHeight,
+				txHeight, coinbaseMaturity)
+			return 0, ruleError(ErrExpiryTxSpentEarly, str)
 		}
+	}
 
-		// Ensure the transaction is not double spending coins.
-		if utxoEntry.IsOutputSpent(originTxIndex) {
-			str := fmt.Sprintf("transaction %s:%d tried to double "+
-				"spend output %v", txHash, txInIndex,
-				txIn.PreviousOutPoint)
+	// Ensure the transaction is not double spending coins.
+	if utxoEntry.IsOutputSpent(originTxIndex) {
+		str := fmt.Sprintf("transaction %s:%d tried to double "+
+			"spend output %v", txHash, txInIndex,
+			txIn.PreviousOutPoint)
 		if originTxIndex >= uint32(len(originTx.Spent)) {
 			str := fmt.Sprintf("out of bounds input index %d in "+
 				"transaction %v referenced from transaction %v",
@@ -1970,7 +1968,6 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64, utxoView *UtxoViewpo
 			str := fmt.Sprintf("transaction output value of %v is "+
 				"higher than max allowed value of %v",
 				originTxAtom, dcrutil.MaxAmount)
-				btcutil.MaxSatoshi)
 			return 0, ruleError(ErrBadTxOutValue, str)
 		}
 

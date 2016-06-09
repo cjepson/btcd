@@ -196,8 +196,6 @@ func newTxValidator(utxoView *UtxoViewpoint, flags txscript.ScriptFlags, sigCach
 // ValidateTransactionScripts validates the scripts for the passed transaction
 // using multiple goroutines.
 func ValidateTransactionScripts(tx *dcrutil.Tx, utxoView *UtxoViewpoint, flags txscript.ScriptFlags, sigCache *txscript.SigCache) error {
-	flags txscript.ScriptFlags, sigCache *txscript.SigCache) error {
-
 	// Collect all of the transaction inputs and required information for
 	// validation.
 	txIns := tx.MsgTx().TxIn

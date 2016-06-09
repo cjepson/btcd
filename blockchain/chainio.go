@@ -11,9 +11,10 @@ import (
 	"math/big"
 	"sort"
 
-	database "github.com/btcsuite/btcd/database2"
-	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
+	"github.com/decred/dcrd/chaincfg/chainhash"
+	database "github.com/decred/dcrd/database2"
+	"github.com/decred/dcrd/wire"
+	"github.com/decred/dcrutil"
 )
 
 const (
@@ -325,7 +326,7 @@ func deserializeSpendJournalEntry(serialized []byte, txns []*wire.MsgTx, view *U
 	// Loop backwards through all transactions so everything is read in
 	// reverse order to match the serialization order.
 	stxoIdx := numStxos - 1
-	stxoInFlight := make(map[wire.ShaHash]int)
+	stxoInFlight := make(map[chainhash.Hash]int)
 	offset := 0
 	stxos := make([]spentTxOut, numStxos)
 	for txIdx := len(txns) - 1; txIdx > -1; txIdx-- {
@@ -409,7 +410,7 @@ func serializeSpendJournalEntry(stxos []spentTxOut) []byte {
 // view MUST have the utxos referenced by all of the transactions available for
 // the passed block since that information is required to reconstruct the spent
 // txouts.
-func dbFetchSpendJournalEntry(dbTx database.Tx, block *btcutil.Block, view *UtxoViewpoint) ([]spentTxOut, error) {
+func dbFetchSpendJournalEntry(dbTx database.Tx, block *dcrutil.Block, view *UtxoViewpoint) ([]spentTxOut, error) {
 	// Exclude the coinbase transaction since it can't spend anything.
 	spendBucket := dbTx.Metadata().Bucket(spendJournalBucketName)
 	serialized := spendBucket.Get(block.Sha()[:])
@@ -437,7 +438,7 @@ func dbFetchSpendJournalEntry(dbTx database.Tx, block *btcutil.Block, view *Utxo
 // spend journal entry for the given block hash using the provided slice of
 // spent txouts.   The spent txouts slice must contain an entry for every txout
 // the transactions in the block spend in the order they are spent.
-func dbPutSpendJournalEntry(dbTx database.Tx, blockHash *wire.ShaHash, stxos []spentTxOut) error {
+func dbPutSpendJournalEntry(dbTx database.Tx, blockHash *chainhash.Hash, stxos []spentTxOut) error {
 	spendBucket := dbTx.Metadata().Bucket(spendJournalBucketName)
 	serialized := serializeSpendJournalEntry(stxos)
 	return spendBucket.Put(blockHash[:], serialized)
@@ -445,7 +446,7 @@ func dbPutSpendJournalEntry(dbTx database.Tx, blockHash *wire.ShaHash, stxos []s
 
 // dbRemoveSpendJournalEntry uses an existing database transaction to remove the
 // spend journal entry for the passed block hash.
-func dbRemoveSpendJournalEntry(dbTx database.Tx, blockHash *wire.ShaHash) error {
+func dbRemoveSpendJournalEntry(dbTx database.Tx, blockHash *chainhash.Hash) error {
 	spendBucket := dbTx.Metadata().Bucket(spendJournalBucketName)
 	return spendBucket.Delete(blockHash[:])
 }
@@ -788,7 +789,7 @@ func deserializeUtxoEntry(serialized []byte) (*UtxoEntry, error) {
 //
 // When there is no entry for the provided hash, nil will be returned for the
 // both the entry and the error.
-func dbFetchUtxoEntry(dbTx database.Tx, hash *wire.ShaHash) (*UtxoEntry, error) {
+func dbFetchUtxoEntry(dbTx database.Tx, hash *chainhash.Hash) (*UtxoEntry, error) {
 	// Fetch the unspent transaction output information for the passed
 	// transaction hash.  Return now when there is no entry.
 	utxoBucket := dbTx.Metadata().Bucket(utxoSetBucketName)
@@ -881,14 +882,14 @@ func dbPutUtxoView(dbTx database.Tx, view *UtxoViewpoint) error {
 // The serialized format for values in the height to hash bucket is:
 //   <hash>
 //
-//   Field      Type           Size
-//   hash       wire.ShaHash   wire.HashSize
+//   Field      Type             Size
+//   hash       chainhash.Hash   chainhash.Hash
 // -----------------------------------------------------------------------------
 
 // dbPutBlockIndex uses an existing database transaction to update or add the
 // block index entries for the hash to height and height to hash mappings for
 // the provided values.
-func dbPutBlockIndex(dbTx database.Tx, hash *wire.ShaHash, height int32) error {
+func dbPutBlockIndex(dbTx database.Tx, hash *chainhash.Hash, height int64) error {
 	// Serialize the height for use in the index entries.
 	var serializedHeight [4]byte
 	byteOrder.PutUint32(serializedHeight[:], uint32(height))
@@ -908,7 +909,7 @@ func dbPutBlockIndex(dbTx database.Tx, hash *wire.ShaHash, height int32) error {
 // dbRemoveBlockIndex uses an existing database transaction remove block index
 // entries from the hash to height and height to hash mappings for the provided
 // values.
-func dbRemoveBlockIndex(dbTx database.Tx, hash *wire.ShaHash, height int32) error {
+func dbRemoveBlockIndex(dbTx database.Tx, hash *chainhash.Hash, height int64) error {
 	// Remove the block hash to height mapping.
 	meta := dbTx.Metadata()
 	hashIndex := meta.Bucket(hashIndexBucketName)
@@ -925,7 +926,7 @@ func dbRemoveBlockIndex(dbTx database.Tx, hash *wire.ShaHash, height int32) erro
 
 // dbFetchHeightByHash uses an existing database transaction to retrieve the
 // height for the provided hash from the index.
-func dbFetchHeightByHash(dbTx database.Tx, hash *wire.ShaHash) (int32, error) {
+func dbFetchHeightByHash(dbTx database.Tx, hash *chainhash.Hash) (int64, error) {
 	meta := dbTx.Metadata()
 	hashIndex := meta.Bucket(hashIndexBucketName)
 	serializedHeight := hashIndex.Get(hash[:])
@@ -934,12 +935,12 @@ func dbFetchHeightByHash(dbTx database.Tx, hash *wire.ShaHash) (int32, error) {
 		return 0, errNotInMainChain(str)
 	}
 
-	return int32(byteOrder.Uint32(serializedHeight)), nil
+	return int64(byteOrder.Uint32(serializedHeight)), nil
 }
 
 // dbFetchHashByHeight uses an existing database transaction to retrieve the
 // hash for the provided height from the index.
-func dbFetchHashByHeight(dbTx database.Tx, height int32) (*wire.ShaHash, error) {
+func dbFetchHashByHeight(dbTx database.Tx, height int64) (*chainhash.Hash, error) {
 	var serializedHeight [4]byte
 	byteOrder.PutUint32(serializedHeight[:], uint32(height))
 
@@ -951,7 +952,7 @@ func dbFetchHashByHeight(dbTx database.Tx, height int32) (*wire.ShaHash, error) 
 		return nil, errNotInMainChain(str)
 	}
 
-	var hash wire.ShaHash
+	var hash chainhash.Hash
 	copy(hash[:], hashBytes)
 	return &hash, nil
 }
@@ -965,18 +966,18 @@ func dbFetchHashByHeight(dbTx database.Tx, height int32) (*wire.ShaHash, error) 
 //
 //   <block hash><block height><total txns><work sum length><work sum>
 //
-//   Field             Type           Size
-//   block hash        wire.ShaHash   wire.HashSize
-//   block height      uint32         4 bytes
-//   total txns        uint64         8 bytes
-//   work sum length   uint32         4 bytes
-//   work sum          big.Int        work sum length
+//   Field             Type             Size
+//   block hash        chainhash.Hash   chainhash.HashSize
+//   block height      uint32           4 bytes
+//   total txns        uint64           8 bytes
+//   work sum length   uint32           4 bytes
+//   work sum          big.Int          work sum length
 // -----------------------------------------------------------------------------
 
 // bestChainState represents the data to be stored the database for the current
 // best chain state.
 type bestChainState struct {
-	hash      wire.ShaHash
+	hash      chainhash.Hash
 	height    uint32
 	totalTxns uint64
 	workSum   *big.Int
@@ -988,12 +989,12 @@ func serializeBestChainState(state bestChainState) []byte {
 	// Calculate the full size needed to serialize the chain state.
 	workSumBytes := state.workSum.Bytes()
 	workSumBytesLen := uint32(len(workSumBytes))
-	serializedLen := wire.HashSize + 4 + 8 + 4 + workSumBytesLen
+	serializedLen := chainhash.HashSize + 4 + 8 + 4 + workSumBytesLen
 
 	// Serialize the chain state.
 	serializedData := make([]byte, serializedLen)
-	copy(serializedData[0:wire.HashSize], state.hash[:])
-	offset := uint32(wire.HashSize)
+	copy(serializedData[0:chainhash.HashSize], state.hash[:])
+	offset := uint32(chainhash.HashSize)
 	byteOrder.PutUint32(serializedData[offset:], state.height)
 	offset += 4
 	byteOrder.PutUint64(serializedData[offset:], state.totalTxns)
@@ -1011,7 +1012,7 @@ func serializeBestChainState(state bestChainState) []byte {
 func deserializeBestChainState(serializedData []byte) (bestChainState, error) {
 	// Ensure the serialized data has enough bytes to properly deserialize
 	// the hash, height, total transactions, and work sum length.
-	if len(serializedData) < wire.HashSize+16 {
+	if len(serializedData) < chainhash.HashSize+16 {
 		return bestChainState{}, database.Error{
 			ErrorCode:   database.ErrCorruption,
 			Description: "corrupt best chain state",
@@ -1019,8 +1020,8 @@ func deserializeBestChainState(serializedData []byte) (bestChainState, error) {
 	}
 
 	state := bestChainState{}
-	copy(state.hash[:], serializedData[0:wire.HashSize])
-	offset := uint32(wire.HashSize)
+	copy(state.hash[:], serializedData[0:chainhash.HashSize])
+	offset := uint32(chainhash.HashSize)
 	state.height = byteOrder.Uint32(serializedData[offset : offset+4])
 	offset += 4
 	state.totalTxns = byteOrder.Uint64(serializedData[offset : offset+8])
@@ -1063,9 +1064,9 @@ func dbPutBestState(dbTx database.Tx, snapshot *BestState, workSum *big.Int) err
 func (b *BlockChain) createChainState() error {
 	// Create a new node from the genesis block and set it as both the root
 	// node and the best node.
-	genesisBlock := btcutil.NewBlock(b.chainParams.GenesisBlock)
+	genesisBlock := dcrutil.NewBlock(b.chainParams.GenesisBlock)
 	header := &genesisBlock.MsgBlock().Header
-	node := newBlockNode(header, genesisBlock.Sha(), 0)
+	node := newBlockNode(header, genesisBlock.Sha(), 0, []uint16{})
 	node.inMainChain = true
 	b.bestNode = node
 	b.root = node
@@ -1164,8 +1165,10 @@ func (b *BlockChain) initChainState() error {
 		// Create a new node and set it as both the root node and the
 		// best node.  The preceding nodes will be loaded on demand as
 		// needed.
+		// TODO CJ Get vote bits from db
 		header := &block.Header
-		node := newBlockNode(header, &state.hash, int32(state.height))
+		node := newBlockNode(header, &state.hash, int64(state.height),
+			[]uint16{})
 		node.inMainChain = true
 		node.workSum = state.workSum
 		b.bestNode = node
@@ -1201,7 +1204,7 @@ func (b *BlockChain) initChainState() error {
 
 // dbFetchHeaderByHash uses an existing database transaction to retrieve the
 // block header for the provided hash.
-func dbFetchHeaderByHash(dbTx database.Tx, hash *wire.ShaHash) (*wire.BlockHeader, error) {
+func dbFetchHeaderByHash(dbTx database.Tx, hash *chainhash.Hash) (*wire.BlockHeader, error) {
 	headerBytes, err := dbTx.FetchBlockHeader(hash)
 	if err != nil {
 		return nil, err
@@ -1218,7 +1221,7 @@ func dbFetchHeaderByHash(dbTx database.Tx, hash *wire.ShaHash) (*wire.BlockHeade
 
 // dbFetchHeaderByHeight uses an existing database transaction to retrieve the
 // block header for the provided height.
-func dbFetchHeaderByHeight(dbTx database.Tx, height int32) (*wire.BlockHeader, error) {
+func dbFetchHeaderByHeight(dbTx database.Tx, height int64) (*wire.BlockHeader, error) {
 	hash, err := dbFetchHashByHeight(dbTx, height)
 	if err != nil {
 		return nil, err
@@ -1229,8 +1232,8 @@ func dbFetchHeaderByHeight(dbTx database.Tx, height int32) (*wire.BlockHeader, e
 
 // dbFetchBlockByHash uses an existing database transaction to retrieve the raw
 // block for the provided hash, deserialize it, retrieve the appropriate height
-// from the index, and return a btcutil.Block with the height set.
-func dbFetchBlockByHash(dbTx database.Tx, hash *wire.ShaHash) (*btcutil.Block, error) {
+// from the index, and return a dcrutil.Block with the height set.
+func dbFetchBlockByHash(dbTx database.Tx, hash *chainhash.Hash) (*dcrutil.Block, error) {
 	// First find the height associated with the provided hash in the index.
 	blockHeight, err := dbFetchHeightByHash(dbTx, hash)
 	if err != nil {
@@ -1244,7 +1247,7 @@ func dbFetchBlockByHash(dbTx database.Tx, hash *wire.ShaHash) (*btcutil.Block, e
 	}
 
 	// Create the encapsulated block and set the height appropriately.
-	block, err := btcutil.NewBlockFromBytes(blockBytes)
+	block, err := dcrutil.NewBlockFromBytes(blockBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -1254,9 +1257,9 @@ func dbFetchBlockByHash(dbTx database.Tx, hash *wire.ShaHash) (*btcutil.Block, e
 }
 
 // dbFetchBlockByHeight uses an existing database transaction to retrieve the
-// raw block for the provided height, deserialize it, and return a btcutil.Block
+// raw block for the provided height, deserialize it, and return a dcrutil.Block
 // with the height set.
-func dbFetchBlockByHeight(dbTx database.Tx, height int32) (*btcutil.Block, error) {
+func dbFetchBlockByHeight(dbTx database.Tx, height int64) (*dcrutil.Block, error) {
 	// First find the hash associated with the provided height in the index.
 	hash, err := dbFetchHashByHeight(dbTx, height)
 	if err != nil {
@@ -1270,7 +1273,7 @@ func dbFetchBlockByHeight(dbTx database.Tx, height int32) (*btcutil.Block, error
 	}
 
 	// Create the encapsulated block and set the height appropriately.
-	block, err := btcutil.NewBlockFromBytes(blockBytes)
+	block, err := dcrutil.NewBlockFromBytes(blockBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -1281,7 +1284,7 @@ func dbFetchBlockByHeight(dbTx database.Tx, height int32) (*btcutil.Block, error
 
 // dbMainChainHasBlock uses an existing database transaction to return whether
 // or not the main chain contains the block identified by the provided hash.
-func dbMainChainHasBlock(dbTx database.Tx, hash *wire.ShaHash) bool {
+func dbMainChainHasBlock(dbTx database.Tx, hash *chainhash.Hash) bool {
 	hashIndex := dbTx.Metadata().Bucket(hashIndexBucketName)
 	return hashIndex.Get(hash[:]) != nil
 }
@@ -1290,8 +1293,8 @@ func dbMainChainHasBlock(dbTx database.Tx, hash *wire.ShaHash) bool {
 // main chain.
 //
 // This function is safe for concurrent access.
-func (b *BlockChain) BlockHeightByHash(hash *wire.ShaHash) (int32, error) {
-	var height int32
+func (b *BlockChain) BlockHeightByHash(hash *chainhash.Hash) (int64, error) {
+	var height int64
 	err := b.db.View(func(dbTx database.Tx) error {
 		var err error
 		height, err = dbFetchHeightByHash(dbTx, hash)
@@ -1304,8 +1307,8 @@ func (b *BlockChain) BlockHeightByHash(hash *wire.ShaHash) (int32, error) {
 // main chain.
 //
 // This function is safe for concurrent access.
-func (b *BlockChain) BlockHashByHeight(blockHeight int32) (*wire.ShaHash, error) {
-	var hash *wire.ShaHash
+func (b *BlockChain) BlockHashByHeight(blockHeight int64) (*chainhash.Hash, error) {
+	var hash *chainhash.Hash
 	err := b.db.View(func(dbTx database.Tx) error {
 		var err error
 		hash, err = dbFetchHashByHeight(dbTx, blockHeight)
@@ -1317,8 +1320,8 @@ func (b *BlockChain) BlockHashByHeight(blockHeight int32) (*wire.ShaHash, error)
 // BlockByHeight returns the block at the given height in the main chain.
 //
 // This function is safe for concurrent access.
-func (b *BlockChain) BlockByHeight(blockHeight int32) (*btcutil.Block, error) {
-	var block *btcutil.Block
+func (b *BlockChain) BlockByHeight(blockHeight int64) (*dcrutil.Block, error) {
+	var block *dcrutil.Block
 	err := b.db.View(func(dbTx database.Tx) error {
 		var err error
 		block, err = dbFetchBlockByHeight(dbTx, blockHeight)
@@ -1331,8 +1334,8 @@ func (b *BlockChain) BlockByHeight(blockHeight int32) (*btcutil.Block, error) {
 // the appropriate chain height set.
 //
 // This function is safe for concurrent access.
-func (b *BlockChain) BlockByHash(hash *wire.ShaHash) (*btcutil.Block, error) {
-	var block *btcutil.Block
+func (b *BlockChain) BlockByHash(hash *chainhash.Hash) (*dcrutil.Block, error) {
+	var block *dcrutil.Block
 	err := b.db.View(func(dbTx database.Tx) error {
 		var err error
 		block, err = dbFetchBlockByHash(dbTx, hash)
@@ -1346,7 +1349,7 @@ func (b *BlockChain) BlockByHash(hash *wire.ShaHash) (*btcutil.Block, error) {
 // height.  The end height will be limited to the current main chain height.
 //
 // This function is safe for concurrent access.
-func (b *BlockChain) HeightRange(startHeight, endHeight int32) ([]wire.ShaHash, error) {
+func (b *BlockChain) HeightRange(startHeight, endHeight int64) ([]chainhash.Hash, error) {
 	// Ensure requested heights are sane.
 	if startHeight < 0 {
 		return nil, fmt.Errorf("start height of fetch range must not "+
@@ -1382,9 +1385,9 @@ func (b *BlockChain) HeightRange(startHeight, endHeight int32) ([]wire.ShaHash, 
 	}
 
 	// Fetch as many as are available within the specified range.
-	var hashList []wire.ShaHash
+	var hashList []chainhash.Hash
 	err := b.db.View(func(dbTx database.Tx) error {
-		hashes := make([]wire.ShaHash, 0, endHeight-startHeight)
+		hashes := make([]chainhash.Hash, 0, endHeight-startHeight)
 		for i := startHeight; i < endHeight; i++ {
 			hash, err := dbFetchHashByHeight(dbTx, i)
 			if err != nil {
