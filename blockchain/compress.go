@@ -146,12 +146,6 @@ func serializeScriptSize(pkScript []byte) int {
 
 // putVersionedScript
 func putVersionedScript(target []byte, version uint16, pkScript) int {
-	if preCompressed {
-		offset := putVLQ(target, amount)
-		copy(target[offset:], pkScript)
-		return offset + len(pkScript)
-	}
-
 	offset := putVLQ(target, compressTxOutAmount(amount))
 	offset += putCompressedScript(target[offset:], pkScript)
 	return offset
