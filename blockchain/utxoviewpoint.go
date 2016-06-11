@@ -27,23 +27,10 @@ import (
 // provides a mechanism to avoid the overhead of needlessly uncompressing all
 // outputs for a given utxo entry at the time of load.
 type utxoOutput struct {
-	spent      bool   // Output is spent.
-	compressed bool   // The amount and public key script are compressed.
-	amount     int64  // The amount of the output.
-	pkScript   []byte // The public key script for the output.
-}
-
-// maybeDecompress decompresses the amount and public key script fields of the
-// utxo and marks it decompressed if needed.
-func (o *utxoOutput) maybeDecompress(version int32) {
-	// Nothing to do if it's not compressed.
-	if !o.compressed {
-		return
-	}
-
-	o.amount = int64(decompressTxOutAmount(uint64(o.amount)))
-	o.pkScript = decompressScript(o.pkScript, version)
-	o.compressed = false
+	spent         bool   // Output is spent.
+	amount        int64  // The amount of the output.
+	scriptVersion uint16 // The script version.
+	pkScript      []byte // The public key script for the output.
 }
 
 // UtxoEntry contains contextual information about an unspent transaction such
@@ -51,15 +38,24 @@ func (o *utxoOutput) maybeDecompress(version int32) {
 // and the spent status of its outputs.
 type UtxoEntry struct {
 	modified      bool                   // Entry changed since load.
-	version       int32                  // The version of this tx.
+	txVersion     int32                  // The tx version of this tx.
+	hasExpiry     bool                   // Whether entry has an expiry.
 	isCoinBase    bool                   // Whether entry is a coinbase tx.
-	blockHeight   int32                  // Height of block containing tx.
+	blockHeight   uint32                 // Height of block containing tx.
+	blockIndex    uint32                 // Index of containing tx in block.
 	sparseOutputs map[uint32]*utxoOutput // Sparse map of unspent outputs.
 }
 
-// Version returns the version of the transaction the utxo represents.
-func (entry *UtxoEntry) Version() int32 {
-	return entry.version
+// TxVersion returns the transaction version of the transaction the
+// utxo represents.
+func (entry *UtxoEntry) TxVersion() int32 {
+	return entry.txVersion
+}
+
+// Expiry returns the transaction expiry for the transaction that the utxo
+// entry represents.
+func (entry *UtxoEntry) Expiry() uint32 {
+	return entry.expiry
 }
 
 // IsCoinBase returns whether or not the transaction the utxo entry represents
@@ -132,8 +128,6 @@ func (entry *UtxoEntry) AmountByIndex(outputIndex uint32) int64 {
 		return 0
 	}
 
-	// Ensure the output is decompressed before returning the amount.
-	output.maybeDecompress(entry.version)
 	return output.amount
 }
 
@@ -148,16 +142,14 @@ func (entry *UtxoEntry) PkScriptByIndex(outputIndex uint32) []byte {
 		return nil
 	}
 
-	// Ensure the output is decompressed before returning the script.
-	output.maybeDecompress(entry.version)
 	return output.pkScript
 }
 
 // newUtxoEntry returns a new unspent transaction output entry with the provided
 // coinbase flag and block height ready to have unspent outputs added.
-func newUtxoEntry(version int32, isCoinBase bool, blockHeight int32) *UtxoEntry {
+func newUtxoEntry(txVersion int32, isCoinBase bool, blockHeight int32) *UtxoEntry {
 	return &UtxoEntry{
-		version:       version,
+		txVersion:     txVersion,
 		isCoinBase:    isCoinBase,
 		blockHeight:   blockHeight,
 		sparseOutputs: make(map[uint32]*utxoOutput),
@@ -288,7 +280,7 @@ func (view *UtxoViewpoint) connectTransaction(tx *dcrutil.Tx, blockHeight int32,
 		// in the utxo set.
 		var stxo = spentTxOut{
 			compressed: false,
-			version:    entry.Version(),
+			txVersion:  entry.TxVersion(),
 			amount:     entry.AmountByIndex(originIndex),
 			pkScript:   entry.PkScriptByIndex(originIndex),
 		}
@@ -379,7 +371,7 @@ func (view *UtxoViewpoint) disconnectTransactions(block *dcrutil.Block, stxos []
 			originIndex := txIn.PreviousOutPoint.Index
 			entry := view.entries[*originHash]
 			if entry == nil {
-				entry = newUtxoEntry(stxo.version,
+				entry = newUtxoEntry(stxo.txVersion,
 					stxo.isCoinBase, stxo.height)
 				view.entries[*originHash] = entry
 			}

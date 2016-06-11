@@ -102,83 +102,52 @@ func isDeserializeErr(err error) bool {
 //
 // The serialized format is:
 //
-//   [<header code><version><compressed txout>],...
+//   [<scriptVersion><pkScript>],...
+//   OPTIONAL: [<txVersion><height><index><flags>]
 //
-//   Field                Type     Size
-//   header code          VLQ      variable
-//   version              VLQ      variable
-//   compressed txout
-//     compressed amount  VLQ      variable
-//     compressed script  []byte   variable
+//   Field                Type        Size
+//   scriptVersion        uint16      2 bytes
+//   pkScript             VLQ+[]byte  variable
 //
-// The serialized header code format is:
+//   OPTIONAL
+//     txVersion          VLQ         variable
+//     height             VLQ         variable
+//     index              VLQ         variable
+//     flags              byte        byte
+//
+// The serialized flags code format is:
 //   bit 0 - containing transaction is a coinbase
-//   bits 1-x - height of the block that contains the spent txout
+//   bit 1 - containing transaction has an expiry
 //
-//   NOTE: The header code and version are only encoded when the spent txout was
-//   the final unspent output of the containing transaction.  Otherwise, the
-//   header code will be 0 and the version is not serialized at all.  This is
-//   done because that information is only needed when the utxo set no longer
-//   has it.
+//   NOTE: The optional section of data is only inserted if the transaction
+//         has been fully spent. Otherwise, these fields are left blank and
+//         their presence is checked for by checking the len of the serialized
+//         byte slice against the final cursor after popping off the first
+//         three elements.
 //
-// Example 1:
-// From block 170 in main blockchain.
-//
-//    1301320511db93e1dcdb8a016b49840f8c53bc1eb68a382e97b1482ecad7b148a6909a5c
-//    <><><------------------------------------------------------------------>
-//     | |                                  |
-//     | version                   compressed txout
-//    header code
-//
-//  - header code: 0x13 (coinbase, height 9)
-//  - transaction version: 1
-//  - compressed txout 0:
-//    - 0x32: VLQ-encoded compressed amount for 5000000000 (50 BTC)
-//    - 0x05: special script type pay-to-pubkey
-//    - 0x11...5c: x-coordinate of the pubkey
-//
-// Example 2:
-// Adapted from block 100025 in main blockchain.
-//
-//    0091f20f006edbc6c4d31bae9f1ccc38538a114bf42de65e868b99700186c64700b2fb57eadf61e106a100a7445a8c3f67898841ec
-//    <><----------------------------------------------><----><><---------------------------------------------->
-//     |                                |                  |   |                            |
-//     |                       compressed txout            |   version             compressed txout
-//    header code                                      header code
-//
-//  - Last spent output:
-//    - header code: 0x00 (was not the final unspent output for containing tx)
-//    - transaction version: Nothing since header code is 0
-//    - compressed txout:
-//      - 0x91f20f: VLQ-encoded compressed amount for 34405000000 (344.05 BTC)
-//      - 0x00: special script type pay-to-pubkey-hash
-//      - 0x6e...86: pubkey hash
-//  - Second to last spent output:
-//    - header code: 0x8b9970 (not coinbase, height 100024)
-//    - transaction version: 1
-//    - compressed txout:
-//      - 0x86c647: VLQ-encoded compressed amount for 13761000000 (137.61 BTC)
-//      - 0x00: special script type pay-to-pubkey-hash
-//      - 0xb2...ec: pubkey hash
+// Example:
+//   TODO
 // -----------------------------------------------------------------------------
 
 // spentTxOut contains a spent transaction output and potentially additional
 // contextual information such as whether or not it was contained in a coinbase
-// transaction, the version of the transaction it was contained in, and which
+// transaction, the txVersion of the transaction it was contained in, and which
 // block height the containing transaction was included in.  As described in
 // the comments above, the additional contextual information will only be valid
 // when this spent txout is spending the last unspent output of the containing
 // transaction.
 type spentTxOut struct {
-	compressed bool   // The amount and public key script are compressed.
-	version    int32  // The version of creating tx.
-	amount     int64  // The amount of the output.
-	pkScript   []byte // The public key script for the output.
+	amount        int64  // The amount of the output.
+	scriptVersion uint16 // The version of the scripting language.
+	pkScript      []byte // The public key script for the output.
 
-	// These fields are only set when this is spending the final output of
-	// the creating tx.
-	height     int32 // Height of the the block containing the creating tx.
-	isCoinBase bool  // Whether creating tx is a coinbase.
+	// This only needs to be filled out when the transaction is fully spent
+	// and the UTX key containing it falls out of the database.
+	txVersion  int32  // The txVersion of creating tx.
+	height     uint32 // Height of the the block containing the creating tx.
+	index      uint32 // Index in the block of the transaction.
+	isCoinBase bool   // Whether creating tx is a coinbase.
+	hasExpiry  bool   // The expiry of the creating tx.
 }
 
 // spentTxOutHeaderCode returns the calculated header code to be used when
@@ -206,10 +175,11 @@ func spentTxOutSerializeSize(stxo *spentTxOut) int {
 	headerCode := spentTxOutHeaderCode(stxo)
 	size := serializeSizeVLQ(headerCode)
 	if headerCode != 0 {
-		size += serializeSizeVLQ(uint64(stxo.version))
+		size += serializeSizeVLQ(uint64(stxo.txVersion))
+		size += serializeSizeVLQ(uint64(stxo.expiry))
 	}
-	return size + compressedTxOutSize(uint64(stxo.amount), stxo.pkScript,
-		stxo.version, stxo.compressed)
+	return size + compressedTxOutSize(uint64(stxo.amount), stxo.scriptVersion,
+		stxo.pkScript, stxo.txVersion, stxo.expiry, stxo.compressed)
 }
 
 // putSpentTxOut serializes the passed stxo according to the format described
@@ -218,25 +188,25 @@ func spentTxOutSerializeSize(stxo *spentTxOut) int {
 // spentTxOutSerializeSize function or it will panic.
 func putSpentTxOut(target []byte, stxo *spentTxOut) int {
 	headerCode := spentTxOutHeaderCode(stxo)
-	offset := putVLQ(target, headerCode)
+	offset := putVLQ(target, headerCode, 0)
 	if headerCode != 0 {
-		offset += putVLQ(target[offset:], uint64(stxo.version))
+		offset += putVLQ(target[offset:], uint64(stxo.txVersion), 0)
 	}
 	return offset + putCompressedTxOut(target[offset:], uint64(stxo.amount),
-		stxo.pkScript, stxo.version, stxo.compressed)
+		stxo.pkScript, stxo.txVersion, stxo.compressed)
 }
 
 // decodeSpentTxOut decodes the passed serialized stxo entry, possibly followed
 // by other data, into the passed stxo struct.  It returns the number of bytes
 // read.
 //
-// Since the serialized stxo entry does not contain the height, version, or
+// Since the serialized stxo entry does not contain the height, txVersion, or
 // coinbase flag of the containing transaction when it still has utxos, the
-// caller is responsible for passing in the containing transaction version in
-// that case.  The provided version is ignore when it is serialized as a part of
+// caller is responsible for passing in the containing transaction txVersion in
+// that case.  The provided txVersion is ignore when it is serialized as a part of
 // the stxo.
 //
-// An error will be returned if the version is not serialized as a part of the
+// An error will be returned if the txVersion is not serialized as a part of the
 // stxo and is also not provided to the function.
 func decodeSpentTxOut(serialized []byte, stxo *spentTxOut, txVersion int32) (int, error) {
 	// Ensure there are bytes to decode.
@@ -252,38 +222,38 @@ func decodeSpentTxOut(serialized []byte, stxo *spentTxOut, txVersion int32) (int
 	}
 
 	// Decode the header code and deserialize the containing transaction
-	// version if needed.
+	// txVersion if needed.
 	//
 	// Bit 0 indicates containing transaction is a coinbase.
 	// Bits 1-x encode height of containing transaction.
 	if code != 0 {
-		version, bytesRead := deserializeVLQ(serialized[offset:])
+		txVersion, bytesRead := deserializeVLQ(serialized[offset:])
 		offset += bytesRead
 		if offset >= len(serialized) {
 			return offset, errDeserialize("unexpected end of data " +
-				"after version")
+				"after txVersion")
 		}
 
 		stxo.isCoinBase = code&0x01 != 0
 		stxo.height = int32(code >> 1)
-		stxo.version = int32(version)
+		stxo.txVersion = int32(txVersion)
 	} else {
-		// Ensure a tx version was specified if the stxo did not encode
+		// Ensure a tx txVersion was specified if the stxo did not encode
 		// it.  This should never happen unless there is database
 		// corruption or this function is being called without the
 		// proper state.
 		if txVersion == 0 {
 			return offset, AssertError("decodeSpentTxOut called " +
-				"without a containing tx version when the " +
+				"without a containing tx txVersion when the " +
 				"serialized stxo that does not encode the " +
-				"version")
+				"txVersion")
 		}
-		stxo.version = txVersion
+		stxo.txVersion = txVersion
 	}
 
 	// Decode the compressed txout.
 	compAmount, compScript, bytesRead, err := decodeCompressedTxOut(
-		serialized[offset:], stxo.version)
+		serialized[offset:], stxo.txVersion)
 	offset += bytesRead
 	if err != nil {
 		return offset, errDeserialize(fmt.Sprintf("unable to decode "+
@@ -339,7 +309,7 @@ func deserializeSpendJournalEntry(serialized []byte, txns []*wire.MsgTx, view *U
 			stxo := &stxos[stxoIdx]
 			stxoIdx--
 
-			// Get the transaction version for the stxo based on
+			// Get the transaction txVersion for the stxo based on
 			// whether or not it should be serialized as a part of
 			// the stxo.  Recall that it is only serialized when the
 			// stxo spends the final utxo of a transaction.  Since
@@ -348,21 +318,21 @@ func deserializeSpendJournalEntry(serialized []byte, txns []*wire.MsgTx, view *U
 			// encountered that is not already in the utxo view it
 			// must have been the final spend and thus the extra
 			// data will be serialized with the stxo.  Otherwise,
-			// the version must be pulled from the utxo entry.
+			// the txVersion must be pulled from the utxo entry.
 			//
 			// Since the view is not actually modified as the stxos
 			// are read here and it's possible later entries
 			// reference earlier ones, an inflight map is maintained
-			// to detect this case and pull the tx version from the
-			// entry that contains the version information as just
+			// to detect this case and pull the tx txVersion from the
+			// entry that contains the txVersion information as just
 			// described.
 			var txVersion int32
 			originHash := &txIn.PreviousOutPoint.Hash
 			entry := view.LookupEntry(originHash)
 			if entry != nil {
-				txVersion = entry.Version()
+				txVersion = entry.TxVersion()
 			} else if idx, ok := stxoInFlight[*originHash]; ok {
-				txVersion = stxos[idx].version
+				txVersion = stxos[idx].txVersion
 			} else {
 				stxoInFlight[*originHash] = stxoIdx + 1
 			}
@@ -455,14 +425,14 @@ func dbRemoveSpendJournalEntry(dbTx database.Tx, blockHash *chainhash.Hash) erro
 // The unspent transaction output (utxo) set consists of an entry for each
 // transaction which contains a utxo serialized using a format that is highly
 // optimized to reduce space using domain specific compression algorithms.  This
-// format is a slightly modified version of the format used in Bitcoin Core.
+// format is a slightly modified txVersion of the format used in Bitcoin Core.
 //
 // The serialized format is:
 //
-//   <version><height><header code><unspentness bitmap>[<compressed txouts>,...]
+//   <txVersion><height><header code><unspentness bitmap>[<compressed txouts>,...]
 //
 //   Field                Type     Size
-//   version              VLQ      variable
+//   txVersion            VLQ      variable
 //   block height         VLQ      variable
 //   header code          VLQ      variable
 //   unspentness bitmap   []byte   variable
@@ -500,9 +470,9 @@ func dbRemoveSpendJournalEntry(dbTx database.Tx, blockHash *chainhash.Hash) erro
 //    <><><><------------------------------------------------------------------>
 //     | | \--------\                               |
 //     | height     |                      compressed txout 0
-//  version    header code
+//  txVersion    header code
 //
-//  - version: 1
+//  - txVersion: 1
 //  - height: 1
 //  - header code: 0x03 (coinbase, output zero unspent, 0 bytes of unspentness)
 //  - unspentness: Nothing since it is zero bytes
@@ -518,10 +488,10 @@ func dbRemoveSpendJournalEntry(dbTx database.Tx, blockHash *chainhash.Hash) erro
 //    0185f90b0a011200e2ccd6ec7c6e2e581349c77e067385fa8236bf8a800900b8025be1b3efc63b0ad48e7f9f10e87544528d58
 //    <><----><><><------------------------------------------><-------------------------------------------->
 //     |    |  | \-------------------\            |                            |
-//  version |  \--------\       unspentness       |                    compressed txout 2
+//  txVersion |  \--------\       unspentness       |                    compressed txout 2
 //        height     header code          compressed txout 0
 //
-//  - version: 1
+//  - txVersion: 1
 //  - height: 113931
 //  - header code: 0x0a (output zero unspent, 1 byte in unspentness bitmap)
 //  - unspentness: [0x01] (bit 0 is set, so output 0+2 = 2 is unspent)
@@ -542,10 +512,10 @@ func dbRemoveSpendJournalEntry(dbTx database.Tx, blockHash *chainhash.Hash) erro
 //    0193d06c100000108ba5b9e763011dd46a006572d820e448e12d2bbb38640bc718e6
 //    <><----><><----><-------------------------------------------------->
 //     |    |  |   \-----------------\            |
-//  version |  \--------\       unspentness       |
+//  txVersion |  \--------\       unspentness       |
 //        height     header code          compressed txout 22
 //
-//  - version: 1
+//  - txVersion: 1
 //  - height: 338156
 //  - header code: 0x10 (2+1 = 3 bytes in unspentness bitmap)
 //    NOTE: It's +1 since neither bit 1 nor 2 are set, so N-1 is encoded.
@@ -631,7 +601,7 @@ func serializeUtxoEntry(entry *UtxoEntry) ([]byte, error) {
 	}
 
 	// Calculate the size needed to serialize the entry.
-	size := serializeSizeVLQ(uint64(entry.version)) +
+	size := serializeSizeVLQ(uint64(entry.txVersion)) +
 		serializeSizeVLQ(uint64(entry.blockHeight)) +
 		serializeSizeVLQ(headerCode) + numBitmapBytes
 	for _, outputIndex := range outputOrder {
@@ -640,13 +610,13 @@ func serializeUtxoEntry(entry *UtxoEntry) ([]byte, error) {
 			continue
 		}
 		size += compressedTxOutSize(uint64(out.amount), out.pkScript,
-			entry.version, out.compressed)
+			entry.txVersion, out.compressed)
 	}
 
-	// Serialize the version, block height of the containing transaction,
+	// Serialize the txVersion, block height of the containing transaction,
 	// and header code.
 	serialized := make([]byte, size)
-	offset := putVLQ(serialized, uint64(entry.version))
+	offset := putVLQ(serialized, uint64(entry.txVersion))
 	offset += putVLQ(serialized[offset:], uint64(entry.blockHeight))
 	offset += putVLQ(serialized[offset:], headerCode)
 
@@ -673,7 +643,7 @@ func serializeUtxoEntry(entry *UtxoEntry) ([]byte, error) {
 		}
 
 		offset += putCompressedTxOut(serialized[offset:],
-			uint64(out.amount), out.pkScript, entry.version,
+			uint64(out.amount), out.pkScript, entry.txVersion,
 			out.compressed)
 	}
 
@@ -684,11 +654,11 @@ func serializeUtxoEntry(entry *UtxoEntry) ([]byte, error) {
 // slice into a new UtxoEntry using a format that is suitable for long-term
 // storage.  The format is described in detail above.
 func deserializeUtxoEntry(serialized []byte) (*UtxoEntry, error) {
-	// Deserialize the version.
-	version, bytesRead := deserializeVLQ(serialized)
+	// Deserialize the txVersion.
+	txVersion, bytesRead := deserializeVLQ(serialized)
 	offset := bytesRead
 	if offset >= len(serialized) {
-		return nil, errDeserialize("unexpected end of data after version")
+		return nil, errDeserialize("unexpected end of data after txVersion")
 	}
 
 	// Deserialize the block height.
@@ -729,7 +699,7 @@ func deserializeUtxoEntry(serialized []byte) (*UtxoEntry, error) {
 
 	// Create a new utxo entry with the details deserialized above to house
 	// all of the utxos.
-	entry := newUtxoEntry(int32(version), isCoinBase, int32(blockHeight))
+	entry := newUtxoEntry(int32(txVersion), isCoinBase, int32(blockHeight))
 
 	// Add sparse output for unspent outputs 0 and 1 as needed based on the
 	// details provided by the header code.
@@ -766,7 +736,7 @@ func deserializeUtxoEntry(serialized []byte) (*UtxoEntry, error) {
 		// it is quite common for a redeeming transaction to only
 		// reference a single utxo from a referenced transaction.
 		compAmount, compScript, bytesRead, err := decodeCompressedTxOut(
-			serialized[offset:], int32(version))
+			serialized[offset:], int32(txVersion))
 		if err != nil {
 			return nil, errDeserialize(fmt.Sprintf("unable to "+
 				"decode utxo at index %d: %v", i, err))
