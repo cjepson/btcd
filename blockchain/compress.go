@@ -10,99 +10,72 @@ import (
 	"github.com/decred/dcrd/blockchain/stake"
 )
 
-// -----------------------------------------------------------------------------
-// A variable length quantity (VLQ) is an encoding that uses an arbitrary number
-// of binary octets to represent an arbitrarily large integer.  The scheme
-// employs a most significant byte (MSB) base-128 encoding where the high bit in
-// each byte indicates whether or not the byte is the final one.  In addition,
-// to ensure there are no redundant encodings, an offset is subtracted every
-// time a group of 7 bits is shifted out.  Therefore each integer can be
-// represented in exactly one way, and each representation stands for exactly
-// one integer.
-//
-// Another nice property of this encoding is that it provides a compact
-// representation of values that are typically used to indicate sizes.  For
-// example, the values 0 - 127 are represented with a single byte, 128 - 16511
-// with two bytes, and 16512 - 2113663 with three bytes.
-//
-// While the encoding allows arbitrarily large integers, it is artificially
-// limited in this code to an unsigned 64-bit integer for efficiency purposes.
-//
-// Example encodings:
-//           0 -> [0x00]
-//         127 -> [0x7f]                 * Max 1-byte value
-//         128 -> [0x80 0x00]
-//         129 -> [0x80 0x01]
-//         255 -> [0x80 0x7f]
-//         256 -> [0x81 0x00]
-//       16511 -> [0xff 0x7f]            * Max 2-byte value
-//       16512 -> [0x80 0x80 0x00]
-//       32895 -> [0x80 0xff 0x7f]
-//     2113663 -> [0xff 0xff 0x7f]       * Max 3-byte value
-//   270549119 -> [0xff 0xff 0xff 0x7f]  * Max 4-byte value
-//      2^64-1 -> [0x80 0xfe 0xfe 0xfe 0xfe 0xfe 0xfe 0xfe 0xfe 0x7f]
-//
-// References:
-//   https://en.wikipedia.org/wiki/Variable-length_quantity
-//   http://www.codecodex.com/wiki/Variable-Length_Integers
-// -----------------------------------------------------------------------------
-
-// serializeSizeVLQ returns the number of bytes it would take to serialize the
-// passed number as a variable-length quantity according to the format described
-// above.
-func serializeSizeVLQ(n uint64) int {
-	size := 1
-	for ; n > 0x7f; n = (n >> 7) - 1 {
-		size++
+// serializeSizeVarInt returns the number of bytes it would take to serialize the
+// passed number as a variable-length quantity.
+func serializeSizeVarInt(n int64) int {
+	switch {
+	case n > 0:
+		switch {
+		case n < 64:
+			return 1
+		case n < 8192:
+			return 2
+		case n < 1048576:
+			return 3
+		case n < 134217728:
+			return 4
+		case n < 17179869184:
+			return 5
+		case n < 2199023255552:
+			return 6
+		case n < 281474976710656:
+			return 7
+		case n < 36028797018963968:
+			return 8
+		case n < 4611686018427387904:
+			return 9
+		default:
+			return 10
+		}
+	default:
+		switch {
+		case n > -65:
+			return 1
+		case n > -8193:
+			return 2
+		case n > -1048577:
+			return 3
+		case n > -134217729:
+			return 4
+		case n > -17179869185:
+			return 5
+		case n > -2199023255553:
+			return 6
+		case n > -281474976710657:
+			return 7
+		case n > -36028797018963969:
+			return 8
+		case n > -4611686018427387905:
+			return 9
+		default:
+			return 10
+		}
 	}
-
-	return size
 }
 
-// putVLQ serializes the provided number to a variable-length quantity according
-// to the format described above and returns the number of bytes of the encoded
-// value.  The result is placed directly into the passed byte slice which must
-// be at least large enough to handle the number of bytes returned by the
-// serializeSizeVLQ function or it will panic.
-func putVLQ(target []byte, n uint64, offset int) int {
-	for ; ; offset++ {
-		// The high bit is set when another byte follows.
-		highBitMask := byte(0x80)
-		if offset == 0 {
-			highBitMask = 0x00
-		}
-
-		target[offset] = byte(n&0x7f) | highBitMask
-		if n <= 0x7f {
-			break
-		}
-		n = (n >> 7) - 1
-	}
-
-	// Reverse the bytes so it is MSB-encoded.
-	for i, j := 0, offset; i < j; i, j = i+1, j-1 {
-		target[i], target[j] = target[j], target[i]
-	}
-
-	return offset + 1
+// putVarInt serializes the provided number to a variable-length quantity. The
+// result is placed directly into the passed byte slice which must be at least
+// large enough to handle the number of bytes returned by the serializeSizeVarInt
+// function or it will panic. The final offset is then returned.
+func putVarInt(target []byte, n int64, offset int) int {
+	return binary.PutVarint(target[offset:], n) + offset
 }
 
-// deserializeVLQ deserializes the provided variable-length quantity according
-// to the format described above.  It also returns the number of bytes
-// deserialized.
-func deserializeVLQ(serialized []byte) (uint64, int) {
-	var n uint64
-	var size int
-	for _, val := range serialized {
-		size++
-		n = (n << 7) | uint64(val&0x7f)
-		if val&0x80 != 0x80 {
-			break
-		}
-		n++
-	}
-
-	return n, size
+// deserializeVarInt deserializes the provided variable-length quantity according
+// to the format described above.  It also returns the final offset after reading.
+func deserializeVarInt(serialized []byte, offset int) (int64, int) {
+	val, bytesRead := binary.Varint(serialized[offset:])
+	return val, bytesRead + offset
 }
 
 // -----------------------------------------------------------------------------
@@ -114,8 +87,8 @@ func deserializeVLQ(serialized []byte) (uint64, int) {
 // While this is simply exchanging one uint64 for another, the resulting value
 // for typical amounts has a much smaller magnitude which results in fewer bytes
 // when encoded as variable length quantity.  For example, consider the amount
-// of 0.1 DCR which is 10000000 atoms.  Encoding 10000000 as a VLQ would take
-// 4 bytes while encoding the compressed value of 8 as a VLQ only takes 1 byte.
+// of 0.1 DCR which is 10000000 atoms.  Encoding 10000000 as a VarInt would take
+// 4 bytes while encoding the compressed value of 8 as a VarInt only takes 1 byte.
 //
 // Essentially the compression is achieved by splitting the value into an
 // exponent in the range [0-9] and a digit in the range [1-9], when possible,
@@ -132,7 +105,7 @@ func deserializeVLQ(serialized []byte) (uint64, int) {
 //   1 + 10*(n-1) + e   ==   10 + 10*(n-1)
 //
 // Example encodings:
-// (The numbers in parenthesis are the number of bytes when serialized as a VLQ)
+// (The numbers in parenthesis are the number of bytes when serialized as a VarInt)
 //            0 (1) -> 0        (1)           *  0.00000000 BTC
 //         1000 (2) -> 4        (1)           *  0.00001000 BTC
 //        10000 (2) -> 5        (1)           *  0.00010000 BTC
@@ -212,6 +185,20 @@ func decompressTxOutAmount(amount uint64) uint64 {
 	return n
 }
 
+// putTxOutAmount inserts an amount into a byte slice in the encoded,
+// compressed format. It begins writing at the passed offset, then
+// returns the final offset.
+func putTxOutAmount(target []byte, amount int64, offset int) int {
+	return putVarInt(target, int64(compressTxOutAmount(uint64(amount))), offset)
+}
+
+// deserializeTxOutAmount deserializes a transaction output amount from a passed
+// byte slice, beginning at the passed offset. It returns the amount and the
+// final offset.
+func deserializeTxOutAmount(serialized []byte, offset int) (int64, int) {
+	return deserializeVarInt(serialized, offset)
+}
+
 // -----------------------------------------------------------------------------
 // Decred specific transaction encoding flags
 //
@@ -243,7 +230,7 @@ const (
 // encodeFlags encodes transaction flags into a single byte.
 func encodeFlags(isCoinBase bool, hasExpiry bool, txType stake.TxType) byte {
 	b := uint8(txType)
-	b << txTypeShift
+	b <<= txTypeShift
 
 	if isCoinBase {
 		b |= 0x01
@@ -251,6 +238,8 @@ func encodeFlags(isCoinBase bool, hasExpiry bool, txType stake.TxType) byte {
 	if hasExpiry {
 		b |= 0x02
 	}
+
+	return b
 }
 
 // decodeFlags decodes transaction flags from a single byte into their
@@ -261,69 +250,4 @@ func decodeFlags(b byte) (bool, bool, stake.TxType) {
 	txType := stake.TxType((b & txTypeBitmask) >> txTypeShift)
 
 	return isCoinBase, hasExpiry, txType
-}
-
-// -----------------------------------------------------------------------------
-// The serialized format for most spent output journal entries is:
-//
-//   <script><scriptVersion>
-//
-//   Field     Type         Size
-//   version   uint16       2 bytes
-//   script    VLQ+[]byte   variable
-//
-// Decred stores the amount of an output in the TxIn, so for any roll back of
-// a UTXO we typically need only store the script itself.
-//
-// The serialized format for an unspent transaction output is:
-//
-//   Field     Type         Size
-//   version   uint16       2 bytes
-//   script    VLQ+[]byte   variable
-// ....
-//
-// -----------------------------------------------------------------------------
-
-// decodeScriptSize treats the passed serialized bytes as a compressed script,
-// possibly followed by other data, and returns the number of bytes it
-// occupies taking into account the  VLQ encoded script size.
-func decodeScriptSize(serialized []byte) int {
-	scriptSize, bytesRead := deserializeVLQ(serialized)
-	scriptSize += uint64(bytesRead)
-	return int(scriptSize)
-}
-
-// serializeVersionedScriptSize gets the size of a pkScript and the VLQ describing
-// its size in bytes.
-func serializeVersionedScriptSize(pkScript []byte) int {
-	return serializeSizeVLQ(uint64(len(pkScript))) + len(pkScript) + 2
-}
-
-// putVersionedScript inserts a versioned pkScript into a byte slice and returns
-// the offset of the cursor after writing. It takes a cursor as an argument to
-// know where to start writing. This function will fail if the script is written
-// out of bounds, producing a panic.
-func putVersionedScript(target []byte, version uint16, pkScript []byte, offset int) int {
-	binary.LittleEndian.PutUint16(target[offset:offset+2], version)
-	offset += 2
-
-	copy(putScript(target[offset:], pkScript[:]))
-	return offset + len(pkScript)
-}
-
-// decodeVersionedScript
-func decodeVersionedScript(serialized []byte, offset int) (uint16, []byte, error) {
-	// Read the script version.
-	version := binary.LittleEndian.Uint16(serialized[offset : offset+2])
-	offset += 2
-
-	// Read the size of the script.
-	scriptSize, endVLQBytesIdx := deserializeVLQ(serialized, offset)
-	if bytesRead >= len(serialized) {
-		return 0, nil, bytesRead, errDeserialize("unexpected end of " +
-			"data after reading the script size")
-	}
-	offset += endVLQBytesIdx
-
-	return version, serialized[offset : offset+scriptSize : scriptSize], nil
 }

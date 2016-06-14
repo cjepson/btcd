@@ -28,24 +28,27 @@ import (
 // provides a mechanism to avoid the overhead of needlessly uncompressing all
 // outputs for a given utxo entry at the time of load.
 type utxoOutput struct {
-	spent         bool   // Output is spent.
+	pkScript      []byte // The public key script for the output.
 	amount        int64  // The amount of the output.
 	scriptVersion uint16 // The script version.
-	pkScript      []byte // The public key script for the output.
+	spent         bool   // Output is spent.
 }
 
 // UtxoEntry contains contextual information about an unspent transaction such
 // as whether or not it is a coinbase transaction, which block it was found in,
 // and the spent status of its outputs.
 type UtxoEntry struct {
-	modified      bool                   // Entry changed since load.
-	txVersion     int32                  // The tx version of this tx.
-	hasExpiry     bool                   // Whether entry has an expiry.
-	isCoinBase    bool                   // Whether entry is a coinbase tx.
-	blockHeight   uint32                 // Height of block containing tx.
-	blockIndex    uint32                 // Index of containing tx in block.
-	txType        stake.TxType           // The stake type of the transaction.
 	sparseOutputs map[uint32]*utxoOutput // Sparse map of unspent outputs.
+
+	txVersion  int32        // The tx version of this tx.
+	height     uint32       // Height of block containing tx.
+	index      uint32       // Index of containing tx in block.
+	outputsLen uint32       // The number of outputs in this tx.
+	txType     stake.TxType // The stake type of the transaction.
+
+	isCoinBase bool // Whether entry is a coinbase tx.
+	hasExpiry  bool // Whether entry has an expiry.
+	modified   bool // Entry changed since load.
 }
 
 // TxVersion returns the transaction version of the transaction the
@@ -56,8 +59,8 @@ func (entry *UtxoEntry) TxVersion() int32 {
 
 // Expiry returns the transaction expiry for the transaction that the utxo
 // entry represents.
-func (entry *UtxoEntry) Expiry() uint32 {
-	return entry.expiry
+func (entry *UtxoEntry) HasExpiry() uint32 {
+	return entry.hasExpiry
 }
 
 // IsCoinBase returns whether or not the transaction the utxo entry represents
@@ -149,12 +152,17 @@ func (entry *UtxoEntry) PkScriptByIndex(outputIndex uint32) []byte {
 
 // newUtxoEntry returns a new unspent transaction output entry with the provided
 // coinbase flag and block height ready to have unspent outputs added.
-func newUtxoEntry(txVersion int32, isCoinBase bool, blockHeight int32) *UtxoEntry {
+func newUtxoEntry(txVersion int32, height uint32, index uint32, outputsLen uint32,
+	isCoinBase bool, hasExpiry bool, txTxpe stake.TxType) *UtxoEntry {
 	return &UtxoEntry{
+		sparseOutputs: make(map[uint32]*utxoOutput, 0, int(outputsLen)),
 		txVersion:     txVersion,
+		height:        height,
+		index:         index,
+		outputsLen:    outputsLen,
 		isCoinBase:    isCoinBase,
-		blockHeight:   blockHeight,
-		sparseOutputs: make(map[uint32]*utxoOutput),
+		hasExpiry:     hasExpiry,
+		txType:        stake.TxType,
 	}
 }
 
