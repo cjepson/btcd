@@ -7,6 +7,7 @@ package blockchain
 import (
 	"fmt"
 
+	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg/chainhash"
 	database "github.com/decred/dcrd/database2"
 	"github.com/decred/dcrd/txscript"
@@ -43,6 +44,7 @@ type UtxoEntry struct {
 	isCoinBase    bool                   // Whether entry is a coinbase tx.
 	blockHeight   uint32                 // Height of block containing tx.
 	blockIndex    uint32                 // Index of containing tx in block.
+	txType        stake.TxType           // The stake type of the transaction.
 	sparseOutputs map[uint32]*utxoOutput // Sparse map of unspent outputs.
 }
 

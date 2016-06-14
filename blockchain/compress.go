@@ -6,6 +6,8 @@ package blockchain
 
 import (
 	"encoding/binary"
+
+	"github.com/decred/dcrd/blockchain/stake"
 )
 
 // -----------------------------------------------------------------------------
@@ -103,59 +105,218 @@ func deserializeVLQ(serialized []byte) (uint64, int) {
 	return n, size
 }
 
-// decodeCompressedScriptSize treats the passed serialized bytes as a compressed
-// script, possibly followed by other data, and returns the number of bytes it
-// occupies taking into account the special encoding of the script size by the
-// domain specific compression algorithm described above.
-func decodeCompressedScriptSize(serialized []byte) int {
-	scriptSize, bytesRead := deserializeVLQ(serialized)
-	if bytesRead == 0 {
+// -----------------------------------------------------------------------------
+// In order to reduce the size of stored amounts, a domain specific compression
+// algorithm is used which relies on there typically being a lot of zeroes at
+// end of the amounts.  The compression algorithm used here was obtained from
+// Bitcoin Core, so all credits for the algorithm go to it.
+//
+// While this is simply exchanging one uint64 for another, the resulting value
+// for typical amounts has a much smaller magnitude which results in fewer bytes
+// when encoded as variable length quantity.  For example, consider the amount
+// of 0.1 DCR which is 10000000 atoms.  Encoding 10000000 as a VLQ would take
+// 4 bytes while encoding the compressed value of 8 as a VLQ only takes 1 byte.
+//
+// Essentially the compression is achieved by splitting the value into an
+// exponent in the range [0-9] and a digit in the range [1-9], when possible,
+// and encoding them in a way that can be decoded.  More specifically, the
+// encoding is as follows:
+// - 0 is 0
+// - Find the exponent, e, as the largest power of 10 that evenly divides the
+//   value up to a maximum of 9
+// - When e < 9, the final digit can't be 0 so store it as d and remove it by
+//   dividing the value by 10 (call the result n).  The encoded value is thus:
+//   1 + 10*(9*n + d-1) + e
+// - When e==9, the only thing known is the amount is not 0.  The encoded value
+//   is thus:
+//   1 + 10*(n-1) + e   ==   10 + 10*(n-1)
+//
+// Example encodings:
+// (The numbers in parenthesis are the number of bytes when serialized as a VLQ)
+//            0 (1) -> 0        (1)           *  0.00000000 BTC
+//         1000 (2) -> 4        (1)           *  0.00001000 BTC
+//        10000 (2) -> 5        (1)           *  0.00010000 BTC
+//     12345678 (4) -> 111111101(4)           *  0.12345678 BTC
+//     50000000 (4) -> 47       (1)           *  0.50000000 BTC
+//    100000000 (4) -> 9        (1)           *  1.00000000 BTC
+//    500000000 (5) -> 49       (1)           *  5.00000000 BTC
+//   1000000000 (5) -> 10       (1)           * 10.00000000 BTC
+// -----------------------------------------------------------------------------
+
+// compressTxOutAmount compresses the passed amount according to the domain
+// specific compression algorithm described above.
+func compressTxOutAmount(amount uint64) uint64 {
+	// No need to do any work if it's zero.
+	if amount == 0 {
 		return 0
 	}
 
-	scriptSize += uint64(bytesRead)
-	return int(scriptSize)
+	// Find the largest power of 10 (max of 9) that evenly divides the
+	// value.
+	exponent := uint64(0)
+	for amount%10 == 0 && exponent < 9 {
+		amount /= 10
+		exponent++
+	}
+
+	// The compressed result for exponents less than 9 is:
+	// 1 + 10*(9*n + d-1) + e
+	if exponent < 9 {
+		lastDigit := amount % 10
+		amount /= 10
+		return 1 + 10*(9*amount+lastDigit-1) + exponent
+	}
+
+	// The compressed result for an exponent of 9 is:
+	// 1 + 10*(n-1) + e   ==   10 + 10*(n-1)
+	return 10 + 10*(amount-1)
 }
 
-// putScript inserts the script into the target byte slice by first encoding
-// the size of the empty byte slice, and then the script itself.
-func putScript(scriptVersion uint16, target, pkScript []byte) int {
-	encodedVersion := uint64(len(pkScript))
-	versionSizeLen := putVLQ(target, encodedSize)
-	encodedSize := uint64(len(pkScript))
-	vlqSizeLen := putVLQ(target, versionSizeLen+encodedSize)
-	copy(target[vlqSizeLen:], pkScript)
-	return vlqSizeLen + len(pkScript)
+// decompressTxOutAmount returns the original amount the passed compressed
+// amount represents according to the domain specific compression algorithm
+// described above.
+func decompressTxOutAmount(amount uint64) uint64 {
+	// No need to do any work if it's zero.
+	if amount == 0 {
+		return 0
+	}
+
+	// The decompressed amount is either of the following two equations:
+	// x = 1 + 10*(9*n + d - 1) + e
+	// x = 1 + 10*(n - 1)       + 9
+	amount--
+
+	// The decompressed amount is now one of the following two equations:
+	// x = 10*(9*n + d - 1) + e
+	// x = 10*(n - 1)       + 9
+	exponent := amount % 10
+	amount /= 10
+
+	// The decompressed amount is now one of the following two equations:
+	// x = 9*n + d - 1  | where e < 9
+	// x = n - 1        | where e = 9
+	n := uint64(0)
+	if exponent < 9 {
+		lastDigit := amount%9 + 1
+		amount /= 9
+		n = amount*10 + lastDigit
+	} else {
+		n = amount + 1
+	}
+
+	// Apply the exponent.
+	for ; exponent > 0; exponent-- {
+		n *= 10
+	}
+
+	return n
 }
 
 // -----------------------------------------------------------------------------
-// The serialized format for an output is:
+// Decred specific transaction encoding flags
 //
-//   <scriptVersion><script>
+// Details about a transaction needed to determine how it may be spent
+// according to consensus rules are given by these flags.
+//
+// The following details are encoded into a single byte, where the index
+// of the bit is given in zeroeth order:
+//     0: Is coinbase
+//     1: Has an expiry
+//   2-3: Transaction type
+//   4-7: Unused
+//
+// 0 and 1 are bit flags, while the transaction type is encoded with a bitmask
+// and used to describe the underlying int.
+//
+// -----------------------------------------------------------------------------
+
+const (
+	// txTypeBitmask describes the bitmask that yields the 3rd and 4th bits
+	// from the flags byte.
+	txTypeBitmask = 0x0c
+
+	// txTypeShift is the number of bits to shift falgs to the right to yield the
+	// correct integer value after applying the bitmask with AND.
+	txTypeShift = 2
+)
+
+// encodeFlags encodes transaction flags into a single byte.
+func encodeFlags(isCoinBase bool, hasExpiry bool, txType stake.TxType) byte {
+	b := uint8(txType)
+	b << txTypeShift
+
+	if isCoinBase {
+		b |= 0x01
+	}
+	if hasExpiry {
+		b |= 0x02
+	}
+}
+
+// decodeFlags decodes transaction flags from a single byte into their
+// respective data types.
+func decodeFlags(b byte) (bool, bool, stake.TxType) {
+	isCoinBase := b&0x01 != 0
+	hasExpiry := b&(1<<1) != 0
+	txType := stake.TxType((b & txTypeBitmask) >> txTypeShift)
+
+	return isCoinBase, hasExpiry, txType
+}
+
+// -----------------------------------------------------------------------------
+// The serialized format for most spent output journal entries is:
+//
+//   <script><scriptVersion>
 //
 //   Field     Type         Size
 //   version   uint16       2 bytes
 //   script    VLQ+[]byte   variable
 //
+// Decred stores the amount of an output in the TxIn, so for any roll back of
+// a UTXO we typically need only store the script itself.
+//
+// The serialized format for an unspent transaction output is:
+//
+//   Field     Type         Size
+//   version   uint16       2 bytes
+//   script    VLQ+[]byte   variable
+// ....
+//
 // -----------------------------------------------------------------------------
 
-// serializeScriptSize 
-func serializeScriptSize(pkScript []byte) int {
-	return 2+ serializeSizeVLQ(uint64(len(pkScript))) + len(pkScript)
+// decodeScriptSize treats the passed serialized bytes as a compressed script,
+// possibly followed by other data, and returns the number of bytes it
+// occupies taking into account the  VLQ encoded script size.
+func decodeScriptSize(serialized []byte) int {
+	scriptSize, bytesRead := deserializeVLQ(serialized)
+	scriptSize += uint64(bytesRead)
+	return int(scriptSize)
 }
 
-// putVersionedScript
-func putVersionedScript(target []byte, version uint16, pkScript) int {
-	offset := putVLQ(target, compressTxOutAmount(amount))
-	offset += putCompressedScript(target[offset:], pkScript)
-	return offset
+// serializeVersionedScriptSize gets the size of a pkScript and the VLQ describing
+// its size in bytes.
+func serializeVersionedScriptSize(pkScript []byte) int {
+	return serializeSizeVLQ(uint64(len(pkScript))) + len(pkScript) + 2
+}
+
+// putVersionedScript inserts a versioned pkScript into a byte slice and returns
+// the offset of the cursor after writing. It takes a cursor as an argument to
+// know where to start writing. This function will fail if the script is written
+// out of bounds, producing a panic.
+func putVersionedScript(target []byte, version uint16, pkScript []byte, offset int) int {
+	binary.LittleEndian.PutUint16(target[offset:offset+2], version)
+	offset += 2
+
+	copy(putScript(target[offset:], pkScript[:]))
+	return offset + len(pkScript)
 }
 
 // decodeVersionedScript
 func decodeVersionedScript(serialized []byte, offset int) (uint16, []byte, error) {
 	// Read the script version.
-	version := binary.LittleEndian.Uint16(serialized[offset, offset+2])
-	
+	version := binary.LittleEndian.Uint16(serialized[offset : offset+2])
+	offset += 2
+
 	// Read the size of the script.
 	scriptSize, endVLQBytesIdx := deserializeVLQ(serialized, offset)
 	if bytesRead >= len(serialized) {
@@ -163,6 +324,6 @@ func decodeVersionedScript(serialized []byte, offset int) (uint16, []byte, error
 			"data after reading the script size")
 	}
 	offset += endVLQBytesIdx
-	
-	return version, serialized[offset:offset+scriptSize:scriptSize], nil
+
+	return version, serialized[offset : offset+scriptSize : scriptSize], nil
 }

@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"sort"
 
+	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg/chainhash"
 	database "github.com/decred/dcrd/database2"
 	"github.com/decred/dcrd/wire"
@@ -143,43 +144,28 @@ type spentTxOut struct {
 
 	// This only needs to be filled out when the transaction is fully spent
 	// and the UTX key containing it falls out of the database.
-	txVersion  int32  // The txVersion of creating tx.
-	height     uint32 // Height of the the block containing the creating tx.
-	index      uint32 // Index in the block of the transaction.
-	isCoinBase bool   // Whether creating tx is a coinbase.
-	hasExpiry  bool   // The expiry of the creating tx.
-}
-
-// spentTxOutHeaderCode returns the calculated header code to be used when
-// serializing the provided stxo entry.
-func spentTxOutHeaderCode(stxo *spentTxOut) uint64 {
-	// The header code is 0 when there is no height set for the stxo.
-	if stxo.height == 0 {
-		return 0
-	}
-
-	// As described in the serialization format comments, the header code
-	// encodes the height shifted over one bit and the coinbase flag in the
-	// lowest bit.
-	headerCode := uint64(stxo.height) << 1
-	if stxo.isCoinBase {
-		headerCode |= 0x01
-	}
-
-	return headerCode
+	txVersion    int32        // The txVersion of creating tx.
+	height       uint32       // Height of the the block containing the tx.
+	index        uint32       // Index in the block of the transaction.
+	txFullySpent bool         // Whether or not the transaction is fully spent.
+	isCoinBase   bool         // Whether creating tx is a coinbase.
+	hasExpiry    bool         // The expiry of the creating tx.
+	txType       stake.TxType // The stake type of the transaction.
 }
 
 // spentTxOutSerializeSize returns the number of bytes it would take to
 // serialize the passed stxo according to the format described above.
 func spentTxOutSerializeSize(stxo *spentTxOut) int {
-	headerCode := spentTxOutHeaderCode(stxo)
-	size := serializeSizeVLQ(headerCode)
-	if headerCode != 0 {
+	size := serializeVersionedScriptSize(stxo.pkScript)
+
+	if stxo.txFullySpent {
 		size += serializeSizeVLQ(uint64(stxo.txVersion))
-		size += serializeSizeVLQ(uint64(stxo.expiry))
+		size += serializeSizeVLQ(uint64(stxo.height))
+		size += serializeSizeVLQ(uint64(stxo.index))
+		size += 1 // Flags
 	}
-	return size + compressedTxOutSize(uint64(stxo.amount), stxo.scriptVersion,
-		stxo.pkScript, stxo.txVersion, stxo.expiry, stxo.compressed)
+
+	return size
 }
 
 // putSpentTxOut serializes the passed stxo according to the format described
@@ -187,13 +173,13 @@ func spentTxOutSerializeSize(stxo *spentTxOut) int {
 // be at least large enough to handle the number of bytes returned by the
 // spentTxOutSerializeSize function or it will panic.
 func putSpentTxOut(target []byte, stxo *spentTxOut) int {
-	headerCode := spentTxOutHeaderCode(stxo)
-	offset := putVLQ(target, headerCode, 0)
-	if headerCode != 0 {
-		offset += putVLQ(target[offset:], uint64(stxo.txVersion), 0)
+	offset := putVersionedScript(target, stxo.scriptVersion, stxo.pkScript, 0)
+
+	if stxo.txFullySpent {
+		offset += putVLQ(target, uint64(stxo.txVersion), offset)
+		offset += putVLQ(target, uint64(stxo.height), offset)
+		offset += putVLQ(target, stxo.index, offset)
 	}
-	return offset + putCompressedTxOut(target[offset:], uint64(stxo.amount),
-		stxo.pkScript, stxo.txVersion, stxo.compressed)
 }
 
 // decodeSpentTxOut decodes the passed serialized stxo entry, possibly followed
