@@ -685,6 +685,8 @@ func deserializeUtxoEntry(serialized []byte) (*UtxoEntry, error) {
 			if err != nil {
 				return nil, err
 			}
+
+			entry.sparseOutputs[uint32(i)] = utxo
 		}
 	}
 

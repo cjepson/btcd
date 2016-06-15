@@ -227,10 +227,10 @@ func IsStakeBase(tx *dcrutil.Tx) bool {
 	return true
 }
 
-// GetSStxStakeOutputInfo takes an SStx as input and scans through its outputs,
+// TxSStxStakeOutputInfo takes an SStx as input and scans through its outputs,
 // returning the pubkeyhashs and amounts for any NullDataTy's (future
 // commitments to stake generation rewards).
-func GetSStxStakeOutputInfo(tx *dcrutil.Tx) ([]bool, [][]byte, []int64, []int64,
+func TxSStxStakeOutputInfo(tx *dcrutil.Tx) ([]bool, [][]byte, []int64, []int64,
 	[][]bool, [][]uint16) {
 	msgTx := tx.MsgTx()
 
@@ -244,6 +244,76 @@ func GetSStxStakeOutputInfo(tx *dcrutil.Tx) ([]bool, [][]byte, []int64, []int64,
 	// Cycle through the inputs and pull the proportional amounts
 	// and commit to PKHs/SHs.
 	for idx, out := range msgTx.TxOut {
+		// We only care about the outputs where we get proportional
+		// amounts and the PKHs/SHs to send rewards to, which is all
+		// the odd numbered output indexes.
+		if (idx > 0) && (idx%2 != 0) {
+			// The MSB (sign), not used ever normally, encodes whether
+			// or not it is a P2PKH or P2SH for the input.
+			amtEncoded := make([]byte, 8, 8)
+			copy(amtEncoded, out.PkScript[22:30])
+			isP2SH[idx/2] = !(amtEncoded[7]&(1<<7) == 0) // MSB set?
+			amtEncoded[7] &= ^uint8(1 << 7)              // Clear bit
+
+			addresses[idx/2] = out.PkScript[2:22]
+			amounts[idx/2] = int64(binary.LittleEndian.Uint64(amtEncoded))
+
+			// Get flags and restrictions for the outputs to be
+			// make in either a vote or revocation.
+			spendRules := make([]bool, 2, 2)
+			spendLimits := make([]uint16, 2, 2)
+
+			// This bitflag is true/false.
+			feeLimitUint16 := binary.LittleEndian.Uint16(out.PkScript[30:32])
+			spendRules[0] = (feeLimitUint16 & SStxVoteFractionFlag) ==
+				SStxVoteFractionFlag
+			spendRules[1] = (feeLimitUint16 & SStxRevFractionFlag) ==
+				SStxRevFractionFlag
+			allSpendRules[idx/2] = spendRules
+
+			// This is the fraction to use out of 64.
+			spendLimits[0] = feeLimitUint16 & SStxVoteReturnFractionMask
+			spendLimits[1] = feeLimitUint16 & SStxRevReturnFractionMask
+			spendLimits[1] >>= 8
+			allSpendLimits[idx/2] = spendLimits
+		}
+
+		// Here we only care about the change amounts, so scan
+		// the change outputs (even indices) and save their
+		// amounts.
+		if (idx > 0) && (idx%2 == 0) {
+			changeAmounts[(idx/2)-1] = out.Value
+		}
+	}
+
+	return isP2SH, addresses, amounts, changeAmounts, allSpendRules,
+		allSpendLimits
+}
+
+// MinimalOutput is a struct encoding a minimally sized output for use in parsing
+// stake related information.
+type MinimalOutput struct {
+	PkScript []byte
+	Value    int64
+	Version  uint16
+}
+
+// SStxStakeOutputInfo takes an SStx as input and scans through its outputs,
+// returning the pubkeyhashs and amounts for any NullDataTy's (future
+// commitments to stake generation rewards).
+func SStxStakeOutputInfo(outs []*MinimalOutput) ([]bool, [][]byte, []int64,
+	[]int64, [][]bool, [][]uint16) {
+	expectedInLen := len(outs) / 2
+	isP2SH := make([]bool, expectedInLen)
+	addresses := make([][]byte, expectedInLen)
+	amounts := make([]int64, expectedInLen)
+	changeAmounts := make([]int64, expectedInLen)
+	allSpendRules := make([][]bool, expectedInLen)
+	allSpendLimits := make([][]uint16, expectedInLen)
+
+	// Cycle through the inputs and pull the proportional amounts
+	// and commit to PKHs/SHs.
+	for idx, out := range outs {
 		// We only care about the outputs where we get proportional
 		// amounts and the PKHs/SHs to send rewards to, which is all
 		// the odd numbered output indexes.
@@ -337,10 +407,10 @@ func AmountFromSStxPkScrCommitment(pkScript []byte) (dcrutil.Amount, error) {
 	return dcrutil.Amount(binary.LittleEndian.Uint64(amtEncoded)), nil
 }
 
-// GetSSGenStakeOutputInfo takes an SSGen tx as input and scans through its
+// TxSSGenStakeOutputInfo takes an SSGen tx as input and scans through its
 // outputs, returning the amount of the output and the PKH or SH that it was
 // sent to.
-func GetSSGenStakeOutputInfo(tx *dcrutil.Tx, params *chaincfg.Params) ([]bool,
+func TxSSGenStakeOutputInfo(tx *dcrutil.Tx, params *chaincfg.Params) ([]bool,
 	[][]byte, []int64, error) {
 	msgTx := tx.MsgTx()
 	numOutputsInSSGen := len(msgTx.TxOut)
@@ -351,6 +421,53 @@ func GetSSGenStakeOutputInfo(tx *dcrutil.Tx, params *chaincfg.Params) ([]bool,
 
 	// Cycle through the inputs and generate
 	for idx, out := range msgTx.TxOut {
+		// We only care about the outputs where we get proportional
+		// amounts and the PKHs they were sent to.
+		if (idx > 1) && (idx < numOutputsInSSGen) {
+			// Get the PKH or SH it's going to, and what type of
+			// script it is.
+			class, addr, _, err :=
+				txscript.ExtractPkScriptAddrs(out.Version, out.PkScript, params)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			if class != txscript.StakeGenTy {
+				return nil, nil, nil, fmt.Errorf("ssgen output included non "+
+					"ssgen tagged output in idx %v", idx)
+			}
+			subClass, err := txscript.GetStakeOutSubclass(out.PkScript)
+			if !(subClass == txscript.PubKeyHashTy ||
+				subClass == txscript.ScriptHashTy) {
+				return nil, nil, nil, fmt.Errorf("bad script type")
+			}
+			isP2SH[idx-2] = false
+			if subClass == txscript.ScriptHashTy {
+				isP2SH[idx-2] = true
+			}
+
+			// Get the amount that was sent.
+			amt := out.Value
+			addresses[idx-2] = addr[0].ScriptAddress()
+			amounts[idx-2] = amt
+		}
+	}
+
+	return isP2SH, addresses, amounts, nil
+}
+
+// SSGenStakeOutputInfo takes an SSGen tx as input and scans through its
+// outputs, returning the amount of the output and the PKH or SH that it was
+// sent to.
+func SSGenStakeOutputInfo(outs []*MinimalOutput, params *chaincfg.Params) ([]bool,
+	[][]byte, []int64, error) {
+	numOutputsInSSGen := len(outs)
+
+	isP2SH := make([]bool, numOutputsInSSGen-2)
+	addresses := make([][]byte, numOutputsInSSGen-2)
+	amounts := make([]int64, numOutputsInSSGen-2)
+
+	// Cycle through the inputs and generate
+	for idx, out := range outs {
 		// We only care about the outputs where we get proportional
 		// amounts and the PKHs they were sent to.
 		if (idx > 1) && (idx < numOutputsInSSGen) {
@@ -502,11 +619,11 @@ func GetSStxNullOutputAmounts(amounts []int64,
 	return fees, contribAmounts, nil
 }
 
-// GetStakeRewards takes a list of SStx adjusted output amounts, the amount used
+// StakeRewards takes a list of SStx adjusted output amounts, the amount used
 // to purchase that ticket, and the reward for an SSGen tx and subsequently
 // generates what the outputs should be in the SSGen tx. If used for calculating
 // the outputs for an SSRtx, pass 0 for subsidy.
-func GetStakeRewards(amounts []int64,
+func StakeRewards(amounts []int64,
 	amountTicket int64,
 	subsidy int64) []int64 {
 

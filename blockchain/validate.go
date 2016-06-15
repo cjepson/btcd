@@ -16,7 +16,6 @@ import (
 	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg"
 	"github.com/decred/dcrd/chaincfg/chainhash"
-	"github.com/decred/dcrd/database"
 	"github.com/decred/dcrd/txscript"
 	"github.com/decred/dcrd/wire"
 	"github.com/decred/dcrutil"
@@ -377,7 +376,8 @@ func CountSigOps(tx *dcrutil.Tx, isCoinBaseTx bool, isSSGen bool) int {
 // transactions which are of the pay-to-script-hash type.  This uses the
 // precise, signature operation counting mechanism from the script engine which
 // requires access to the input transaction scripts.
-func CountP2SHSigOps(tx *dcrutil.Tx, isCoinBaseTx bool, isStakeBaseTx bool, utxoView *UtxoViewpoint) (int, error) {
+func CountP2SHSigOps(tx *dcrutil.Tx, isCoinBaseTx bool, isStakeBaseTx bool,
+	utxoView *UtxoViewpoint) (int, error) {
 	// Coinbase transactions have no interesting inputs.
 	if isCoinBaseTx {
 		return 0, nil
@@ -674,52 +674,6 @@ func CheckWorklessBlockSanity(block *dcrutil.Block, timeSource MedianTimeSource,
 	return checkBlockSanity(block, timeSource, BFNoPoWCheck, chainParams)
 }
 
-// ExtractCoinbaseHeight attempts to extract the height of the block from the
-// scriptSig of a coinbase transaction.  Coinbase heights are only present in
-// blocks of version 2 or later.  This was added as part of BIP0034.
-func ExtractCoinbaseHeight(coinbaseTx *chainhash.Hash) (int32, error) {
-	sigScript := coinbaseTx.MsgTx().TxIn[0].SignatureScript
-	if len(sigScript) < 1 {
-		str := "the coinbase signature script for blocks of " +
-			"version %d or greater must start with the " +
-			"length of the serialized block height"
-		str = fmt.Sprintf(str, serializedHeightVersion)
-		return 0, ruleError(ErrMissingCoinbaseHeight, str)
-	}
-
-	serializedLen := int(sigScript[0])
-	if len(sigScript[1:]) < serializedLen {
-		str := "the coinbase signature script for blocks of " +
-			"version %d or greater must start with the " +
-			"serialized block height"
-		str = fmt.Sprintf(str, serializedLen)
-		return 0, ruleError(ErrMissingCoinbaseHeight, str)
-	}
-
-	serializedHeightBytes := make([]byte, 8, 8)
-	copy(serializedHeightBytes, sigScript[1:serializedLen+1])
-	serializedHeight := binary.LittleEndian.Uint64(serializedHeightBytes)
-
-	return int32(serializedHeight), nil
-}
-
-// checkSerializedHeight checks if the signature script in the passed
-// transaction starts with the serialized block height of wantHeight.
-func checkSerializedHeight(coinbaseTx *chainhash.Hash, wantHeight int32) error {
-	serializedHeight, err := ExtractCoinbaseHeight(coinbaseTx)
-	if err != nil {
-		return err
-	}
-
-	if serializedHeight != wantHeight {
-		str := fmt.Sprintf("the coinbase signature script serialized "+
-			"block height is %d when %d was expected",
-			serializedHeight, wantHeight)
-		return ruleError(ErrBadCoinbaseHeight, str)
-	}
-	return nil
-}
-
 // checkBlockHeaderContext peforms several validation checks on the block header
 // which depend on its position within the block chain.
 //
@@ -809,18 +763,6 @@ func (b *BlockChain) checkBlockHeaderContext(header *wire.BlockHeader, prevNode 
 	return nil
 }
 
-// isTransactionSpent returns whether or not the provided transaction data
-// describes a fully spent transaction.  A fully spent transaction is one where
-// all outputs have been spent.
-func isTransactionSpent(txD *TxData) bool {
-	for _, isOutputSpent := range txD.Spent {
-		if !isOutputSpent {
-			return false
-		}
-	}
-	return true
-}
-
 // checkDupTxsMain ensures blocks do not contain duplicate
 // transactions which 'overwrite' older transactions that are not fully
 // spent.  This prevents an attack where a coinbase and all of its
@@ -833,29 +775,28 @@ func isTransactionSpent(txD *TxData) bool {
 //
 // Decred: Check the stake transactions to make sure they don't have this txid
 // too.
-func (b *BlockChain) checkDupTxsMain(txResults TxStore) error {
-	// Examine the resulting data about the requested transactions.
-	for _, txD := range txResults {
-		switch txD.Err {
-		// A duplicate transaction was not found.  This is the most
-		// common case.
-		case database.ErrTxShaMissing:
-			continue
+func (b *BlockChain) checkDupTxsMain(txSet []*dcrutil.Tx,
+	view *UtxoViewpoint) error {
+	// Fetch utxo details for all of the transactions in this block.
+	// Typically, there will not be any utxos for any of the transactions.
+	fetchSet := make(map[chainhash.Hash]struct{})
+	for _, tx := range txSet {
+		fetchSet[*tx.Sha()] = struct{}{}
+	}
+	err := view.fetchUtxos(b.db, fetchSet)
+	if err != nil {
+		return err
+	}
 
-		// A duplicate transaction was found.  This is only allowed if
-		// the duplicate transaction is fully spent.
-		case nil:
-			if !isTransactionSpent(txD) {
-				str := fmt.Sprintf("tried to overwrite "+
-					"transaction %v at block height %d "+
-					"that is not fully spent", txD.Hash,
-					txD.BlockHeight)
-				return ruleError(ErrOverwriteTx, str)
-			}
-
-		// Some other unexpected error occurred.  Return it now.
-		default:
-			return txD.Err
+	// Duplicate transactions are only allowed if the previous transaction
+	// is fully spent.
+	for _, tx := range txSet {
+		txEntry := view.LookupEntry(tx.Sha())
+		if txEntry != nil && !txEntry.IsFullySpent() {
+			str := fmt.Sprintf("tried to overwrite transaction %v "+
+				"at block height %d that is not fully spent",
+				tx.Sha(), txEntry.BlockHeight())
+			return ruleError(ErrOverwriteTx, str)
 		}
 	}
 
@@ -864,6 +805,7 @@ func (b *BlockChain) checkDupTxsMain(txResults TxStore) error {
 
 // checkDupTxs is a local function to check for duplicate tx hashes in
 // blocks that spend from tx hashes that are not yet totally spent.
+/*
 func (b *BlockChain) checkDupTxs(node *blockNode, parentNode *blockNode,
 	block *dcrutil.Block, parentBlock *dcrutil.Block) error {
 	// Attempt to fetch duplicate transactions for all of the transactions
@@ -953,6 +895,7 @@ func (b *BlockChain) checkDupTxs(node *blockNode, parentNode *blockNode,
 
 	return nil
 }
+*/
 
 // CheckBlockStakeSanity performs a series of checks on a block to ensure that the
 // information from the block's header about stake is sane. For instance, the
@@ -1374,6 +1317,33 @@ func (b *BlockChain) CheckBlockStakeSanity(tixStore TicketStore,
 	return nil
 }
 
+// convertUtxosToMinimalOutputs converts the contents of a UTX to a series of
+// minimal outputs. It does this so that these can be passed to stake subpackage
+// functions, where they will be evaluated for correctness. If entries are missing,
+// it fills them in with a zeroed variant of a missing output and assume that
+// these entries were provably pruneable.
+func convertUtxosToMinimalOutputs(utxoEntry *UtxoEntry) []*stake.MinimalOutput {
+	outs := make([]*stake.MinimalOutput, int(utxoEntry.OutputsLen()))
+	for i := uint32(0); i < utxoEntry.OutputsLen(); i++ {
+		if utxoEntry.IsOutputSpent(i) {
+			outs[i] = &stake.MinimalOutput{
+				Value:    0,
+				Version:  0,
+				PkScript: nil,
+			}
+			continue
+		}
+
+		outs[i] = &stake.MinimalOutput{
+			Value:    utxoEntry.AmountByIndex(i),
+			Version:  utxoEntry.ScriptVersionByIndex(i),
+			PkScript: utxoEntry.PkScriptByIndex(i),
+		}
+	}
+
+	return outs
+}
+
 // CheckTransactionInputs performs a series of checks on the inputs to a
 // transaction to ensure they are valid.  An example of some of the checks
 // include verifying all inputs exist, ensuring the coinbase seasoning
@@ -1382,8 +1352,10 @@ func (b *BlockChain) CheckBlockStakeSanity(tixStore TicketStore,
 // amount, and verifying the signatures to prove the spender was the owner of
 // the decred and therefore allowed to spend them.  As it checks the inputs,
 // it also calculates the total fees for the transaction and returns that value.
-func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64, utxoView *UtxoViewpoint,
-	checkFraudProof bool, chainParams *chaincfg.Params) (int64, error) {
+func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
+	utxoView *UtxoViewpoint, checkFraudProof bool,
+	chainParams *chaincfg.Params) (int64, error) {
+
 	// Expired transactions are not allowed.
 	if tx.MsgTx().Expiry != wire.NoExpiryValue {
 		if txHeight >= int64(tx.MsgTx().Expiry) {
@@ -1422,9 +1394,8 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64, utxoView *UtxoViewpo
 		for idx, txIn := range msgTx.TxIn {
 			// Ensure the input is available.
 			txInHash := &txIn.PreviousOutPoint.Hash
-			originTx, exists := txStore[*txInHash]
-
-			if !exists || originTx.Err != nil || originTx.Tx == nil {
+			utxoEntry, exists := utxoView.entries[*txInHash]
+			if !exists {
 				str := fmt.Sprintf("unable to find input transaction "+
 					"%v for transaction %v", txInHash, txHash)
 				return 0, ruleError(ErrMissingTx, str)
@@ -1432,19 +1403,16 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64, utxoView *UtxoViewpo
 
 			// Ensure the transaction is not double spending coins.
 			originTxIndex := txIn.PreviousOutPoint.Index
-			originTxMsgTx := originTx.Tx.MsgTx()
-
-			if int(originTxIndex) >= len(originTxMsgTx.TxOut) {
-				errStr := fmt.Sprintf("SStx input using tx %x, txout %v "+
-					"referenced a txout that was out of range",
-					originTx.Tx.Sha(),
-					originTxIndex)
-				return 0, ruleError(ErrBadTxInput, errStr)
+			if utxoEntry.IsOutputSpent(originTxIndex) {
+				str := fmt.Sprintf("transaction %s:%d tried to double "+
+					"spend output %v", txHash, idx,
+					txIn.PreviousOutPoint)
+				return 0, ruleError(ErrDoubleSpend, str)
 			}
 
 			// Check and make sure that the input is P2PKH or P2SH.
-			thisPkVersion := originTxMsgTx.TxOut[originTxIndex].Version
-			thisPkScript := originTxMsgTx.TxOut[originTxIndex].PkScript
+			thisPkVersion := utxoEntry.ScriptVersionByIndex(originTxIndex)
+			thisPkScript := utxoEntry.PkScriptByIndex(originTxIndex)
 			class := txscript.GetScriptClass(thisPkVersion, thisPkScript)
 			if txscript.IsStakeOutput(thisPkScript) {
 				class, _ = txscript.GetStakeOutSubclass(thisPkScript)
@@ -1455,18 +1423,15 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64, utxoView *UtxoViewpo
 				errStr := fmt.Sprintf("SStx input using tx %x, txout %v "+
 					"referenced a txout that was not a PubKeyHashTy or "+
 					"ScriptHashTy pkScript (class: %v)",
-					originTx.Tx.Sha(),
-					originTxIndex,
-					class)
+					txInHash, originTxIndex, class)
 				return 0, ruleError(ErrSStxInScrType, errStr)
 			}
 
 			// Get the value of the input.
-			sstxInAmts[idx] = originTxMsgTx.TxOut[originTxIndex].Value
+			sstxInAmts[idx] = utxoEntry.AmountByIndex(originTxIndex)
 		}
 
-		_, _, sstxOutAmts, sstxChangeAmts, _, _ :=
-			stake.GetSStxStakeOutputInfo(tx)
+		_, _, sstxOutAmts, sstxChangeAmts, _, _ := stake.TxSStxStakeOutputInfo(tx)
 		_, sstxOutAmtsCalc, err := stake.GetSStxNullOutputAmounts(sstxInAmts,
 			sstxChangeAmts,
 			msgTx.TxOut[0].Value)
@@ -1536,8 +1501,8 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64, utxoView *UtxoViewpo
 		// subsidy and the inputs.
 		// We also need to make sure that the SSGen outputs that are P2PKH go
 		// to the addresses specified in the original SSTx. Check that too.
-		originTx, exists := txStore[sstxHash]
-		if !exists || originTx.Err != nil || originTx.Tx == nil {
+		utxoEntrySstx, exists := utxoView.entries[sstxHash]
+		if !exists {
 			errStr := fmt.Sprintf("Unable to find input sstx transaction "+
 				"%v for transaction %v", sstxHash, txHash)
 			return 0, ruleError(ErrMissingTx, errStr)
@@ -1545,7 +1510,7 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64, utxoView *UtxoViewpo
 
 		// While we're here, double check to make sure that the input is from an
 		// SStx. By doing so, you also ensure the first output is OP_SSTX tagged.
-		if isSStx, _ := stake.IsSStx(originTx.Tx); !isSStx {
+		if utxoEntrySstx.TransactionType() != stake.TxTypeSStx {
 			errStr := fmt.Sprintf("Input transaction %v for SSGen was not"+
 				"an SStx tx (given input: %v)", txHash, sstxHash)
 			return 0, ruleError(ErrInvalidSSGenInput, errStr)
@@ -1559,13 +1524,12 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64, utxoView *UtxoViewpo
 			return 0, ruleError(ErrInvalidSSGenInput, errStr)
 		}
 
-		sstxMsgTx := originTx.Tx.MsgTx()
-
+		minOutsSStx := convertUtxosToMinimalOutputs(utxoEntrySstx)
 		sstxPayTypes, sstxPkhs, sstxAmts, _, sstxRules, sstxLimits :=
-			stake.GetSStxStakeOutputInfo(originTx.Tx)
+			stake.SStxStakeOutputInfo(minOutsSStx)
 
 		ssgenPayTypes, ssgenPkhs, ssgenAmts, err :=
-			stake.GetSSGenStakeOutputInfo(tx, chainParams)
+			stake.TxSSGenStakeOutputInfo(tx, chainParams)
 		if err != nil {
 			errStr := fmt.Sprintf("Could not decode outputs for SSgen %v: %v",
 				txHash, err.Error())
@@ -1584,21 +1548,9 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64, utxoView *UtxoViewpo
 
 		// Get what the stake payouts should be after appending the reward
 		// to each output.
-		ssgenCalcAmts := stake.GetStakeRewards(sstxAmts,
-			sstxMsgTx.TxOut[0].Value,
+		ssgenCalcAmts := stake.StakeRewards(sstxAmts,
+			utxoEntrySstx.AmountByIndex(0),
 			stakeVoteSubsidy)
-
-		/*
-			err = stake.VerifyStakingPkhsAndAmounts(sstxPayTypes,
-				sstxPkhs,
-				ssrtxAmts,
-				ssrtxPayTypes,
-				ssrtxPkhs,
-				ssrtxCalcAmts,
-				false, // Revocation
-				sstxRules,
-				sstxLimits)
-		*/
 
 		// Check that the generated slices for pkhs and amounts are congruent.
 		err = stake.VerifyStakingPkhsAndAmounts(sstxPayTypes,
@@ -1619,8 +1571,8 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64, utxoView *UtxoViewpo
 
 		// 2. Check to make sure that the second input was an OP_SSTX tagged
 		// output from the referenced SStx.
-		if txscript.GetScriptClass(sstxMsgTx.TxOut[0].Version,
-			sstxMsgTx.TxOut[0].PkScript) != txscript.StakeSubmissionTy {
+		if txscript.GetScriptClass(utxoEntrySstx.ScriptVersionByIndex(0),
+			utxoEntrySstx.PkScriptByIndex(0)) != txscript.StakeSubmissionTy {
 			errStr := fmt.Sprintf("First SStx output in SStx %v referenced "+
 				"by SSGen %v should have been OP_SSTX tagged, but it was "+
 				"not", sstxHash, txHash)
@@ -1630,7 +1582,7 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64, utxoView *UtxoViewpo
 		// 3. Check to ensure that ticket maturity number of blocks have passed
 		// between the block the SSGen plans to go into and the block in which
 		// the SStx was originally found in.
-		originHeight := originTx.BlockHeight
+		originHeight := utxoEntrySstx.BlockHeight()
 		blocksSincePrev := txHeight - originHeight
 
 		// NOTE: You can only spend an OP_SSTX tagged output on the block AFTER
@@ -1676,8 +1628,8 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64, utxoView *UtxoViewpo
 		// subsidy and the inputs.
 		// We also need to make sure that the SSGen outputs that are P2PKH go
 		// to the addresses specified in the original SSTx. Check that too.
-		originTx, exists := txStore[sstxHash]
-		if !exists || originTx.Err != nil || originTx.Tx == nil {
+		utxoEntrySstx, exists := utxoView.entries[sstxHash]
+		if !exists {
 			errStr := fmt.Sprintf("Unable to find input sstx transaction "+
 				"%v for transaction %v", sstxHash, txHash)
 			return 0, ruleError(ErrMissingTx, errStr)
@@ -1685,16 +1637,15 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64, utxoView *UtxoViewpo
 
 		// While we're here, double check to make sure that the input is from an
 		// SStx. By doing so, you also ensure the first output is OP_SSTX tagged.
-		if isSStx, _ := stake.IsSStx(originTx.Tx); !isSStx {
+		if utxoEntrySstx.TransactionType() != stake.TxTypeSStx {
 			errStr := fmt.Sprintf("Input transaction %v for SSRtx %v was not"+
 				"an SStx tx", txHash, sstxHash)
 			return 0, ruleError(ErrInvalidSSRtxInput, errStr)
 		}
 
-		sstxMsgTx := originTx.Tx.MsgTx()
-
+		minOutsSStx := convertUtxosToMinimalOutputs(utxoEntrySstx)
 		sstxPayTypes, sstxPkhs, sstxAmts, _, sstxRules, sstxLimits :=
-			stake.GetSStxStakeOutputInfo(originTx.Tx)
+			stake.SStxStakeOutputInfo(minOutsSStx)
 
 		// This should be impossible to hit given the strict bytecode
 		// size restrictions for components of SSRtxs already checked
@@ -1718,8 +1669,8 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64, utxoView *UtxoViewpo
 
 		// Get what the stake payouts should be after appending the reward
 		// to each output.
-		ssrtxCalcAmts := stake.GetStakeRewards(sstxAmts,
-			sstxMsgTx.TxOut[0].Value,
+		ssrtxCalcAmts := stake.StakeRewards(sstxAmts,
+			utxoEntrySstx.AmountByIndex(0),
 			int64(0)) // SSRtx has no subsidy
 
 		// Check that the generated slices for pkhs and amounts are congruent.
@@ -1741,8 +1692,8 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64, utxoView *UtxoViewpo
 
 		// 2. Check to make sure that the second input was an OP_SSTX tagged
 		// output from the referenced SStx.
-		if txscript.GetScriptClass(sstxMsgTx.TxOut[0].Version,
-			sstxMsgTx.TxOut[0].PkScript) != txscript.StakeSubmissionTy {
+		if txscript.GetScriptClass(utxoEntrySstx.ScriptVersionByIndex(0),
+			utxoEntrySstx.PkScriptByIndex(0)) != txscript.StakeSubmissionTy {
 			errStr := fmt.Sprintf("First SStx output in SStx %v referenced "+
 				"by SSGen %v should have been OP_SSTX tagged, but it was "+
 				"not", sstxHash, txHash)
@@ -1752,7 +1703,7 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64, utxoView *UtxoViewpo
 		// 3. Check to ensure that ticket maturity number of blocks have passed
 		// between the block the SSRtx plans to go into and the block in which
 		// the SStx was originally found in.
-		originHeight := originTx.BlockHeight
+		originHeight := utxoEntrySstx.BlockHeight()
 		blocksSincePrev := txHeight - originHeight
 
 		// NOTE: You can only spend an OP_SSTX tagged output on the block AFTER
@@ -1772,9 +1723,7 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64, utxoView *UtxoViewpo
 	// ----------------------------------------------------------------------------
 	// Decred general transaction testing (and a few stake exceptions).
 	// ----------------------------------------------------------------------------
-
 	for idx, txIn := range tx.MsgTx().TxIn {
-
 		// Inputs won't exist for stakebase tx, so ignore them.
 		if isSSGen && idx == 0 {
 			// However, do add the reward amount.
@@ -1785,93 +1734,96 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64, utxoView *UtxoViewpo
 			continue
 		}
 
-		return 0, ruleError(ErrMissingTx, str)
-	}
-
-	// Check fraud proof witness data.
-	originTxIndex := txIn.PreviousOutPoint.Index
-
-	// Using zero value outputs as inputs is banned.
-	if originTx.Tx.MsgTx().TxOut[originTxIndex].Value == 0 {
-		str := fmt.Sprintf("tried to spend zero value output from input %v,"+
-			" idx %v",
-			originTx.Tx.Sha(),
-			originTxIndex)
-		return 0, ruleError(ErrZeroValueOutputSpend, str)
-	}
-
-	if checkFraudProof {
-		if txIn.ValueIn !=
-			originTx.Tx.MsgTx().TxOut[originTxIndex].Value {
-			str := fmt.Sprintf("bad fraud check value in (expected %v, "+
-				"given %v) for txIn %v",
-				originTx.Tx.MsgTx().TxOut[originTxIndex].Value,
-				txIn.ValueIn, idx)
-			return 0, ruleError(ErrFraudAmountIn, str)
+		txInHash := &txIn.PreviousOutPoint.Hash
+		utxoEntry, exists := utxoView.entries[*txInHash]
+		if !exists {
+			str := fmt.Sprintf("unable to find input transaction "+
+				"%v for transaction %v", txInHash, txHash)
+			return 0, ruleError(ErrMissingTx, str)
 		}
 
-		if int64(txIn.BlockHeight) != originTx.BlockHeight {
-			str := fmt.Sprintf("bad fraud check block height (expected %v, "+
-				"given %v) for txIn %v", originTx.BlockHeight,
-				txIn.BlockHeight, idx)
-			return 0, ruleError(ErrFraudBlockHeight, str)
+		// Check fraud proof witness data.
+		originTxIndex := txIn.PreviousOutPoint.Index
+
+		// Using zero value outputs as inputs is banned.
+		if utxoEntry.AmountByIndex(originTxIndex) == 0 {
+			str := fmt.Sprintf("tried to spend zero value output from input %v,"+
+				" idx %v", txInHash, originTxIndex)
+			return 0, ruleError(ErrZeroValueOutputSpend, str)
 		}
 
-		if txIn.BlockIndex != originTx.BlockIndex {
-			str := fmt.Sprintf("bad fraud check block index (expected %v, "+
-				"given %v) for txIn %v", originTx.BlockIndex, txIn.BlockIndex,
-				idx)
-			return 0, ruleError(ErrFraudBlockIndex, str)
-		}
-	}
+		if checkFraudProof {
+			if txIn.ValueIn != utxoEntry.AmountByIndex(originTxIndex) {
+				str := fmt.Sprintf("bad fraud check value in (expected %v, "+
+					"given %v) for txIn %v",
+					utxoEntry.AmountByIndex(originTxIndex), txIn.ValueIn, idx)
+				return 0, ruleError(ErrFraudAmountIn, str)
+			}
 
-	// Ensure the transaction is not spending coins which have not
-	// yet reached the required coinbase maturity.
-	coinbaseMaturity := int64(chainParams.CoinbaseMaturity)
-	originHeight := int32(utxoEntry.BlockHeight())
-	if IsCoinBase(originTx.Tx) {
-		originHeight := originTx.BlockHeight
-		blocksSincePrev := txHeight - originHeight
-		if blocksSincePrev < coinbaseMaturity {
-			str := fmt.Sprintf("tx %v tried to spend coinbase "+
-				"transaction %v from height %v at "+
-				"height %v before required maturity "+
-				"of %v blocks", txHash, txInHash, originHeight,
-				originHeight, txHeight,
-				coinbaseMaturity)
-			return 0, ruleError(ErrImmatureSpend, str)
-		}
-	}
+			if int64(txIn.BlockHeight) != utxoEntry.BlockHeight() {
+				str := fmt.Sprintf("bad fraud check block height (expected %v, "+
+					"given %v) for txIn %v", utxoEntry.BlockHeight(),
+					txIn.BlockHeight, idx)
+				return 0, ruleError(ErrFraudBlockHeight, str)
+			}
 
-	// Ensure that the transaction is not spending coins from a
-	// transaction that included an expiry but which has not yet
-	// reached coinbase maturity many blocks.
-	if originTx.Tx.MsgTx().Expiry != wire.NoExpiryValue {
-		originHeight := originTx.BlockHeight
-		blocksSincePrev := txHeight - originHeight
-		if blocksSincePrev < coinbaseMaturity {
-			str := fmt.Sprintf("tx %v tried to spend "+
-				"transaction %v including an expiry "+
-				"from height %v at height %v before "+
-				"required maturity of %v blocks",
-				txHash, txInHash, originHeight,
-				txHeight, coinbaseMaturity)
-			return 0, ruleError(ErrExpiryTxSpentEarly, str)
+			if txIn.BlockIndex != utxoEntry.BlockIndex() {
+				str := fmt.Sprintf("bad fraud check block index (expected %v, "+
+					"given %v) for txIn %v", utxoEntry.BlockIndex(),
+					txIn.BlockIndex, idx)
+				return 0, ruleError(ErrFraudBlockIndex, str)
+			}
 		}
-	}
 
-	// Ensure the transaction is not double spending coins.
-	if utxoEntry.IsOutputSpent(originTxIndex) {
-		str := fmt.Sprintf("transaction %s:%d tried to double "+
-			"spend output %v", txHash, txInIndex,
-			txIn.PreviousOutPoint)
-		if originTxIndex >= uint32(len(originTx.Spent)) {
+		// Ensure the transaction is not spending coins which have not
+		// yet reached the required coinbase maturity.
+		coinbaseMaturity := int64(chainParams.CoinbaseMaturity)
+		originHeight := int64(utxoEntry.BlockHeight())
+		if utxoEntry.IsCoinBase() {
+			blocksSincePrev := txHeight - originHeight
+			if blocksSincePrev < coinbaseMaturity {
+				str := fmt.Sprintf("tx %v tried to spend coinbase "+
+					"transaction %v from height %v at "+
+					"height %v before required maturity "+
+					"of %v blocks", txHash, txInHash, originHeight,
+					originHeight, txHeight,
+					coinbaseMaturity)
+				return 0, ruleError(ErrImmatureSpend, str)
+			}
+		}
+
+		// Ensure that the transaction is not spending coins from a
+		// transaction that included an expiry but which has not yet
+		// reached coinbase maturity many blocks.
+		if utxoEntry.HasExpiry() {
+			originHeight := utxoEntry.BlockHeight()
+			blocksSincePrev := txHeight - originHeight
+			if blocksSincePrev < coinbaseMaturity {
+				str := fmt.Sprintf("tx %v tried to spend "+
+					"transaction %v including an expiry "+
+					"from height %v at height %v before "+
+					"required maturity of %v blocks",
+					txHash, txInHash, originHeight,
+					txHeight, coinbaseMaturity)
+				return 0, ruleError(ErrExpiryTxSpentEarly, str)
+			}
+		}
+
+		// Ensure the transaction is not double spending coins.
+		if utxoEntry.IsOutputSpent(originTxIndex) {
+			str := fmt.Sprintf("transaction %s:%d tried to double "+
+				"spend output %v", txHash, originTxIndex,
+				txIn.PreviousOutPoint)
+			return 0, ruleError(ErrDoubleSpend, str)
+		}
+
+		if originTxIndex >= utxoEntry.OutputsLen() {
 			str := fmt.Sprintf("out of bounds input index %d in "+
 				"transaction %v referenced from transaction %v",
 				originTxIndex, txInHash, txHash)
 			return 0, ruleError(ErrBadTxInput, str)
 		}
-		if originTx.Spent[originTxIndex] && !(isSSGen || isSSRtx) {
+		if utxoEntry.IsOutputSpent(originTxIndex) {
 			str := fmt.Sprintf("transaction %v tried to double "+
 				"spend coins from transaction %v", txHash,
 				txInHash)
@@ -1880,7 +1832,7 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64, utxoView *UtxoViewpo
 
 		// Ensure that the outpoint's tx tree makes sense.
 		originTxOPTree := txIn.PreviousOutPoint.Tree
-		originTxType := stake.DetermineTxType(originTx.Tx)
+		originTxType := utxoEntry.TransactionType()
 		indicatedTree := dcrutil.TxTreeRegular
 		if originTxType != stake.TxTypeRegular {
 			indicatedTree = dcrutil.TxTreeStake
@@ -1899,11 +1851,10 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64, utxoView *UtxoViewpo
 		// tagged outputs are SSGen or SSRtx tx.
 		// So, check all the inputs from non SSGen or SSRtx and make sure that
 		// they spend no OP_SSTX tagged outputs.
-		originTxMsgTx := originTx.Tx.MsgTx()
-
 		if !(isSSGen || isSSRtx) {
-			if txscript.GetScriptClass(originTxMsgTx.TxOut[originTxIndex].Version,
-				originTxMsgTx.TxOut[originTxIndex].PkScript) ==
+			if txscript.GetScriptClass(
+				utxoEntry.ScriptVersionByIndex(originTxIndex),
+				utxoEntry.PkScriptByIndex(originTxIndex)) ==
 				txscript.StakeSubmissionTy {
 				_, errIsSSGen := stake.IsSSGen(tx)
 				_, errIsSSRtx := stake.IsSSRtx(tx)
@@ -1920,12 +1871,11 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64, utxoView *UtxoViewpo
 		// OP_SSGEN and OP_SSRTX tagged outputs can only be spent after
 		// coinbase maturity many blocks.
 		scriptClass := txscript.GetScriptClass(
-			originTxMsgTx.TxOut[originTxIndex].Version,
-			originTxMsgTx.TxOut[originTxIndex].PkScript)
-		if scriptClass == txscript.OP_SSGEN ||
-			scriptClass == txscript.OP_SSRTX {
-
-			originHeight := originTx.BlockHeight
+			utxoEntry.ScriptVersionByIndex(originTxIndex),
+			utxoEntry.PkScriptByIndex(originTxIndex))
+		if scriptClass == txscript.StakeGenTy ||
+			scriptClass == txscript.StakeRevocationTy {
+			originHeight := utxoEntry.BlockHeight()
 			blocksSincePrev := txHeight - originHeight
 			if blocksSincePrev < int64(chainParams.SStxChangeMaturity) {
 				str := fmt.Sprintf("tried to spend OP_SSGEN or "+
@@ -1940,7 +1890,7 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64, utxoView *UtxoViewpo
 		// SStx change outputs may only be spent after sstx change maturity many
 		// blocks.
 		if scriptClass == txscript.StakeSubChangeTy {
-			originHeight := originTx.BlockHeight
+			originHeight := utxoEntry.BlockHeight()
 			blocksSincePrev := txHeight - originHeight
 			if blocksSincePrev < int64(chainParams.SStxChangeMaturity) {
 				str := fmt.Sprintf("tried to spend SStx change "+
@@ -1958,7 +1908,7 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64, utxoView *UtxoViewpo
 		// a transaction are in a unit value known as a atom.  One
 		// decred is a quantity of atoms as defined by the
 		// AtomPerCoin constant.
-		originTxAtom := originTx.Tx.MsgTx().TxOut[originTxIndex].Value
+		originTxAtom := utxoEntry.AmountByIndex(originTxIndex)
 		if originTxAtom < 0 {
 			str := fmt.Sprintf("transaction output has negative "+
 				"value of %v", originTxAtom)
@@ -1986,7 +1936,7 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64, utxoView *UtxoViewpo
 		}
 
 		// Mark the referenced output as spent.
-		originTx.Spent[originTxIndex] = true
+		utxoEntry.SpendOutput(originTxIndex)
 	}
 
 	// Calculate the total output amount for this transaction.  It is safe
@@ -2044,7 +1994,7 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64, utxoView *UtxoViewpo
 // checkP2SHNumSigOps Checks the number of P2SH signature operations to make
 // sure they don't overflow the limits.
 // TxTree true == Regular, false == Stake
-func checkP2SHNumSigOps(txs []*dcrutil.Tx, txInputStore TxStore,
+func checkP2SHNumSigOps(txs []*dcrutil.Tx, utxoView *UtxoViewpoint,
 	txTree bool) error {
 	totalSigOps := 0
 	for i, tx := range txs {
@@ -2058,7 +2008,7 @@ func checkP2SHNumSigOps(txs []*dcrutil.Tx, txInputStore TxStore,
 		// transaction is a coinbase transaction rather than
 		// having to do a full coinbase check again.
 		numP2SHSigOps, err := CountP2SHSigOps(tx, (i == 0) && txTree, isSSGen,
-			txInputStore)
+			utxoView)
 		if err != nil {
 			log.Tracef("CountP2SHSigOps failed; error "+
 				"returned %v", err.Error())
@@ -2085,20 +2035,20 @@ func checkP2SHNumSigOps(txs []*dcrutil.Tx, txInputStore TxStore,
 // single stakebase transactions (votes) within a block. This function skips a
 // ton of checks already performed by CheckTransactionInputs.
 func checkStakeBaseAmounts(height int64, params *chaincfg.Params,
-	txs []*dcrutil.Tx, txStore TxStore) error {
+	txs []*dcrutil.Tx, utxoView *UtxoViewpoint) error {
 	for _, tx := range txs {
 		if is, _ := stake.IsSSGen(tx); is {
 			// Ensure the input is available.
 			txInHash := &tx.MsgTx().TxIn[1].PreviousOutPoint.Hash
-			originTx, exists := txStore[*txInHash]
-			if !exists || originTx.Err != nil || originTx.Tx == nil {
+			utxoEntry, exists := utxoView.entries[*txInHash]
+			if !exists {
 				str := fmt.Sprintf("couldn't find input tx %v for stakebase "+
 					"amounts check", txInHash)
 				return ruleError(ErrTicketUnavailable, str)
 			}
 
 			originTxIndex := tx.MsgTx().TxIn[1].PreviousOutPoint.Index
-			originTxAtom := originTx.Tx.MsgTx().TxOut[originTxIndex].Value
+			originTxAtom := utxoEntry.AmountByIndex(originTxIndex)
 
 			totalOutputs := int64(0)
 			// Sum up the outputs.
@@ -2127,15 +2077,15 @@ func checkStakeBaseAmounts(height int64, params *chaincfg.Params,
 // the collective stakebase transactions (votes) within a block. This
 // function skips a ton of checks already performed by
 // CheckTransactionInputs.
-func getStakeBaseAmounts(txs []*dcrutil.Tx, txStore TxStore) (int64, error) {
+func getStakeBaseAmounts(txs []*dcrutil.Tx, utxoView *UtxoViewpoint) (int64, error) {
 	totalInputs := int64(0)
 	totalOutputs := int64(0)
 	for _, tx := range txs {
 		if is, _ := stake.IsSSGen(tx); is {
 			// Ensure the input is available.
 			txInHash := &tx.MsgTx().TxIn[1].PreviousOutPoint.Hash
-			originTx, exists := txStore[*txInHash]
-			if !exists || originTx.Err != nil || originTx.Tx == nil {
+			utxoEntry, exists := utxoView.entries[*txInHash]
+			if !exists {
 				str := fmt.Sprintf("couldn't find input tx %v for stakebase "+
 					"amounts get",
 					txInHash)
@@ -2143,7 +2093,7 @@ func getStakeBaseAmounts(txs []*dcrutil.Tx, txStore TxStore) (int64, error) {
 			}
 
 			originTxIndex := tx.MsgTx().TxIn[1].PreviousOutPoint.Index
-			originTxAtom := originTx.Tx.MsgTx().TxOut[originTxIndex].Value
+			originTxAtom := utxoEntry.AmountByIndex(originTxIndex)
 
 			totalInputs += originTxAtom
 
@@ -2160,7 +2110,7 @@ func getStakeBaseAmounts(txs []*dcrutil.Tx, txStore TxStore) (int64, error) {
 // getStakeTreeFees determines the amount of fees for in the stake tx tree
 // of some node given a transaction store.
 func getStakeTreeFees(height int64, params *chaincfg.Params,
-	txs []*dcrutil.Tx, txStore TxStore) (dcrutil.Amount, error) {
+	txs []*dcrutil.Tx, utxoView *UtxoViewpoint) (dcrutil.Amount, error) {
 	totalInputs := int64(0)
 	totalOutputs := int64(0)
 	for _, tx := range txs {
@@ -2173,15 +2123,15 @@ func getStakeTreeFees(height int64, params *chaincfg.Params,
 			}
 
 			txInHash := &in.PreviousOutPoint.Hash
-			originTx, exists := txStore[*txInHash]
-			if !exists || originTx.Err != nil || originTx.Tx == nil {
+			utxoEntry, exists := utxoView.entries[*txInHash]
+			if !exists {
 				str := fmt.Sprintf("couldn't find input tx %v for stake "+
 					"tree fee calculation", txInHash)
 				return 0, ruleError(ErrTicketUnavailable, str)
 			}
 
 			originTxIndex := in.PreviousOutPoint.Index
-			originTxAtom := originTx.Tx.MsgTx().TxOut[originTxIndex].Value
+			originTxAtom := utxoEntry.AmountByIndex(originTxIndex)
 
 			totalInputs += originTxAtom
 		}
@@ -2210,11 +2160,8 @@ func getStakeTreeFees(height int64, params *chaincfg.Params,
 // checkTransactionInputs is the local function used to check the transaction
 // inputs for a transaction list given a predetermined TxStore.
 // TxTree true == Regular, false == Stake
-func (b *BlockChain) checkTransactionInputs(
-	inputFees dcrutil.Amount,
-	node *blockNode,
-	txs []*dcrutil.Tx,
-	txStore TxStore,
+func (b *BlockChain) checkTransactionInputs(inputFees dcrutil.Amount,
+	node *blockNode, txs []*dcrutil.Tx, utxoView *UtxoViewpoint,
 	txTree bool) error {
 	// Perform several checks on the inputs for each transaction.  Also
 	// accumulate the total fees.  This could technically be combined with
@@ -2239,7 +2186,7 @@ func (b *BlockChain) checkTransactionInputs(
 
 				// Ensure the input is available.
 				txInHash := &txIn.PreviousOutPoint.Hash
-				originTx, exists := txStore[*txInHash]
+				utxoEntry, exists := utxoView.entries[*txInHash]
 				originTxIndex := txIn.PreviousOutPoint.Index
 				if !exists {
 					str := fmt.Sprintf("missing input tx for index %d in "+
@@ -2249,13 +2196,13 @@ func (b *BlockChain) checkTransactionInputs(
 				}
 
 				// Ensure the transaction is not double spending coins.
-				if originTxIndex >= uint32(len(originTx.Spent)) {
+				if originTxIndex >= utxoEntry.OutputsLen() {
 					str := fmt.Sprintf("out of bounds input index %d in "+
 						"transaction %v referenced from stake transaction %v",
 						originTxIndex, txInHash, tx.Sha())
 					return ruleError(ErrBadTxInput, str)
 				}
-				if originTx.Spent[originTxIndex] {
+				if utxoEntry.IsOutputSpent(originTxIndex) {
 					str := fmt.Sprintf("stake transaction %v tried to double "+
 						"spend coins from transaction %v", tx.Sha(),
 						txInHash)
@@ -2268,7 +2215,7 @@ func (b *BlockChain) checkTransactionInputs(
 		// spent, so be aware of this.
 		txFee, err := CheckTransactionInputs(tx,
 			node.height,
-			txStore,
+			utxoView,
 			true, // Check fraud proofs
 			b.chainParams)
 		if err != nil {
@@ -2341,12 +2288,12 @@ func (b *BlockChain) checkTransactionInputs(
 			return ruleError(ErrNoStakeTx, str)
 		}
 
-		err := checkStakeBaseAmounts(node.height, b.chainParams, txs, txStore)
+		err := checkStakeBaseAmounts(node.height, b.chainParams, txs, utxoView)
 		if err != nil {
 			return err
 		}
 
-		totalAtomOutStake, err := getStakeBaseAmounts(txs, txStore)
+		totalAtomOutStake, err := getStakeBaseAmounts(txs, utxoView)
 		if err != nil {
 			return err
 		}
@@ -2390,7 +2337,7 @@ func (b *BlockChain) checkTransactionInputs(
 //
 // This function MUST be called with the chain state lock held (for writes).
 func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
-	view *UtxoViewpoint, stxos *[]spentTxOut) error {
+	utxoView *UtxoViewpoint, stxos *[]spentTxOut) error {
 	// If the side chain blocks end up in the database, a call to
 	// CheckBlockSanity should be done here in case a previous version
 	// allowed a block that is no longer valid.  However, since the
@@ -2413,76 +2360,28 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 	}
 
 	// Ensure the view is for the node being checked.
-	if !view.BestHash().IsEqual(node.parentHash) {
+	if !utxoView.BestHash().IsEqual(node.parentHash) {
 		return AssertError(fmt.Sprintf("inconsistent view when "+
 			"checking block connection: best hash is %v instead "+
-			"of expected %v", view.BestHash(), node.hash))
+			"of expected %v", utxoView.BestHash(), node.hash))
 	}
 
+	/* TODO REMOVE AND CHECK INDIVIDUALLY
 	err = b.checkDupTxs(node, parent, block, parentBlock)
 	if err != nil {
 		errStr := fmt.Sprintf("checkDupTxs failed for incoming "+
 			"node %v; error given: %v", node.hash, err)
 		return ruleError(ErrBIP0030, errStr)
 	}
+	*/
 
-	// Request a map that contains all input transactions for the following
-	// TxTrees:
-	// 1) Parent TxTreeRegular (if validated)
-	// 2) Current TxTreeStake
-	// 3) Current TxTreeRegular
-	// These transactions are needed for verification of things such as
-	// transaction inputs, counting pay-to-script-hashes, and scripts.
+	// Load all of the utxos referenced by the inputs for all transactions
+	// in the block don't already exist in the utxo view from the database.
 	//
-	// TODO This is very slow. Ideally, we should fetch once, check
-	// what we need to for this state, then update to the next state
-	// with the connect block function for a single tx store.
-	// Additionally, txStores for sidechains being evaluated should
-	// be cached so that if another block is added on top of the side
-	// chain, we don't have to recalculate the entire ticket store
-	// again resulting in O(n) behaviour per block check connect
-	// that can easily be O(1).
-	// The same going for ticket lookup, and would offer a dramatic
-	// improvement there as well. Blocks on extremely long side
-	// chains may take a very long time to validate with the current
-	// code, with hundreds of blocks taking hours.
-	regularTxTreeValid := dcrutil.IsFlagSet16(node.header.VoteBits,
-		dcrutil.BlockValid)
-	thisNodeStakeViewpoint := ViewpointPrevInvalidStake
-	thisNodeRegularViewpoint := ViewpointPrevInvalidRegular
-	var txInputStoreInitial TxStore
-
-	// TxStore at blockchain HEAD.
-	if regularTxTreeValid {
-		txInputStoreInitial, err = b.fetchInputTransactions(node, block,
-			ViewpointPrevValidInitial)
-		if err != nil {
-			log.Tracef("fetchInputTransactions failed for incoming "+
-				"node %v; error given: %v", node.hash, err)
-			return err
-		}
-
-		thisNodeStakeViewpoint = ViewpointPrevValidStake
-		thisNodeRegularViewpoint = ViewpointPrevValidRegular
-	}
-
-	// TxStore at blockchain HEAD + TxTreeRegular of prevBlock (if
-	// validated).
-	txInputStoreStake, err := b.fetchInputTransactions(node, block,
-		thisNodeStakeViewpoint)
+	// These utxo entries are needed for verification of things such as
+	// transaction inputs, counting pay-to-script-hashes, and scripts.
+	err = utxoView.fetchInputUtxos(b.db, block)
 	if err != nil {
-		log.Tracef("fetchInputTransactions failed for incoming "+
-			"node %v; error given: %v", node.hash, err)
-		return err
-	}
-
-	// TxStore at blockchain HEAD + TxTreeRegular of prevBlock (if
-	// validated) + TxTreeStake of current block.
-	txInputStoreRegular, err := b.fetchInputTransactions(node, block,
-		thisNodeRegularViewpoint)
-	if err != nil {
-		log.Tracef("fetchInputTransactions failed for incoming "+
-			"node %v; error given: %v", node.hash, err)
 		return err
 	}
 
@@ -2496,7 +2395,7 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 	}
 
 	err = b.CheckBlockStakeSanity(ticketStore,
-		b.stakeValidationHeight,
+		b.chainParams.StakeValidationHeight,
 		node,
 		block,
 		parentBlock,
@@ -2514,24 +2413,14 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 	// signature operations in each of the input transaction public key
 	// scripts.
 	// Do this for all TxTrees.
+	regularTxTreeValid := dcrutil.IsFlagSet16(node.header.VoteBits,
+		dcrutil.BlockValid)
 	if regularTxTreeValid {
 		err = checkP2SHNumSigOps(parentBlock.Transactions(),
-			txInputStoreInitial, true)
+			utxoView, true)
 		if err != nil {
 			return err
 		}
-	}
-
-	err = checkP2SHNumSigOps(block.STransactions(),
-		txInputStoreStake, false)
-	if err != nil {
-		return err
-	}
-
-	err = checkP2SHNumSigOps(block.Transactions(),
-		txInputStoreRegular, true)
-	if err != nil {
-		return err
 	}
 
 	// Perform several checks on the inputs for each transaction.  Also
@@ -2543,30 +2432,10 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 	// bounds.
 	// TxTreeRegular of previous block.
 	if regularTxTreeValid {
-		// TODO when validating the previous block, cache the stake
-		// fees in a node so you don't have to redo these expensive
-		// lookups.
-		parentTxTreeValid := dcrutil.IsFlagSet16(parent.header.VoteBits,
-			dcrutil.BlockValid)
-		thisParentNodeStakeViewpoint := ViewpointPrevInvalidStake
-		beforeSVH := node.height < b.chainParams.StakeValidationHeight
-		firstBlock := node.height == 1
-		if parentTxTreeValid || (beforeSVH && !firstBlock) {
-			thisParentNodeStakeViewpoint = ViewpointPrevValidStake
-		}
-
-		parentTxInputStoreStake, err := b.fetchInputTransactions(parent,
-			parentBlock, thisParentNodeStakeViewpoint)
-		if err != nil {
-			log.Tracef("fetchInputTransactions failed for incoming "+
-				"parent node %v stake tree; error given: %v", node.hash, err)
-			return err
-		}
-
 		stakeTreeFees, err := getStakeTreeFees(parent.height,
 			b.chainParams,
 			parentBlock.STransactions(),
-			parentTxInputStoreStake)
+			utxoView)
 		if err != nil {
 			log.Tracef("getStakeTreeFees failed for prev "+
 				"TxTreeStake: %v", err.Error())
@@ -2574,7 +2443,7 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 		}
 
 		err = b.checkTransactionInputs(stakeTreeFees, parent,
-			parentBlock.Transactions(), txInputStoreInitial, true)
+			parentBlock.Transactions(), utxoView, true)
 		if err != nil {
 			log.Tracef("checkTransactionInputs failed for prev "+
 				"TxTreeRegular: %v", err.Error())
@@ -2585,15 +2454,23 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 		// provably unspendable as available utxos.  Also, the passed
 		// spent txos slice is updated to contain an entry for each
 		// spent txout in the order each transaction spends them.
-		err = view.connectTransaction(tx, node.height, stxos)
-		if err != nil {
-			return err
+		for i, tx := range parentBlock.Transactions() {
+			err = utxoView.connectTransaction(tx, node.height, uint32(i), stxos)
+			if err != nil {
+				return err
+			}
 		}
+	}
+
+	err = checkP2SHNumSigOps(block.STransactions(),
+		utxoView, false)
+	if err != nil {
+		return err
 	}
 
 	// TxTreeStake of current block.
 	err = b.checkTransactionInputs(0, node, block.STransactions(),
-		txInputStoreStake, false)
+		utxoView, false)
 	if err != nil {
 		log.Tracef("checkTransactionInputs failed for cur "+
 			"TxTreeStake: %v", err.Error())
@@ -2603,7 +2480,7 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 	stakeTreeFees, err := getStakeTreeFees(node.height,
 		b.chainParams,
 		block.STransactions(),
-		txInputStoreStake)
+		utxoView)
 	if err != nil {
 		log.Tracef("getStakeTreeFees failed for cur "+
 			"TxTreeStake: %v", err.Error())
@@ -2611,8 +2488,14 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 	}
 
 	// TxTreeRegular of current block.
+	err = checkP2SHNumSigOps(block.Transactions(),
+		utxoView, true)
+	if err != nil {
+		return err
+	}
+
 	err = b.checkTransactionInputs(stakeTreeFees, node, block.Transactions(),
-		txInputStoreRegular, true)
+		utxoView, true)
 	if err != nil {
 		log.Tracef("checkTransactionInputs failed for cur "+
 			"TxTreeRegular: %v", err.Error())
@@ -2646,7 +2529,7 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 
 		if regularTxTreeValid {
 			// TxTreeRegular of previous block.
-			err = checkBlockScripts(parentBlock, txInputStoreInitial,
+			err = checkBlockScripts(parentBlock, utxoView,
 				true, scriptFlags, b.sigCache)
 			if err != nil {
 				log.Tracef("checkBlockScripts failed; error "+
@@ -2657,7 +2540,7 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 		}
 
 		// TxTreeStake of current block.
-		err = checkBlockScripts(block, txInputStoreStake, false,
+		err = checkBlockScripts(block, utxoView, false,
 			scriptFlags, b.sigCache)
 		if err != nil {
 			log.Tracef("checkBlockScripts failed; error "+
@@ -2666,7 +2549,7 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 		}
 
 		// TxTreeRegular of current block.
-		err = checkBlockScripts(block, txInputStoreRegular, true,
+		err = checkBlockScripts(block, utxoView, true,
 			scriptFlags, b.sigCache)
 		if err != nil {
 			log.Tracef("checkBlockScripts failed; error "+
@@ -2686,7 +2569,7 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 
 	// Update the best hash for view to include this block since all of its
 	// transactions have been connected.
-	view.SetBestHash(node.hash)
+	utxoView.SetBestHash(node.hash)
 
 	return nil
 }

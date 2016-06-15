@@ -16,12 +16,11 @@ import (
 
 	"github.com/decred/dcrd/blockchain"
 	"github.com/decred/dcrd/blockchain/stake"
-	database "github.com/decred/dcrd/database2"
-	_ "github.com/decred/dcrd/database2/ffldb"
 	"github.com/decred/dcrd/chaincfg"
 	_ "github.com/decred/dcrd/database/memdb"
+	database "github.com/decred/dcrd/database2"
+	_ "github.com/decred/dcrd/database2/ffldb"
 	"github.com/decred/dcrd/wire"
-	"github.com/decred/dcrutil"
 )
 
 const (

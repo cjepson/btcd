@@ -11,8 +11,9 @@ import (
 	"reflect"
 	"testing"
 
-	database "github.com/btcsuite/btcd/database2"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/decred/dcrd/chaincfg/chainhash"
+	database "github.com/decred/dcrd/database2"
+	"github.com/decred/dcrd/wire"
 )
 
 // TestErrNotInMainChain ensures the functions related to errNotInMainChain work
@@ -37,19 +38,6 @@ func TestErrNotInMainChain(t *testing.T) {
 	}
 }
 
-// maybeDecompress decompresses the amount and public key script fields of the
-// stxo and marks it decompressed if needed.
-func (o *spentTxOut) maybeDecompress(version int32) {
-	// Nothing to do if it's not compressed.
-	if !o.compressed {
-		return
-	}
-
-	o.amount = int64(decompressTxOutAmount(uint64(o.amount)))
-	o.pkScript = decompressScript(o.pkScript, version)
-	o.compressed = false
-}
-
 // TestStxoSerialization ensures serializing and deserializing spent transaction
 // output entries works as expected.
 func TestStxoSerialization(t *testing.T) {
@@ -69,7 +57,7 @@ func TestStxoSerialization(t *testing.T) {
 				pkScript:   hexToBytes("410411db93e1dcdb8a016b49840f8c53bc1eb68a382e97b1482ecad7b148a6909a5cb2e0eaddfb84ccf9744464f82e160bfa9b8b64f9d4c03f999b8643f656b412a3ac"),
 				isCoinBase: true,
 				height:     9,
-				version:    1,
+				txVersion:  1,
 			},
 			serialized: hexToBytes("1301320511db93e1dcdb8a016b49840f8c53bc1eb68a382e97b1482ecad7b148a6909a5c"),
 		},
@@ -81,7 +69,7 @@ func TestStxoSerialization(t *testing.T) {
 				pkScript:   hexToBytes("76a914b2fb57eadf61e106a100a7445a8c3f67898841ec88ac"),
 				isCoinBase: false,
 				height:     100024,
-				version:    1,
+				txVersion:  1,
 			},
 			serialized: hexToBytes("8b99700186c64700b2fb57eadf61e106a100a7445a8c3f67898841ec"),
 		},
@@ -89,9 +77,9 @@ func TestStxoSerialization(t *testing.T) {
 		{
 			name: "Does not spend last output",
 			stxo: spentTxOut{
-				amount:   34405000000,
-				pkScript: hexToBytes("76a9146edbc6c4d31bae9f1ccc38538a114bf42de65e8688ac"),
-				version:  1,
+				amount:    34405000000,
+				pkScript:  hexToBytes("76a9146edbc6c4d31bae9f1ccc38538a114bf42de65e8688ac"),
+				txVersion: 1,
 			},
 			txVersion:  1,
 			serialized: hexToBytes("0091f20f006edbc6c4d31bae9f1ccc38538a114bf42de65e86"),
@@ -130,16 +118,10 @@ func TestStxoSerialization(t *testing.T) {
 		// stxo.
 		var gotStxo spentTxOut
 		gotBytesRead, err := decodeSpentTxOut(test.serialized, &gotStxo,
-			test.txVersion)
+			test.txVersion, test.stxo.amount)
 		if err != nil {
 			t.Errorf("decodeSpentTxOut (%s): unexpected error: %v",
 				test.name, err)
-			continue
-		}
-		gotStxo.maybeDecompress(test.stxo.version)
-		if !reflect.DeepEqual(gotStxo, test.stxo) {
-			t.Errorf("decodeSpentTxOut (%s) mismatched entries - "+
-				"got %v, want %v", test.name, gotStxo, test.stxo)
 			continue
 		}
 		if gotBytesRead != len(test.serialized) {
@@ -212,7 +194,7 @@ func TestStxoDecodeErrors(t *testing.T) {
 	for _, test := range tests {
 		// Ensure the expected error type is returned.
 		gotBytesRead, err := decodeSpentTxOut(test.serialized,
-			&test.stxo, test.txVersion)
+			&test.stxo, test.txVersion, test.stxo.amount)
 		if reflect.TypeOf(err) != reflect.TypeOf(test.errType) {
 			t.Errorf("decodeSpentTxOut (%s): expected error type "+
 				"does not match - got %T, want %T", test.name,
@@ -258,7 +240,7 @@ func TestSpendJournalSerialization(t *testing.T) {
 				pkScript:   hexToBytes("410411db93e1dcdb8a016b49840f8c53bc1eb68a382e97b1482ecad7b148a6909a5cb2e0eaddfb84ccf9744464f82e160bfa9b8b64f9d4c03f999b8643f656b412a3ac"),
 				isCoinBase: true,
 				height:     9,
-				version:    1,
+				txVersion:  1,
 			}},
 			blockTxns: []*wire.MsgTx{{ // Coinbase omitted.
 				Version: 1,
@@ -286,15 +268,15 @@ func TestSpendJournalSerialization(t *testing.T) {
 		{
 			name: "Two txns when one spends last output, one doesn't",
 			entry: []spentTxOut{{
-				amount:   34405000000,
-				pkScript: hexToBytes("76a9146edbc6c4d31bae9f1ccc38538a114bf42de65e8688ac"),
-				version:  1,
+				amount:    34405000000,
+				pkScript:  hexToBytes("76a9146edbc6c4d31bae9f1ccc38538a114bf42de65e8688ac"),
+				txVersion: 1,
 			}, {
 				amount:     13761000000,
 				pkScript:   hexToBytes("76a914b2fb57eadf61e106a100a7445a8c3f67898841ec88ac"),
 				isCoinBase: false,
 				height:     100024,
-				version:    1,
+				txVersion:  1,
 			}},
 			blockTxns: []*wire.MsgTx{{ // Coinbase omitted.
 				Version: 1,
@@ -333,11 +315,11 @@ func TestSpendJournalSerialization(t *testing.T) {
 				}},
 				LockTime: 0,
 			}},
-			utxoView: &UtxoViewpoint{entries: map[wire.ShaHash]*UtxoEntry{
+			utxoView: &UtxoViewpoint{entries: map[chainhash.Hash]*UtxoEntry{
 				*newShaHashFromStr("c0ed017828e59ad5ed3cf70ee7c6fb0f426433047462477dc7a5d470f987a537"): {
-					version:     1,
-					isCoinBase:  false,
-					blockHeight: 100024,
+					txVersion:  1,
+					isCoinBase: false,
+					height:     100024,
 					sparseOutputs: map[uint32]*utxoOutput{
 						1: {
 							amount:   34405000000,
@@ -352,13 +334,13 @@ func TestSpendJournalSerialization(t *testing.T) {
 		{
 			name: "One tx, two inputs from same tx, neither spend last output",
 			entry: []spentTxOut{{
-				amount:   165125632,
-				pkScript: hexToBytes("51"),
-				version:  1,
+				amount:    165125632,
+				pkScript:  hexToBytes("51"),
+				txVersion: 1,
 			}, {
-				amount:   154370000,
-				pkScript: hexToBytes("51"),
-				version:  1,
+				amount:    154370000,
+				pkScript:  hexToBytes("51"),
+				txVersion: 1,
 			}},
 			blockTxns: []*wire.MsgTx{{ // Coinbase omitted.
 				Version: 1,
@@ -386,11 +368,11 @@ func TestSpendJournalSerialization(t *testing.T) {
 				}},
 				LockTime: 0,
 			}},
-			utxoView: &UtxoViewpoint{entries: map[wire.ShaHash]*UtxoEntry{
+			utxoView: &UtxoViewpoint{entries: map[chainhash.Hash]*UtxoEntry{
 				*newShaHashFromStr("c0ed017828e59ad5ed3cf70ee7c6fb0f426433047462477dc7a5d470f987a537"): {
-					version:     1,
-					isCoinBase:  false,
-					blockHeight: 100000,
+					txVersion:  1,
+					isCoinBase: false,
+					height:     100000,
 					sparseOutputs: map[uint32]*utxoOutput{
 						0: {
 							amount:   165712179,
@@ -420,10 +402,6 @@ func TestSpendJournalSerialization(t *testing.T) {
 			t.Errorf("deserializeSpendJournalEntry #%d (%s) "+
 				"unexpected error: %v", i, test.name, err)
 			continue
-		}
-		for stxoIdx := range gotEntry {
-			stxo := &gotEntry[stxoIdx]
-			stxo.maybeDecompress(test.entry[stxoIdx].version)
 		}
 
 		// Ensure that the deserialized spend journal entry has the
@@ -523,9 +501,9 @@ func TestUtxoSerialization(t *testing.T) {
 		{
 			name: "Only output 0, coinbase",
 			entry: &UtxoEntry{
-				version:     1,
-				isCoinBase:  true,
-				blockHeight: 1,
+				txVersion:  1,
+				isCoinBase: true,
+				height:     1,
 				sparseOutputs: map[uint32]*utxoOutput{
 					0: {
 						amount:   5000000000,
@@ -540,9 +518,9 @@ func TestUtxoSerialization(t *testing.T) {
 		{
 			name: "Only output 1, not coinbase",
 			entry: &UtxoEntry{
-				version:     1,
-				isCoinBase:  false,
-				blockHeight: 100001,
+				txVersion:  1,
+				isCoinBase: false,
+				height:     100001,
 				sparseOutputs: map[uint32]*utxoOutput{
 					1: {
 						amount:   1000000,
@@ -557,9 +535,9 @@ func TestUtxoSerialization(t *testing.T) {
 		{
 			name: "Only output 2, coinbase",
 			entry: &UtxoEntry{
-				version:     1,
-				isCoinBase:  true,
-				blockHeight: 99004,
+				txVersion:  1,
+				isCoinBase: true,
+				height:     99004,
 				sparseOutputs: map[uint32]*utxoOutput{
 					2: {
 						amount:   100937281,
@@ -574,9 +552,9 @@ func TestUtxoSerialization(t *testing.T) {
 		{
 			name: "outputs 0 and 2 not coinbase",
 			entry: &UtxoEntry{
-				version:     1,
-				isCoinBase:  false,
-				blockHeight: 113931,
+				txVersion:  1,
+				isCoinBase: false,
+				height:     113931,
 				sparseOutputs: map[uint32]*utxoOutput{
 					0: {
 						amount:   20000000,
@@ -595,9 +573,9 @@ func TestUtxoSerialization(t *testing.T) {
 		{
 			name: "outputs 0 and 2, not coinbase, 1 marked spent",
 			entry: &UtxoEntry{
-				version:     1,
-				isCoinBase:  false,
-				blockHeight: 113931,
+				txVersion:  1,
+				isCoinBase: false,
+				height:     113931,
 				sparseOutputs: map[uint32]*utxoOutput{
 					0: {
 						amount:   20000000,
@@ -621,9 +599,9 @@ func TestUtxoSerialization(t *testing.T) {
 		{
 			name: "outputs 0 and 2, not coinbase, output 2 compressed",
 			entry: &UtxoEntry{
-				version:     1,
-				isCoinBase:  false,
-				blockHeight: 113931,
+				txVersion:  1,
+				isCoinBase: false,
+				height:     113931,
 				sparseOutputs: map[uint32]*utxoOutput{
 					0: {
 						amount:   20000000,
@@ -632,9 +610,8 @@ func TestUtxoSerialization(t *testing.T) {
 					2: {
 						// Uncompressed Amount: 15000000
 						// Uncompressed PkScript: 76a914b8025be1b3efc63b0ad48e7f9f10e87544528d5888ac
-						compressed: true,
-						amount:     137,
-						pkScript:   hexToBytes("00b8025be1b3efc63b0ad48e7f9f10e87544528d58"),
+						amount:   137,
+						pkScript: hexToBytes("00b8025be1b3efc63b0ad48e7f9f10e87544528d58"),
 					},
 				},
 			},
@@ -645,9 +622,9 @@ func TestUtxoSerialization(t *testing.T) {
 		{
 			name: "outputs 0 and 2, not coinbase, output 2 compressed, packed indexes reversed",
 			entry: &UtxoEntry{
-				version:     1,
-				isCoinBase:  false,
-				blockHeight: 113931,
+				txVersion:  1,
+				isCoinBase: false,
+				height:     113931,
 				sparseOutputs: map[uint32]*utxoOutput{
 					0: {
 						amount:   20000000,
@@ -656,9 +633,8 @@ func TestUtxoSerialization(t *testing.T) {
 					2: {
 						// Uncompressed Amount: 15000000
 						// Uncompressed PkScript: 76a914b8025be1b3efc63b0ad48e7f9f10e87544528d5888ac
-						compressed: true,
-						amount:     137,
-						pkScript:   hexToBytes("00b8025be1b3efc63b0ad48e7f9f10e87544528d58"),
+						amount:   137,
+						pkScript: hexToBytes("00b8025be1b3efc63b0ad48e7f9f10e87544528d58"),
 					},
 				},
 			},
@@ -669,9 +645,9 @@ func TestUtxoSerialization(t *testing.T) {
 		{
 			name: "Only output 0, coinbase, fully spent",
 			entry: &UtxoEntry{
-				version:     1,
-				isCoinBase:  true,
-				blockHeight: 1,
+				txVersion:  1,
+				isCoinBase: true,
+				height:     1,
 				sparseOutputs: map[uint32]*utxoOutput{
 					0: {
 						spent:    true,
@@ -687,9 +663,9 @@ func TestUtxoSerialization(t *testing.T) {
 		{
 			name: "Only output 22, not coinbase",
 			entry: &UtxoEntry{
-				version:     1,
-				isCoinBase:  false,
-				blockHeight: 338156,
+				txVersion:  1,
+				isCoinBase: false,
+				height:     338156,
 				sparseOutputs: map[uint32]*utxoOutput{
 					22: {
 						spent:    false,
@@ -733,10 +709,10 @@ func TestUtxoSerialization(t *testing.T) {
 
 		// Ensure that the deserialized utxo entry has the same
 		// properties for the containing transaction and block height.
-		if utxoEntry.Version() != test.entry.Version() {
+		if utxoEntry.TxVersion() != test.entry.TxVersion() {
 			t.Errorf("deserializeUtxoEntry #%d (%s) mismatched "+
-				"version: got %d, want %d", i, test.name,
-				utxoEntry.Version(), test.entry.Version())
+				" txVersion: got %d, want %d", i, test.name,
+				utxoEntry.TxVersion(), test.entry.TxVersion())
 			continue
 		}
 		if utxoEntry.IsCoinBase() != test.entry.IsCoinBase() {
@@ -809,51 +785,6 @@ func TestUtxoSerialization(t *testing.T) {
 					outputIndex, gotPkScript, wantPkScript)
 				continue
 			}
-		}
-	}
-}
-
-// TestUtxoEntryHeaderCodeErrors performs negative tests against unspent
-// transaction output header codes to ensure error paths work as expected.
-func TestUtxoEntryHeaderCodeErrors(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name      string
-		entry     *UtxoEntry
-		code      uint64
-		bytesRead int // Expected number of bytes read.
-		errType   error
-	}{
-		{
-			name:      "Force assertion due to fully spent tx",
-			entry:     &UtxoEntry{},
-			errType:   AssertError(""),
-			bytesRead: 0,
-		},
-	}
-
-	for _, test := range tests {
-		// Ensure the expected error type is returned and the code is 0.
-		code, gotBytesRead, err := utxoEntryHeaderCode(test.entry, 0)
-		if reflect.TypeOf(err) != reflect.TypeOf(test.errType) {
-			t.Errorf("utxoEntryHeaderCode (%s): expected error "+
-				"type does not match - got %T, want %T",
-				test.name, err, test.errType)
-			continue
-		}
-		if code != 0 {
-			t.Errorf("utxoEntryHeaderCode (%s): unexpected code "+
-				"on error - got %d, want 0", test.name, code)
-			continue
-		}
-
-		// Ensure the expected number of bytes read is returned.
-		if gotBytesRead != test.bytesRead {
-			t.Errorf("utxoEntryHeaderCode (%s): unexpected number "+
-				"of bytes read - got %d, want %d", test.name,
-				gotBytesRead, test.bytesRead)
-			continue
 		}
 	}
 }

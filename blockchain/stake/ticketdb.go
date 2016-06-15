@@ -26,13 +26,14 @@ import (
 	"fmt"
 	"io/ioutil"
 	"math"
+	"math/big"
 	"path/filepath"
 	"sort"
 	"sync"
 
 	"github.com/decred/dcrd/chaincfg"
 	"github.com/decred/dcrd/chaincfg/chainhash"
-	"github.com/decred/dcrd/database"
+	database "github.com/decred/dcrd/database2"
 	"github.com/decred/dcrd/txscript"
 	"github.com/decred/dcrutil"
 )
@@ -230,9 +231,76 @@ func (tm *TicketMaps) GobDecode(buf []byte) error {
 type TicketDB struct {
 	mtx                sync.Mutex
 	maps               TicketMaps
-	database           database.Db
+	database           database.DB
 	chainParams        *chaincfg.Params
 	StakeEnabledHeight int64
+}
+
+// bestChainState represents the data to be stored the database for the current
+// best chain state.
+type bestChainState struct {
+	hash      chainhash.Hash
+	height    uint32
+	totalTxns uint64
+	workSum   *big.Int
+}
+
+// deserializeBestChainState deserializes the passed serialized best chain
+// state.  This is data stored in the chain state bucket and is updated after
+// every block is connected or disconnected form the main chain.
+// block.
+func deserializeBestChainState(serializedData []byte) (bestChainState, error) {
+	// Ensure the serialized data has enough bytes to properly deserialize
+	// the hash, height, total transactions, and work sum length.
+	if len(serializedData) < chainhash.HashSize+16 {
+		return bestChainState{}, database.Error{
+			ErrorCode:   database.ErrCorruption,
+			Description: "corrupt best chain state",
+		}
+	}
+
+	state := bestChainState{}
+	copy(state.hash[:], serializedData[0:chainhash.HashSize])
+	offset := uint32(chainhash.HashSize)
+	state.height = byteOrder.Uint32(serializedData[offset : offset+4])
+	offset += 4
+	state.totalTxns = byteOrder.Uint64(serializedData[offset : offset+8])
+	offset += 8
+	workSumBytesLen := byteOrder.Uint32(serializedData[offset : offset+4])
+	offset += 4
+
+	// Ensure the serialized data has enough bytes to deserialize the work
+	// sum.
+	if uint32(len(serializedData[offset:])) < workSumBytesLen {
+		return bestChainState{}, database.Error{
+			ErrorCode:   database.ErrCorruption,
+			Description: "corrupt best chain state",
+		}
+	}
+	workSumBytes := serializedData[offset : offset+workSumBytesLen]
+	state.workSum = new(big.Int).SetBytes(workSumBytes)
+
+	return state, nil
+}
+
+func (tmdb *TicketDB) NewestSha() (*chainhash.Hash, error) {
+	var state bestChainState
+	err := tmdb.db.View(func(dbTx database.Tx) error {
+		// Fetch the stored chain state from the database metadata.
+		// When it doesn't exist, it means the database hasn't been
+		// initialized for use with chain yet, so break out now to allow
+		// that to happen under a writable database transaction.
+		serializedData := dbTx.Metadata().Get(chainStateKeyName)
+		if serializedData == nil {
+			return nil
+		}
+		log.Tracef("Serialized chain state: %x", serializedData)
+		state, err := deserializeBestChainState(serializedData)
+		if err != nil {
+			return err
+		}
+	})
+	return best, err
 }
 
 // Initialize allocates buckets for each ticket number in ticketMap and buckets
@@ -242,7 +310,7 @@ type TicketDB struct {
 // WARNING: Height should be 0 for all non-debug uses.
 //
 // This function is safe for concurrent access.
-func (tmdb *TicketDB) Initialize(np *chaincfg.Params, db database.Db) {
+func (tmdb *TicketDB) Initialize(np *chaincfg.Params, db database.DB) {
 	tmdb.mtx.Lock()
 	defer tmdb.mtx.Unlock()
 
@@ -317,7 +385,7 @@ func (tmdb *TicketDB) GetTopBlock() int64 {
 //
 // This function is safe for concurrent access.
 func (tmdb *TicketDB) LoadTicketDBs(tmsPath, tmsLoc string, np *chaincfg.Params,
-	db database.Db) error {
+	db database.DB) error {
 	tmdb.mtx.Lock()
 	defer tmdb.mtx.Unlock()
 

@@ -150,7 +150,7 @@ func DebugMsgTxString(msgTx *wire.MsgTx) string {
 
 	if isSStx {
 		sstxType, sstxPkhs, sstxAmts, _, sstxRules, sstxLimits =
-			stake.GetSStxStakeOutputInfo(tx)
+			stake.TxSStxStakeOutputInfo(tx)
 	}
 
 	var buffer bytes.Buffer

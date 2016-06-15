@@ -412,15 +412,18 @@ func (view *UtxoViewpoint) handleTxStoreViewpoint(db database.DB,
 	if viewpoint == ViewpointPrevValidStake {
 		var parent *dcrutil.Block
 		err := db.View(func(dbTx database.Tx) error {
+			var err error
 			blockHeader, err := dbFetchHeaderByHash(dbTx, view.BestHash())
 			if err != nil {
 				return err
 			}
 
-			parent, err := dbFetchBlockByHash(dbTx, &blockHeader.PrevBlock)
+			parent, err = dbFetchBlockByHash(dbTx, &blockHeader.PrevBlock)
 			if err != nil {
 				return err
 			}
+
+			return nil
 		})
 		if err != nil {
 			return err
@@ -461,6 +464,8 @@ func (view *UtxoViewpoint) handleTxStoreViewpoint(db database.DB,
 			if err != nil {
 				return err
 			}
+
+			return nil
 		})
 		if err != nil {
 			return err
@@ -494,6 +499,8 @@ func (view *UtxoViewpoint) handleTxStoreViewpoint(db database.DB,
 			if err != nil {
 				return err
 			}
+
+			return nil
 		})
 		if err != nil {
 			return nil
@@ -523,10 +530,13 @@ func (view *UtxoViewpoint) connectTransactions(block *dcrutil.Block,
 		mBlock := block.MsgBlock()
 		votebits := mBlock.Header.VoteBits
 		regularTxTreeValid := dcrutil.IsFlagSet16(votebits, dcrutil.BlockValid)
-		for i, tx := range parent.Transactions() {
-			err := view.connectTransaction(tx, parent.Height(), uint32(i), stxos)
-			if err != nil {
-				return err
+		if regularTxTreeValid {
+			for i, tx := range parent.Transactions() {
+				err := view.connectTransaction(tx, parent.Height(), uint32(i),
+					stxos)
+				if err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -830,16 +840,19 @@ func (view *UtxoViewpoint) fetchInputUtxos(db database.DB,
 	viewpoint := view.StakeViewpoint()
 
 	// If we need the previous block, grab it.
-	var parentBlock *dcrutil.Block
+	var parent *dcrutil.Block
 	if viewpoint == ViewpointPrevValidInitial ||
 		viewpoint == ViewpointPrevValidStake ||
 		viewpoint == ViewpointPrevValidRegular {
 		prevBlock := block.MsgBlock().Header.PrevBlock
 		err := db.View(func(dbTx database.Tx) error {
-			parent, err := dbFetchBlockByHash(dbTx, &prevBlock)
+			var err error
+			parent, err = dbFetchBlockByHash(dbTx, &prevBlock)
 			if err != nil {
 				return err
 			}
+
+			return nil
 		})
 		if err != nil {
 			return err
@@ -856,7 +869,7 @@ func (view *UtxoViewpoint) fetchInputUtxos(db database.DB,
 	// current chain without the TxTreeRegular of the previous block
 	// added so we can validate that.
 	if viewpoint == ViewpointPrevValidInitial {
-		transactions := parentBlock.Transactions()
+		transactions := parent.Transactions()
 		for i, tx := range transactions {
 			txInFlight[*tx.Sha()] = i
 		}

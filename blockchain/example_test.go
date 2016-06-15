@@ -15,9 +15,9 @@ import (
 	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg"
 	"github.com/decred/dcrd/database"
+	_ "github.com/decred/dcrd/database/memdb"
 	database "github.com/decred/dcrd/database2"
 	_ "github.com/decred/dcrd/database2/ffldb"
-	_ "github.com/decred/dcrd/database/memdb"
 	"github.com/decred/dcrutil"
 )
 
@@ -43,15 +43,26 @@ func ExampleBlockChain_ProcessBlock() {
 	defer db.Close()
 
 	var tmdb *stake.TicketDB
-	
+
+	// Create a new BlockChain instance using the underlying database for
+	// the main bitcoin network.  This example does not demonstrate some
+	// of the other available configuration options such as specifying a
+	// notification callback and signature cache.
+	chain, err := blockchain.New(&blockchain.Config{
+		DB:          db,
+		ChainParams: &chaincfg.MainNetParams,
+	})
+	if err != nil {
+		fmt.Printf("Failed to create chain instance: %v\n", err)
+		return
+	}
+
 	// Create a new BlockChain instance using the underlying database for
 	// the main bitcoin network.  This example does not demonstrate some
 	// of the other available configuration options such as specifying a
 	// notification callback and signature cache.
 	genesisBlock := dcrutil.NewBlock(chaincfg.MainNetParams.GenesisBlock)
-		DB:          db,
-		ChainParams: &chaincfg.MainNetParams,
-	})
+	isOrphan, err := chain.ProcessBlock(genesisBlock, timeSource, blockchain.BFNone)
 	if err != nil {
 		fmt.Printf("Failed to create chain instance: %v\n", err)
 		return

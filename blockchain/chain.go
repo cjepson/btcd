@@ -541,10 +541,12 @@ func (b *BlockChain) loadBlockNode(dbTx database.Tx, hash *chainhash.Hash) (*blo
 		return nil, err
 	}
 
+	/* Needed?
 	blockHeight, err := dbFetchHeightByHash(dbTx, hash)
 	if err != nil {
 		return nil, err
 	}
+	*/
 
 	var voteBitsStake []uint16
 	/* TODO cj fetch this from database meta data??
@@ -609,7 +611,6 @@ func (b *BlockChain) loadBlockNode(dbTx database.Tx, hash *chainhash.Hash) (*blo
 func (b *BlockChain) findNode(nodeHash *chainhash.Hash) (*blockNode, error) {
 	var node *blockNode
 	err := b.db.View(func(dbTx database.Tx) error {
-		var err error
 		// Most common case; we're checking a block that wants to be connected
 		// on top of the current main chain.
 		distance := 0
@@ -656,6 +657,8 @@ func (b *BlockChain) findNode(nodeHash *chainhash.Hash) (*blockNode, error) {
 
 			node = foundPrev
 		}
+
+		return nil
 	})
 
 	return node, err
@@ -775,9 +778,7 @@ func (b *BlockChain) getBlockFromHash(hash *chainhash.Hash) (*dcrutil.Block,
 	var errFetchMainchain error
 	err := b.db.View(func(dbTx database.Tx) error {
 		blockMainchain, errFetchMainchain = dbFetchBlockByHash(dbTx, hash)
-		if errFetchMainchain != nil {
-			return errFetchMainchain
-		}
+		return errFetchMainchain
 	})
 	if err != nil {
 		return nil, err
@@ -1172,6 +1173,7 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block, view *U
 	// The caller would typically want to react with actions such as
 	// updating wallets.
 	b.chainLock.Unlock()
+	b.sendNotification(NTBlockConnected, blockAndParent)
 	b.chainLock.Lock()
 
 	return nil
@@ -1312,6 +1314,7 @@ func (b *BlockChain) disconnectBlock(node *blockNode, block *dcrutil.Block, view
 	// chain.  The caller would typically want to react with actions such as
 	// updating wallets.
 	b.chainLock.Unlock()
+	b.sendNotification(NTBlockDisconnected, blockAndParent)
 	b.chainLock.Lock()
 
 	return nil
@@ -1368,6 +1371,7 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 	// and remove the utxos created by the blocks.
 	view := NewUtxoViewpoint()
 	view.SetBestHash(b.bestNode.hash)
+	view.SetStakeViewpoint(ViewpointPrevValidInitial)
 	i := 0
 	for e := detachNodes.Front(); e != nil; e = e.Next() {
 		n := e.Value.(*blockNode)
@@ -1460,6 +1464,15 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 		return nil
 	}
 
+	// Send a notification that a blockchain reorganization is in progress.
+	reorgData := &ReorganizationNtfnsData{
+		*oldHash,
+		oldHeight,
+		*newHash,
+		newHeight,
+	}
+	b.sendNotification(NTReorganization, reorgData)
+
 	// Reset the view for the actual connection code below.  This is
 	// required because the view was previously modified when checking if
 	// the reorg would be successful and the connection code requires the
@@ -1467,6 +1480,7 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 	// disconnected.
 	view = NewUtxoViewpoint()
 	view.SetBestHash(b.bestNode.hash)
+	view.SetStakeViewpoint(ViewpointPrevValidInitial)
 
 	// Disconnect blocks from the main chain.
 	for i, e := 0, detachNodes.Front(); e != nil; i, e = i+1, e.Next() {
@@ -1592,6 +1606,7 @@ func (b *BlockChain) forceHeadReorganization(formerBest chainhash.Hash,
 	// Check to make sure our forced-in node validates correctly.
 	view := NewUtxoViewpoint()
 	view.SetBestHash(b.bestNode.parentHash)
+	view.SetStakeViewpoint(ViewpointPrevValidInitial)
 	err = checkBlockSanity(newBestBlock,
 		timeSource,
 		BFNone,
@@ -1648,6 +1663,7 @@ func (b *BlockChain) connectBestChain(node *blockNode, block *dcrutil.Block,
 		// actually connecting the block.
 		view := NewUtxoViewpoint()
 		view.SetBestHash(node.parentHash)
+		view.SetStakeViewpoint(ViewpointPrevValidInitial)
 		stxos := make([]spentTxOut, 0, countSpentOutputs(block))
 		if !fastAdd {
 			err := b.checkConnectBlock(node, block, view, &stxos)
