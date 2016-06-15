@@ -14,7 +14,6 @@ import (
 	"github.com/decred/dcrd/blockchain"
 	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg"
-	"github.com/decred/dcrd/database"
 	_ "github.com/decred/dcrd/database/memdb"
 	database "github.com/decred/dcrd/database2"
 	_ "github.com/decred/dcrd/database2/ffldb"
@@ -50,6 +49,7 @@ func ExampleBlockChain_ProcessBlock() {
 	// notification callback and signature cache.
 	chain, err := blockchain.New(&blockchain.Config{
 		DB:          db,
+		TMDB:        tmdb,
 		ChainParams: &chaincfg.MainNetParams,
 	})
 	if err != nil {
@@ -57,31 +57,20 @@ func ExampleBlockChain_ProcessBlock() {
 		return
 	}
 
-	// Create a new BlockChain instance using the underlying database for
-	// the main bitcoin network.  This example does not demonstrate some
-	// of the other available configuration options such as specifying a
-	// notification callback and signature cache.
-	genesisBlock := dcrutil.NewBlock(chaincfg.MainNetParams.GenesisBlock)
-	isOrphan, err := chain.ProcessBlock(genesisBlock, timeSource, blockchain.BFNone)
-	if err != nil {
-		fmt.Printf("Failed to create chain instance: %v\n", err)
-		return
-	}
-
-	chain := blockchain.New(db, tmdb, &chaincfg.MainNetParams, nil, nil)
 	// Create a new median time source that is required by the upcoming
 	// call to ProcessBlock.  Ordinarily this would also add time values
 	// obtained from other peers on the network so the local time is
 	// adjusted to be in agreement with other peers.
 	timeSource := blockchain.NewMedianTime()
 
-	// Process a block.  For this example, we are going to intentionally
-	// cause an error by trying to process the genesis block which already
-	// exists.
-	genesisBlock := btcutil.NewBlock(chaincfg.MainNetParams.GenesisBlock)
-	isOrphan, _, err := chain.ProcessBlock(genesisBlock, timeSource, blockchain.BFNone)
+	// Create a new BlockChain instance using the underlying database for
+	// the main bitcoin network.  This example does not demonstrate some
+	// of the other available configuration options such as specifying a
+	// notification callback and signature cache.
+	genesisBlock := dcrutil.NewBlock(chaincfg.MainNetParams.GenesisBlock)
+	_, isOrphan, err := chain.ProcessBlock(genesisBlock, timeSource, blockchain.BFNone)
 	if err != nil {
-		fmt.Printf("Failed to process block: %v\n", err)
+		fmt.Printf("Failed to create chain instance: %v\n", err)
 		return
 	}
 	fmt.Printf("Block accepted. Is it an orphan?: %v", isOrphan)

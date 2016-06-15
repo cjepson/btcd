@@ -529,9 +529,9 @@ func GetSSGenVoteBits(tx *dcrutil.Tx) uint16 {
 	return votebits
 }
 
-// GetSSRtxStakeOutputInfo takes an SSRtx tx as input and scans through its
+// TxSSRtxStakeOutputInfo takes an SSRtx tx as input and scans through its
 // outputs, returning the amount of the output and the pkh that it was sent to.
-func GetSSRtxStakeOutputInfo(tx *dcrutil.Tx, params *chaincfg.Params) ([]bool,
+func TxSSRtxStakeOutputInfo(tx *dcrutil.Tx, params *chaincfg.Params) ([]bool,
 	[][]byte, []int64, error) {
 	msgTx := tx.MsgTx()
 	numOutputsInSSRtx := len(msgTx.TxOut)

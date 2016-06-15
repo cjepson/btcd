@@ -17,6 +17,7 @@ import (
 	"github.com/decred/dcrd/blockchain"
 	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg"
+	"github.com/decred/dcrd/chaincfg/chainhash"
 	_ "github.com/decred/dcrd/database/memdb"
 	database "github.com/decred/dcrd/database2"
 	_ "github.com/decred/dcrd/database2/ffldb"
@@ -116,7 +117,7 @@ func chainSetup(dbName string, params *chaincfg.Params) (*blockchain.BlockChain,
 	// Create the main chain instance.
 	chain, err := blockchain.New(&blockchain.Config{
 		DB:          db,
-		ChainParams: &chaincfg.MainNetParams,
+		ChainParams: params,
 	})
 	if err != nil {
 		teardown()
@@ -127,7 +128,6 @@ func chainSetup(dbName string, params *chaincfg.Params) (*blockchain.BlockChain,
 	tmdb.Initialize(params, db)
 	tmdb.RescanTicketDB()
 
-	chain := blockchain.New(db, tmdb, params, nil, nil)
 	return chain, teardown, nil
 }
 
@@ -157,7 +157,7 @@ func loadUtxoView(filename string) (*blockchain.UtxoViewpoint, error) {
 	view := blockchain.NewUtxoViewpoint()
 	for {
 		// Hash of the utxo entry.
-		var hash wire.ShaHash
+		var hash chainhash.Hash
 		_, err := io.ReadAtLeast(r, hash[:], len(hash[:]))
 		if err != nil {
 			// Expected EOF at the right offset.

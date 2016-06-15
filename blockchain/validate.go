@@ -1651,7 +1651,7 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
 		// size restrictions for components of SSRtxs already checked
 		// for in IsSSRtx.
 		ssrtxPayTypes, ssrtxPkhs, ssrtxAmts, err :=
-			stake.GetSSRtxStakeOutputInfo(tx, chainParams)
+			stake.TxSSRtxStakeOutputInfo(tx, chainParams)
 		if err != nil {
 			errStr := fmt.Sprintf("Could not decode outputs for SSRtx %v: %v",
 				txHash, err.Error())

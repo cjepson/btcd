@@ -30,11 +30,6 @@ func TestReorganization(t *testing.T) {
 	}
 	defer teardownFunc()
 
-	err = chain.GenerateInitialIndex()
-	if err != nil {
-		t.Errorf("GenerateInitialIndex: %v", err)
-	}
-
 	// The genesis block should fail to connect since it's already
 	// inserted.
 	genesisBlock := simNetParams.GenesisBlock

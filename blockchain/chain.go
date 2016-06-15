@@ -277,7 +277,9 @@ func (b *BlockChain) MissedTickets() (stake.SStxMemMap, error) {
 // This function is NOT safe for concurrent access.
 func (b *BlockChain) TicketsWithAddress(address dcrutil.Address) ([]chainhash.Hash,
 	error) {
-	return b.tmdb.GetLiveTicketsForAddress(address)
+	// TODO CJ fixme
+	// return b.tmdb.GetLiveTicketsForAddress(address)
+	return nil, nil
 }
 
 // CheckLiveTicket returns whether or not a ticket exists in the live ticket
@@ -1172,9 +1174,9 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block, view *U
 	// Notify the caller that the block was connected to the main chain.
 	// The caller would typically want to react with actions such as
 	// updating wallets.
-	b.chainLock.Unlock()
+	//b.chainLock.Lock()
 	b.sendNotification(NTBlockConnected, blockAndParent)
-	b.chainLock.Lock()
+	//b.chainLock.Unlock()
 
 	return nil
 }
@@ -1879,6 +1881,9 @@ type Config struct {
 	//
 	// This field is required.
 	DB database.DB
+
+	// tmdb
+	TMDB *stake.TicketDB
 
 	// ChainParams identifies which chain parameters the chain is associated
 	// with.

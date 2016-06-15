@@ -249,10 +249,10 @@ func (b *BlockChain) maybeAcceptBlock(block *dcrutil.Block,
 	// chain.  The caller would typically want to react by relaying the
 	// inventory to other peers.
 	if !dryRun {
-		b.chainLock.Unlock()
+		//b.chainLock.Lock()
 		b.sendNotification(NTBlockAccepted,
 			&BlockAcceptedNtfnsData{onMainChain, block})
-		b.chainLock.Lock()
+		//b.chainLock.Unlock()
 	}
 
 	return onMainChain, nil
