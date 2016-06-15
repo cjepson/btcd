@@ -123,9 +123,8 @@ func (b *BlockChain) GenerateMissedTickets(tixStore TicketStore) (stake.SStxMemM
 // from the ticket pool that have been considered spent or missed in this block
 // according to the block header. Then, it connects all the newly mature tickets
 // to the passed map.
-func (b *BlockChain) connectTickets(tixStore TicketStore,
-	node *blockNode,
-	block *dcrutil.Block) error {
+func (b *BlockChain) connectTickets(tixStore TicketStore, node *blockNode,
+	block *dcrutil.Block, view *UtxoViewpoint) error {
 	if tixStore == nil {
 		return fmt.Errorf("nil ticket store")
 	}
@@ -148,13 +147,6 @@ func (b *BlockChain) connectTickets(tixStore TicketStore,
 	// Skip a number of validation steps before we requiring chain
 	// voting.
 	if node.height >= b.chainParams.StakeValidationHeight {
-		regularTxTreeValid := dcrutil.IsFlagSet16(node.header.VoteBits,
-			dcrutil.BlockValid)
-		thisNodeStakeViewpoint := ViewpointPrevInvalidStake
-		if regularTxTreeValid {
-			thisNodeStakeViewpoint = ViewpointPrevValidStake
-		}
-
 		// We need the missed tickets bucket from the original perspective of
 		// the node.
 		missedTickets, err := b.GenerateMissedTickets(tixStore)
@@ -164,10 +156,9 @@ func (b *BlockChain) connectTickets(tixStore TicketStore,
 
 		// TxStore at blockchain HEAD + TxTreeRegular of prevBlock (if
 		// validated) for this node.
-		txInputStoreStake, err := b.fetchInputTransactions(node, block,
-			thisNodeStakeViewpoint)
+		err = view.fetchInputUtxos(b.db, block)
 		if err != nil {
-			errStr := fmt.Sprintf("fetchInputTransactions failed for incoming "+
+			errStr := fmt.Sprintf("fetchInputUtxos failed for incoming "+
 				"node %v; error given: %v", node.hash, err)
 			return errors.New(errStr)
 		}
@@ -184,14 +175,14 @@ func (b *BlockChain) connectTickets(tixStore TicketStore,
 				sstxIn := msgTx.TxIn[1] // sstx input
 				sstxHash := sstxIn.PreviousOutPoint.Hash
 
-				originTx, exists := txInputStoreStake[sstxHash]
-				if !exists {
+				originUTXO := view.LookupEntry(&sstxHash)
+				if originUTXO == nil {
 					str := fmt.Sprintf("unable to find input transaction "+
 						"%v for transaction %v", sstxHash, staketx.Sha())
 					return ruleError(ErrMissingTx, str)
 				}
 
-				sstxHeight := originTx.BlockHeight
+				sstxHeight := originUTXO.BlockHeight()
 
 				// Check maturity of ticket; we can only spend the ticket after it
 				// hits maturity at height + tM + 1.
@@ -581,8 +572,8 @@ func (b *BlockChain) fetchTicketStore(node *blockNode) (TicketStore, error) {
 	// If we haven't selected a best chain yet or we are extending the main
 	// (best) chain with a new block, just use the ticket database we already
 	// have.
-	if b.bestChain == nil || (prevNode != nil &&
-		prevNode.hash.IsEqual(b.bestChain.hash)) {
+	if b.bestNode == nil || (prevNode != nil &&
+		prevNode.hash.IsEqual(b.bestNode.hash)) {
 		return nil, nil
 	}
 
@@ -603,7 +594,7 @@ func (b *BlockChain) fetchTicketStore(node *blockNode) (TicketStore, error) {
 
 	for e := detachNodes.Front(); e != nil; e = e.Next() {
 		n := e.Value.(*blockNode)
-		block, err := b.db.FetchBlockBySha(n.hash)
+		block, err := b.getBlockFromHash(n.hash)
 		if err != nil {
 			return nil, err
 		}
@@ -635,8 +626,19 @@ func (b *BlockChain) fetchTicketStore(node *blockNode) (TicketStore, error) {
 				n.hash)
 		}
 
+		view := NewUtxoViewpoint()
+		view.SetBestHash(node.hash)
+
+		regularTxTreeValid := dcrutil.IsFlagSet16(node.header.VoteBits,
+			dcrutil.BlockValid)
+		thisNodeStakeViewpoint := ViewpointPrevInvalidStake
+		if regularTxTreeValid {
+			thisNodeStakeViewpoint = ViewpointPrevValidStake
+		}
+		view.SetStakeViewpoint(thisNodeStakeViewpoint)
+
 		// The number of blocks below this block but above the root of the fork
-		err = b.connectTickets(tixStore, n, block)
+		err = b.connectTickets(tixStore, n, block, view)
 		if err != nil {
 			return nil, err
 		}

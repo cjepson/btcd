@@ -11,6 +11,7 @@ import (
 
 	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg/chainhash"
+	"github.com/decred/dcrutil"
 )
 
 // GetNextWinningTickets returns the next tickets eligible for spending as SSGen
@@ -19,7 +20,7 @@ import (
 func (b *BlockChain) GetNextWinningTickets() ([]chainhash.Hash, int, [6]byte,
 	error) {
 	winningTickets, poolSize, finalState, _, err :=
-		b.getWinningTicketsWithStore(b.bestChain)
+		b.getWinningTicketsWithStore(b.bestNode)
 	if err != nil {
 		return nil, 0, [6]byte{}, err
 	}
@@ -62,9 +63,20 @@ func (b *BlockChain) getWinningTicketsWithStore(node *blockNode) ([]chainhash.Ha
 	}
 
 	if ticketStore != nil {
+		view := NewUtxoViewpoint()
+		view.SetBestHash(node.hash)
+
+		regularTxTreeValid := dcrutil.IsFlagSet16(node.header.VoteBits,
+			dcrutil.BlockValid)
+		thisNodeStakeViewpoint := ViewpointPrevInvalidStake
+		if regularTxTreeValid {
+			thisNodeStakeViewpoint = ViewpointPrevValidStake
+		}
+		view.SetStakeViewpoint(thisNodeStakeViewpoint)
+
 		// We need the viewpoint of spendable tickets given that the
 		// current block was actually added.
-		err = b.connectTickets(ticketStore, node, block)
+		err = b.connectTickets(ticketStore, node, block, view)
 		if err != nil {
 			return nil, 0, [6]byte{}, nil, err
 		}
