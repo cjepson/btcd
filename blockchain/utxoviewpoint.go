@@ -114,6 +114,18 @@ func (entry *UtxoEntry) BlockIndex() uint32 {
 	return entry.index
 }
 
+// outputsLen returns the number of outputs in the transaction the
+// utxo entry represents.
+func (entry *UtxoEntry) OutputsLen() uint32 {
+	return entry.outputsLen
+}
+
+// outputsLen returns the transaction type of the transaction the utxo entry
+// represents.
+func (entry *UtxoEntry) TransactionType() stake.TxType {
+	return entry.txType
+}
+
 // IsOutputSpent returns whether or not the provided output index has been
 // spent based upon the current state of the unspent transaction output view
 // the entry was obtained from.
@@ -358,14 +370,19 @@ func (view *UtxoViewpoint) connectTransaction(tx *dcrutil.Tx, blockHeight int64,
 		// accordingly since those details will no longer be available
 		// in the utxo set.
 		var stxo = spentTxOut{
-			txVersion:     entry.TxVersion(),
-			amount:        entry.AmountByIndex(originIndex),
+			amount:        txIn.ValueIn,
 			scriptVersion: entry.ScriptVersionByIndex(originIndex),
 			pkScript:      entry.PkScriptByIndex(originIndex),
 		}
 		if entry.IsFullySpent() {
+			stxo.txVersion = entry.TxVersion()
 			stxo.height = uint32(entry.BlockHeight())
+			stxo.index = entry.BlockIndex()
+			stxo.outputsLen = entry.OutputsLen()
 			stxo.isCoinBase = entry.IsCoinBase()
+			stxo.hasExpiry = entry.HasExpiry()
+			stxo.txType = entry.txType
+			stxo.txFullySpent = true
 		}
 
 		// Append the entry to the provided spent txouts slice.
@@ -381,8 +398,8 @@ func (view *UtxoViewpoint) connectTransaction(tx *dcrutil.Tx, blockHeight int64,
 // handleTxStoreViewpoint appends extra Tx Trees to update to a different
 // stake viewpoint. This is required for the progressive validation of
 // the two transaction trees when attempting to connect blocks.
-func (view *UtxoViewpoint) handleTxStoreViewpoint(block *dcrutil.Block,
-	parent *dcrutil.Block, stxos *[]spentTxOut) error {
+func (view *UtxoViewpoint) handleTxStoreViewpoint(db database.DB,
+	stxos *[]spentTxOut) error {
 	viewpoint := view.StakeViewpoint()
 
 	// We don't need to do anything for the current top block viewpoint.
@@ -393,8 +410,24 @@ func (view *UtxoViewpoint) handleTxStoreViewpoint(block *dcrutil.Block,
 	// ViewpointPrevValidStake: Append the prev block TxTreeRegular
 	// txs to fill out TxIns.
 	if viewpoint == ViewpointPrevValidStake {
-		for i, tx := range block.STransactions() {
-			err := view.connectTransaction(tx, block.Height(), uint32(i), stxos)
+		var parent *dcrutil.Block
+		err := db.View(func(dbTx database.Tx) error {
+			blockHeader, err := dbFetchHeaderByHash(dbTx, view.BestHash())
+			if err != nil {
+				return err
+			}
+
+			parent, err := dbFetchBlockByHash(dbTx, &blockHeader.PrevBlock)
+			if err != nil {
+				return err
+			}
+		})
+		if err != nil {
+			return err
+		}
+
+		for i, tx := range parent.Transactions() {
+			err := view.connectTransaction(tx, parent.Height(), uint32(i), stxos)
 			if err != nil {
 				return err
 			}
@@ -415,6 +448,24 @@ func (view *UtxoViewpoint) handleTxStoreViewpoint(block *dcrutil.Block,
 	// block anyway because of the consensus rules regarding output
 	// maturity, but do it anyway.
 	if viewpoint == ViewpointPrevValidRegular {
+		var block, parent *dcrutil.Block
+		err := db.View(func(dbTx database.Tx) error {
+			var err error
+			block, err = dbFetchBlockByHash(dbTx, view.BestHash())
+			if err != nil {
+				return err
+			}
+
+			parent, err = dbFetchBlockByHash(dbTx,
+				&block.MsgBlock().Header.PrevBlock)
+			if err != nil {
+				return err
+			}
+		})
+		if err != nil {
+			return err
+		}
+
 		for i, tx := range parent.Transactions() {
 			err := view.connectTransaction(tx, parent.Height(), uint32(i), stxos)
 			if err != nil {
@@ -436,6 +487,18 @@ func (view *UtxoViewpoint) handleTxStoreViewpoint(block *dcrutil.Block,
 	// block anyway because of the consensus rules regarding output
 	// maturity, but do it anyway.
 	if viewpoint == ViewpointPrevInvalidRegular {
+		var block *dcrutil.Block
+		err := db.View(func(dbTx database.Tx) error {
+			var err error
+			block, err = dbFetchBlockByHash(dbTx, view.BestHash())
+			if err != nil {
+				return err
+			}
+		})
+		if err != nil {
+			return nil
+		}
+
 		for i, stx := range block.STransactions() {
 			err := view.connectTransaction(stx, block.Height(), uint32(i), stxos)
 			if err != nil {
@@ -500,16 +563,19 @@ func (view *UtxoViewpoint) disconnectTransactions(block *dcrutil.Block,
 	transactions := block.STransactions()
 	for txIdx := len(transactions) - 1; txIdx > -1; txIdx-- {
 		tx := transactions[txIdx]
+		tt := stake.DetermineTxType(tx)
 
 		// Clear this transaction from the view if it already exists or
 		// create a new empty entry for when it does not.  This is done
 		// because the code relies on its existence in the view in order
 		// to signal modifications have happened.
 		isCoinbase := txIdx == 0
+		isStakeBase := txIdx == 0 && (tt == stake.TxTypeSSGen)
 		entry := view.entries[*tx.Sha()]
 		if entry == nil {
-			entry = newUtxoEntry(tx.MsgTx().Version, isCoinbase,
-				block.Height())
+			entry = newUtxoEntry(tx.MsgTx().Version, uint32(block.Height()),
+				uint32(txIdx), uint32(len(tx.MsgTx().TxOut)), isCoinbase,
+				tx.MsgTx().Expiry != 0, tt)
 			view.entries[*tx.Sha()] = entry
 		}
 		entry.modified = true
@@ -523,6 +589,11 @@ func (view *UtxoViewpoint) disconnectTransactions(block *dcrutil.Block,
 			continue
 		}
 		for txInIdx := len(tx.MsgTx().TxIn) - 1; txInIdx > -1; txInIdx-- {
+			// Skip empty vote stakebases.
+			if txInIdx == 0 && isStakeBase {
+				continue
+			}
+
 			// Ensure the spent txout index is decremented to stay
 			// in sync with the transaction input.
 			stxo := &stxos[stxoIdx]
@@ -536,8 +607,9 @@ func (view *UtxoViewpoint) disconnectTransactions(block *dcrutil.Block,
 			originIndex := txIn.PreviousOutPoint.Index
 			entry := view.entries[*originHash]
 			if entry == nil {
-				entry = newUtxoEntry(stxo.txVersion,
-					stxo.isCoinBase, stxo.height)
+				entry = newUtxoEntry(tx.MsgTx().Version, uint32(block.Height()),
+					uint32(txIdx), uint32(len(tx.MsgTx().TxOut)), isCoinbase,
+					tx.MsgTx().Expiry != 0, tt)
 				view.entries[*originHash] = entry
 			}
 
@@ -552,10 +624,10 @@ func (view *UtxoViewpoint) disconnectTransactions(block *dcrutil.Block,
 			if !ok {
 				// Add the unspent transaction output.
 				entry.sparseOutputs[originIndex] = &utxoOutput{
-					spent:      false,
-					compressed: stxo.compressed,
-					amount:     stxo.amount,
-					pkScript:   stxo.pkScript,
+					spent:         false,
+					amount:        txIn.ValueIn,
+					scriptVersion: stxo.scriptVersion,
+					pkScript:      stxo.pkScript,
 				}
 				continue
 			}
@@ -588,8 +660,10 @@ func (view *UtxoViewpoint) disconnectTransactions(block *dcrutil.Block,
 				isCoinbase := txIdx == 0
 				entry := view.entries[*tx.Sha()]
 				if entry == nil {
-					entry = newUtxoEntry(tx.MsgTx().Version, isCoinbase,
-						parent.Height())
+					entry = newUtxoEntry(tx.MsgTx().Version,
+						uint32(parent.Height()), uint32(txIdx),
+						uint32(len(tx.MsgTx().TxOut)), isCoinbase,
+						tx.MsgTx().Expiry != 0, stake.TxTypeRegular)
 					view.entries[*tx.Sha()] = entry
 				}
 				entry.modified = true
@@ -616,8 +690,10 @@ func (view *UtxoViewpoint) disconnectTransactions(block *dcrutil.Block,
 					originIndex := txIn.PreviousOutPoint.Index
 					entry := view.entries[*originHash]
 					if entry == nil {
-						entry = newUtxoEntry(stxo.txVersion,
-							stxo.isCoinBase, stxo.height)
+						entry = newUtxoEntry(tx.MsgTx().Version,
+							uint32(parent.Height()), uint32(txIdx),
+							uint32(len(tx.MsgTx().TxOut)), isCoinbase,
+							tx.MsgTx().Expiry != 0, stake.TxTypeRegular)
 						view.entries[*originHash] = entry
 					}
 
@@ -632,10 +708,10 @@ func (view *UtxoViewpoint) disconnectTransactions(block *dcrutil.Block,
 					if !ok {
 						// Add the unspent transaction output.
 						entry.sparseOutputs[originIndex] = &utxoOutput{
-							spent:      false,
-							compressed: stxo.compressed,
-							amount:     stxo.amount,
-							pkScript:   stxo.pkScript,
+							spent:         false,
+							amount:        txIn.ValueIn,
+							scriptVersion: stxo.scriptVersion,
+							pkScript:      stxo.pkScript,
 						}
 						continue
 					}
@@ -712,7 +788,7 @@ func (view *UtxoViewpoint) fetchUtxosMain(db database.DB,
 	}
 
 	// Connect up to the stake viewpoint that was requested.
-	return view.handleTxStoreViewpoint(block, parent, nil)
+	return view.handleTxStoreViewpoint(db, nil)
 }
 
 // fetchUtxos loads utxo details about provided set of transaction hashes into
@@ -725,7 +801,7 @@ func (view *UtxoViewpoint) fetchUtxos(db database.DB, txSet map[chainhash.Hash]s
 	}
 
 	// Filter entries that are already in the view.
-	txNeededSet := make(map[wire.ShaHash]struct{})
+	txNeededSet := make(map[chainhash.Hash]struct{})
 	for hash := range txSet {
 		// Already loaded into the current view.
 		if _, ok := view.entries[hash]; ok {
@@ -738,11 +814,11 @@ func (view *UtxoViewpoint) fetchUtxos(db database.DB, txSet map[chainhash.Hash]s
 	// Request the input utxos from the database.
 	err := view.fetchUtxosMain(db, txNeededSet)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// Connect up to the stake viewpoint that was requested.
-	return view.handleTxStoreViewpoint(block, parent, nil)
+	return view.handleTxStoreViewpoint(db, nil)
 }
 
 // fetchInputUtxos loads utxo details about the input transactions referenced
@@ -758,11 +834,15 @@ func (view *UtxoViewpoint) fetchInputUtxos(db database.DB,
 	if viewpoint == ViewpointPrevValidInitial ||
 		viewpoint == ViewpointPrevValidStake ||
 		viewpoint == ViewpointPrevValidRegular {
-		var errFetchBlock error
 		prevBlock := block.MsgBlock().Header.PrevBlock
-		parentBlock, errFetchBlock = b.getBlockFromHash(&prevBlock)
-		if errFetchBlock != nil {
-			return nil, errFetchBlock
+		err := db.View(func(dbTx database.Tx) error {
+			parent, err := dbFetchBlockByHash(dbTx, &prevBlock)
+			if err != nil {
+				return err
+			}
+		})
+		if err != nil {
+			return err
 		}
 	}
 
@@ -802,7 +882,7 @@ func (view *UtxoViewpoint) fetchInputUtxos(db database.DB,
 					i >= inFlightIndex {
 
 					originTx := transactions[inFlightIndex]
-					view.AddTxOuts(originTx, block.Height())
+					view.AddTxOuts(originTx, block.Height(), uint32(i))
 					continue
 				}
 
@@ -882,7 +962,6 @@ func (view *UtxoViewpoint) fetchInputUtxos(db database.DB,
 		// which has no inputs) collecting them into sets of what is needed and
 		// what is already known (in-flight).
 		txNeededSet := make(map[chainhash.Hash]struct{})
-		txStore = make(TxStore)
 		for i, tx := range transactions[1:] {
 			for _, txIn := range tx.MsgTx().TxIn {
 				// It is acceptable for a transaction input to reference
@@ -901,7 +980,7 @@ func (view *UtxoViewpoint) fetchInputUtxos(db database.DB,
 					i >= inFlightIndex {
 
 					originTx := transactions[inFlightIndex]
-					view.AddTxOuts(originTx, block.Height())
+					view.AddTxOuts(originTx, block.Height(), uint32(i))
 					continue
 				}
 
@@ -918,12 +997,15 @@ func (view *UtxoViewpoint) fetchInputUtxos(db database.DB,
 		// Request the input utxos from the database.
 		return view.fetchUtxosMain(db, txNeededSet)
 	}
+
+	// TODO actual blockchain error
+	return fmt.Errorf("invalid stake viewpoint")
 }
 
 // NewUtxoViewpoint returns a new empty unspent transaction output view.
 func NewUtxoViewpoint() *UtxoViewpoint {
 	return &UtxoViewpoint{
-		entries: make(map[wire.ShaHash]*UtxoEntry),
+		entries: make(map[chainhash.Hash]*UtxoEntry),
 	}
 }
 
@@ -941,7 +1023,7 @@ func (b *BlockChain) FetchUtxoView(tx *dcrutil.Tx) (*UtxoViewpoint, error) {
 	// inputs of the passed transaction.  Also, add the passed transaction
 	// itself as a way for the caller to detect duplicates that are not
 	// fully spent.
-	txNeededSet := make(map[wire.ShaHash]struct{})
+	txNeededSet := make(map[chainhash.Hash]struct{})
 	txNeededSet[*tx.Sha()] = struct{}{}
 	if !IsCoinBase(tx) {
 		for _, txIn := range tx.MsgTx().TxIn {

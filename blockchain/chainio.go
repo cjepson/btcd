@@ -287,6 +287,7 @@ func decodeSpentTxOut(serialized []byte, stxo *spentTxOut, txVersion int32,
 	stxo.txVersion = int32(txVersion64)
 	stxo.height = uint32(height64)
 	stxo.index = uint32(index64)
+	stxo.outputsLen = uint32(outputsLen64)
 
 	stxo.isCoinBase, stxo.hasExpiry, stxo.txType = decodeFlags(serialized[offset])
 
