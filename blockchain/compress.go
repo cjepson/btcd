@@ -196,7 +196,9 @@ func putTxOutAmount(target []byte, amount int64, offset int) int {
 // byte slice, beginning at the passed offset. It returns the amount and the
 // final offset.
 func deserializeTxOutAmount(serialized []byte, offset int) (int64, int) {
-	return deserializeVarInt(serialized, offset)
+	var encoded int64
+	encoded, offset = deserializeVarInt(serialized, offset)
+	return int64(decompressTxOutAmount(uint64(encoded))), offset
 }
 
 // -----------------------------------------------------------------------------

@@ -10,6 +10,7 @@ import (
 	"compress/bzip2"
 	"encoding/gob"
 	"encoding/hex"
+	"fmt"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -91,6 +92,26 @@ func TestBlockValidationRules(t *testing.T) {
 	if err := bcDecoder.Decode(&blockChain); err != nil {
 		t.Errorf("error decoding test blockchain: %v", err.Error())
 	}
+
+	/* DEBUG remove eventually cj
+	for i := 1; i <= 168; i++ {
+		bl, err := dcrutil.NewBlockFromBytes(blockChain[int64(i)])
+		if err != nil {
+			t.Errorf("NewBlockFromBytes error: %v", err.Error())
+		}
+		bl.SetHeight(int64(i))
+
+		fmt.Printf("%v\n", blockchain.DebugBlockHeaderString(simNetParams,
+			bl))
+		fmt.Printf("%v\n", blockchain.DebugBlockString(bl))
+		for _, tx := range bl.Transactions() {
+			fmt.Printf("%v\n", blockchain.DebugMsgTxString(tx.MsgTx()))
+		}
+		for _, stx := range bl.STransactions() {
+			fmt.Printf("%v\n", blockchain.DebugMsgTxString(stx.MsgTx()))
+		}
+	}
+	*/
 
 	// Insert blocks 1 to 142 and perform various test. Block 1 has
 	// special properties, so make sure those validate correctly first.
@@ -182,9 +203,10 @@ func TestBlockValidationRules(t *testing.T) {
 		}
 		bl.SetHeight(int64(i))
 
+		fmt.Printf("processblock %v\n", i)
 		_, _, err = chain.ProcessBlock(bl, timeSource, blockchain.BFNone)
 		if err != nil {
-			t.Errorf("ProcessBlock error: %v", err.Error())
+			t.Fatalf("ProcessBlock error at height %v: %v", i, err.Error())
 		}
 	}
 

@@ -240,9 +240,10 @@ func newUtxoEntry(txVersion int32, height uint32, index uint32, outputsLen uint3
 // The unspent outputs are needed by other transactions for things such as
 // script validation and double spend prevention.
 type UtxoViewpoint struct {
-	entries   map[chainhash.Hash]*UtxoEntry
-	bestHash  chainhash.Hash
-	stakeView stakeViewpoint
+	entries      map[chainhash.Hash]*UtxoEntry
+	bestHash     chainhash.Hash
+	stakeView    stakeViewpoint
+	connectAfter bool
 }
 
 // BestHash returns the hash of the best block in the chain the view currently
@@ -265,6 +266,19 @@ func (view *UtxoViewpoint) StakeViewpoint() stakeViewpoint {
 // SetStakeViewpoint sets the stake viewpoint of the current UTXO state.
 func (view *UtxoViewpoint) SetStakeViewpoint(sv stakeViewpoint) {
 	view.stakeView = sv
+}
+
+// ConnectAfter returns whether or not state updates should be performed
+// automatically within the fetch functions, or whether to allow the caller
+// to manually update the state with connectTransaction.
+func (view *UtxoViewpoint) ConnectAfter() bool {
+	return view.connectAfter
+}
+
+// SetConnectAfter sets whether or not state updates regarding the stake
+// viewpoint should be performed.
+func (view *UtxoViewpoint) SetConnectAfter(ca bool) {
+	view.connectAfter = ca
 }
 
 // LookupEntry returns information about a given transaction according to the
@@ -797,8 +811,12 @@ func (view *UtxoViewpoint) fetchUtxosMain(db database.DB,
 		return err
 	}
 
-	// Connect up to the stake viewpoint that was requested.
-	return view.handleTxStoreViewpoint(db, nil)
+	// Connect up to the stake viewpoint that was requested
+	// if the flag to do so is given.
+	if view.connectAfter {
+		view.handleTxStoreViewpoint(db, nil)
+	}
+	return nil
 }
 
 // fetchUtxos loads utxo details about provided set of transaction hashes into
@@ -827,8 +845,12 @@ func (view *UtxoViewpoint) fetchUtxos(db database.DB, txSet map[chainhash.Hash]s
 		return err
 	}
 
-	// Connect up to the stake viewpoint that was requested.
-	return view.handleTxStoreViewpoint(db, nil)
+	// Connect up to the stake viewpoint that was requested
+	// if the flag to do so is given.
+	if view.connectAfter {
+		view.handleTxStoreViewpoint(db, nil)
+	}
+	return nil
 }
 
 // fetchInputUtxos loads utxo details about the input transactions referenced

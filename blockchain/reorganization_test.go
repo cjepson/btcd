@@ -63,13 +63,13 @@ func TestReorganization(t *testing.T) {
 	for i := 1; i < finalIdx1+1; i++ {
 		bl, err := dcrutil.NewBlockFromBytes(blockChain[int64(i)])
 		if err != nil {
-			t.Errorf("NewBlockFromBytes error: %v", err.Error())
+			t.Fatalf("NewBlockFromBytes error: %v", err.Error())
 		}
 		bl.SetHeight(int64(i))
 
 		_, _, err = chain.ProcessBlock(bl, timeSource, blockchain.BFNone)
 		if err != nil {
-			t.Errorf("ProcessBlock error: %v", err.Error())
+			t.Fatalf("ProcessBlock error at height %v: %v", i, err.Error())
 		}
 	}
 
@@ -99,13 +99,13 @@ func TestReorganization(t *testing.T) {
 	for i := forkPoint; i < finalIdx2+1; i++ {
 		bl, err := dcrutil.NewBlockFromBytes(blockChain[int64(i)])
 		if err != nil {
-			t.Errorf("NewBlockFromBytes error: %v", err.Error())
+			t.Fatalf("NewBlockFromBytes error: %v", err.Error())
 		}
 		bl.SetHeight(int64(i))
 
 		_, _, err = chain.ProcessBlock(bl, timeSource, blockchain.BFNone)
 		if err != nil {
-			t.Errorf("ProcessBlock error: %v", err.Error())
+			t.Fatalf("ProcessBlock error: %v", err.Error())
 		}
 	}
 

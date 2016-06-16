@@ -171,8 +171,11 @@ func putVersionedScript(target []byte, version uint16, pkScript []byte,
 	binary.LittleEndian.PutUint16(target[offset:offset+2], version)
 	offset += 2
 
+	pkScriptLen := len(pkScript)
+	offset = putVarInt(target, int64(pkScriptLen), offset)
+
 	copy(target[offset:], pkScript[:])
-	return offset + len(pkScript)
+	return offset + pkScriptLen
 }
 
 // deserializeVersionedScript deserialized a versioned script and returns the
@@ -192,14 +195,15 @@ func deserializeVersionedScript(serialized []byte, offset int) (uint16, []byte,
 	offset += 2
 
 	// Read the size of the script.
-	scriptSize, endVarIntBytesIdx := deserializeVarInt(serialized, offset)
+	var scriptSize64 int64
+	scriptSize64, offset = deserializeVarInt(serialized, offset)
 	if offset >= serializedLen {
 		return 0, nil, offset, errDeserialize("unexpected end of " +
 			"data after reading the script size")
 	}
-	offset += endVarIntBytesIdx
+	scriptSize := int(scriptSize64)
 
-	return version, serialized[offset : offset+int(scriptSize) : int(scriptSize)],
+	return version, serialized[offset : offset+scriptSize],
 		offset + int(scriptSize), nil
 }
 
@@ -502,11 +506,9 @@ func (u *utxoOutput) SerializeSize() int {
 func (u *utxoOutput) PutSerialized(target []byte, offset int) int {
 	// Write the amount.
 	offset = putTxOutAmount(target, u.amount, offset)
-	fmt.Printf("offset after amount %v\n", offset)
 
 	// Write the script.
 	offset = putVersionedScript(target, u.scriptVersion, u.pkScript, offset)
-	fmt.Printf("offset after script %v\n", offset)
 
 	return offset
 }
@@ -568,9 +570,17 @@ func serializeUtxoEntry(entry *UtxoEntry) ([]byte, error) {
 	// spentness information into it. We will copy it into the
 	// final slice later.
 	bitmap := bitset.NewBytes(int(entry.outputsLen))
-	for _, i := range outputOrdered {
-		if entry.sparseOutputs[uint32(i)].spent {
-			bitmap.Set(i)
+	for i := uint32(0); i < entry.outputsLen; i++ {
+		utxo, ok := entry.sparseOutputs[i]
+		// Pruned or missing from deserializing.
+		if !ok {
+			bitmap.Set(int(i))
+			continue
+		}
+
+		// Actually spent.
+		if utxo.spent {
+			bitmap.Set(int(i))
 		}
 	}
 
@@ -592,7 +602,6 @@ func serializeUtxoEntry(entry *UtxoEntry) ([]byte, error) {
 	}
 
 	// Allocate the byte slice and begin serializing.
-	fmt.Printf("size %v\n", size)
 	serialized := make([]byte, size)
 	offset := putVarInt(serialized, int64(entry.txVersion), 0)
 	offset = putVarInt(serialized, int64(entry.height), offset)
@@ -615,7 +624,6 @@ func serializeUtxoEntry(entry *UtxoEntry) ([]byte, error) {
 			continue
 		}
 
-		fmt.Printf("offset for idx %v: %v\n", outputIndex, offset)
 		offset = out.PutSerialized(serialized, offset)
 	}
 

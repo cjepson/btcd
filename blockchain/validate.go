@@ -397,8 +397,17 @@ func CountP2SHSigOps(tx *dcrutil.Tx, isCoinBaseTx bool, isStakeBaseTx bool,
 		// Ensure the referenced input transaction is available.
 		originTxHash := &txIn.PreviousOutPoint.Hash
 		originTxIndex := txIn.PreviousOutPoint.Index
-		txEntry := utxoView.LookupEntry(originTxHash)
-		if txEntry == nil || txEntry.IsOutputSpent(originTxIndex) {
+		utxoEntry, ok := utxoView.entries[*originTxHash]
+		if !ok {
+			fmt.Printf("%v\n", utxoView.entries)
+			panic("")
+			str := fmt.Sprintf("unable to find unspent transaction "+
+				"%v referenced from transaction %s:%d",
+				txIn.PreviousOutPoint.Hash, tx.Sha(), txInIndex)
+			return 0, ruleError(ErrMissingTx, str)
+		}
+
+		if utxoEntry.IsOutputSpent(originTxIndex) {
 			str := fmt.Sprintf("unable to find unspent output "+
 				"%v referenced from transaction %s:%d",
 				txIn.PreviousOutPoint, tx.Sha(), txInIndex)
@@ -407,7 +416,7 @@ func CountP2SHSigOps(tx *dcrutil.Tx, isCoinBaseTx bool, isStakeBaseTx bool,
 
 		// We're only interested in pay-to-script-hash types, so skip
 		// this input if it's not one.
-		pkScript := txEntry.PkScriptByIndex(originTxIndex)
+		pkScript := utxoEntry.PkScriptByIndex(originTxIndex)
 		if !txscript.IsPayToScriptHash(pkScript) {
 			continue
 		}
@@ -2375,16 +2384,6 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 	}
 	*/
 
-	// Load all of the utxos referenced by the inputs for all transactions
-	// in the block don't already exist in the utxo view from the database.
-	//
-	// These utxo entries are needed for verification of things such as
-	// transaction inputs, counting pay-to-script-hashes, and scripts.
-	err = utxoView.fetchInputUtxos(b.db, block)
-	if err != nil {
-		return err
-	}
-
 	// Check to ensure consensus via the PoS ticketing system versus the
 	// informations stored in the header.
 	ticketStore, err := b.fetchTicketStore(node)
@@ -2406,6 +2405,27 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 		return err
 	}
 
+	// Don't run scripts if this node is before the latest known good
+	// checkpoint since the validity is verified via the checkpoints (all
+	// transactions are included in the merkle root hash and any changes
+	// will therefore be detected by the next checkpoint).  This is a huge
+	// optimization because running the scripts is the most time consuming
+	// portion of block handling.
+	checkpoint := b.latestCheckpoint()
+	runScripts := !b.noVerify
+	if checkpoint != nil && node.height <= checkpoint.Height {
+		runScripts = false
+	}
+	var scriptFlags txscript.ScriptFlags
+	if runScripts {
+		scriptFlags |= txscript.ScriptBip16
+		scriptFlags |= txscript.ScriptVerifyDERSignatures
+		scriptFlags |= txscript.ScriptVerifyStrictEncoding
+		scriptFlags |= txscript.ScriptVerifyMinimalData
+		scriptFlags |= txscript.ScriptVerifyCleanStack
+		scriptFlags |= txscript.ScriptVerifyCheckLockTimeVerify
+	}
+
 	// The number of signature operations must be less than the maximum
 	// allowed per block.  Note that the preliminary sanity checks on a
 	// block also include a check similar to this one, but this check
@@ -2415,23 +2435,35 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 	// Do this for all TxTrees.
 	regularTxTreeValid := dcrutil.IsFlagSet16(node.header.VoteBits,
 		dcrutil.BlockValid)
+	thisNodeStakeViewpoint := ViewpointPrevInvalidStake
+	thisNodeRegularViewpoint := ViewpointPrevInvalidRegular
 	if regularTxTreeValid {
+		// Load all of the utxos referenced by the inputs for all transactions
+		// in the block don't already exist in the utxo view from the database.
+		//
+		// These utxo entries are needed for verification of things such as
+		// transaction inputs, counting pay-to-script-hashes, and scripts.
+		//
+		// We need to see the viewpoint from the stake chains correctly so
+		// that the correct transactions are fetched. We also set the view
+		// not to automatically make stake updates, since we will manually
+		// connect each transaction ourselves below and simply use the
+		// updated state, rather than refetching each time.
+		thisNodeStakeViewpoint = ViewpointPrevValidStake
+		thisNodeRegularViewpoint = ViewpointPrevValidRegular
+		utxoView.SetStakeViewpoint(ViewpointPrevValidInitial)
+		utxoView.SetConnectAfter(false)
+		err = utxoView.fetchInputUtxos(b.db, block)
+		if err != nil {
+			return err
+		}
+
 		err = checkP2SHNumSigOps(parentBlock.Transactions(),
 			utxoView, true)
 		if err != nil {
 			return err
 		}
-	}
 
-	// Perform several checks on the inputs for each transaction.  Also
-	// accumulate the total fees.  This could technically be combined with
-	// the loop above instead of running another loop over the transactions,
-	// but by separating it we can avoid running the more expensive (though
-	// still relatively cheap as compared to running the scripts) checks
-	// against all the inputs when the signature operations are out of
-	// bounds.
-	// TxTreeRegular of previous block.
-	if regularTxTreeValid {
 		stakeTreeFees, err := getStakeTreeFees(parent.height,
 			b.chainParams,
 			parentBlock.STransactions(),
@@ -2450,16 +2482,37 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 			return err
 		}
 
+		if runScripts {
+			if regularTxTreeValid {
+				// TxTreeRegular of previous block.
+				err = checkBlockScripts(parentBlock, utxoView,
+					true, scriptFlags, b.sigCache)
+				if err != nil {
+					log.Tracef("checkBlockScripts failed; error "+
+						"returned on txtreeregular of prev block: %v",
+						err.Error())
+					return err
+				}
+			}
+		}
+
 		// Add all of the outputs for this transaction which are not
 		// provably unspendable as available utxos.  Also, the passed
 		// spent txos slice is updated to contain an entry for each
 		// spent txout in the order each transaction spends them.
 		for i, tx := range parentBlock.Transactions() {
-			err = utxoView.connectTransaction(tx, node.height, uint32(i), stxos)
+			err = utxoView.connectTransaction(tx, parent.height, uint32(i), stxos)
 			if err != nil {
 				return err
 			}
 		}
+	}
+
+	// TxTreeStake of current block.
+	utxoView.SetStakeViewpoint(thisNodeStakeViewpoint)
+	err = utxoView.fetchInputUtxos(b.db, block)
+	if err != nil {
+		return err
 	}
 
 	err = checkP2SHNumSigOps(block.STransactions(),
@@ -2468,7 +2521,6 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 		return err
 	}
 
-	// TxTreeStake of current block.
 	err = b.checkTransactionInputs(0, node, block.STransactions(),
 		utxoView, false)
 	if err != nil {
@@ -2487,7 +2539,30 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 		return err
 	}
 
+	if runScripts {
+		err = checkBlockScripts(block, utxoView, false,
+			scriptFlags, b.sigCache)
+		if err != nil {
+			log.Tracef("checkBlockScripts failed; error "+
+				"returned on txtreestake of cur block: %v", err.Error())
+			return err
+		}
+	}
+
+	for i, stx := range block.STransactions() {
+		err = utxoView.connectTransaction(stx, node.height, uint32(i), stxos)
+		if err != nil {
+			return err
+		}
+	}
+
 	// TxTreeRegular of current block.
+	utxoView.SetStakeViewpoint(thisNodeRegularViewpoint)
+	err = utxoView.fetchInputUtxos(b.db, block)
+	if err != nil {
+		return err
+	}
+
 	err = checkP2SHNumSigOps(block.Transactions(),
 		utxoView, true)
 	if err != nil {
@@ -2502,58 +2577,19 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 		return err
 	}
 
-	// Don't run scripts if this node is before the latest known good
-	// checkpoint since the validity is verified via the checkpoints (all
-	// transactions are included in the merkle root hash and any changes
-	// will therefore be detected by the next checkpoint).  This is a huge
-	// optimization because running the scripts is the most time consuming
-	// portion of block handling.
-	checkpoint := b.latestCheckpoint()
-	runScripts := !b.noVerify
-	if checkpoint != nil && node.height <= checkpoint.Height {
-		runScripts = false
-	}
-
-	// Now that the inexpensive checks are done and have passed, verify the
-	// transactions are actually allowed to spend the coins by running the
-	// expensive ECDSA signature check scripts.  Doing this last helps
-	// prevent CPU exhaustion attacks.
 	if runScripts {
-		var scriptFlags txscript.ScriptFlags
-		scriptFlags |= txscript.ScriptBip16
-		scriptFlags |= txscript.ScriptVerifyDERSignatures
-		scriptFlags |= txscript.ScriptVerifyStrictEncoding
-		scriptFlags |= txscript.ScriptVerifyMinimalData
-		scriptFlags |= txscript.ScriptVerifyCleanStack
-		scriptFlags |= txscript.ScriptVerifyCheckLockTimeVerify
-
-		if regularTxTreeValid {
-			// TxTreeRegular of previous block.
-			err = checkBlockScripts(parentBlock, utxoView,
-				true, scriptFlags, b.sigCache)
-			if err != nil {
-				log.Tracef("checkBlockScripts failed; error "+
-					"returned on txtreeregular of prev block: %v",
-					err.Error())
-				return err
-			}
-		}
-
-		// TxTreeStake of current block.
-		err = checkBlockScripts(block, utxoView, false,
-			scriptFlags, b.sigCache)
-		if err != nil {
-			log.Tracef("checkBlockScripts failed; error "+
-				"returned on txtreestake of cur block: %v", err.Error())
-			return err
-		}
-
-		// TxTreeRegular of current block.
 		err = checkBlockScripts(block, utxoView, true,
 			scriptFlags, b.sigCache)
 		if err != nil {
 			log.Tracef("checkBlockScripts failed; error "+
 				"returned on txtreeregular of cur block: %v", err.Error())
+			return err
+		}
+	}
+
+	for i, tx := range block.Transactions() {
+		err = utxoView.connectTransaction(tx, node.height, uint32(i), stxos)
+		if err != nil {
 			return err
 		}
 	}
