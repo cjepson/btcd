@@ -501,10 +501,14 @@ func (u *utxoOutput) SerializeSize() int {
 //
 func (u *utxoOutput) PutSerialized(target []byte, offset int) int {
 	// Write the amount.
-	offset += putTxOutAmount(target, u.amount, offset)
+	offset = putTxOutAmount(target, u.amount, offset)
+	fmt.Printf("offset after amount %v\n", offset)
 
 	// Write the script.
-	return putVersionedScript(target, u.scriptVersion, u.pkScript, offset)
+	offset = putVersionedScript(target, u.scriptVersion, u.pkScript, offset)
+	fmt.Printf("offset after script %v\n", offset)
+
+	return offset
 }
 
 // FromSerialized deserializes a UTXO from the passed byte slice, starting
@@ -588,11 +592,12 @@ func serializeUtxoEntry(entry *UtxoEntry) ([]byte, error) {
 	}
 
 	// Allocate the byte slice and begin serializing.
+	fmt.Printf("size %v\n", size)
 	serialized := make([]byte, size)
 	offset := putVarInt(serialized, int64(entry.txVersion), 0)
-	offset = putVarInt(serialized[offset:], int64(entry.height), offset)
-	offset = putVarInt(serialized[offset:], int64(entry.index), offset)
-	offset = putVarInt(serialized[offset:], int64(entry.outputsLen), offset)
+	offset = putVarInt(serialized, int64(entry.height), offset)
+	offset = putVarInt(serialized, int64(entry.index), offset)
+	offset = putVarInt(serialized, int64(entry.outputsLen), offset)
 
 	copy(serialized[offset:], bitmap[:])
 	offset += len(bitmap)
@@ -610,7 +615,8 @@ func serializeUtxoEntry(entry *UtxoEntry) ([]byte, error) {
 			continue
 		}
 
-		offset += out.PutSerialized(serialized[offset:], offset)
+		fmt.Printf("offset for idx %v: %v\n", outputIndex, offset)
+		offset = out.PutSerialized(serialized, offset)
 	}
 
 	return serialized, nil
