@@ -528,8 +528,11 @@ func (view *UtxoViewpoint) connectTransactions(block *dcrutil.Block,
 // view to the block before the passed block.
 func (view *UtxoViewpoint) disconnectTransactions(block *dcrutil.Block,
 	parent *dcrutil.Block, stxos []spentTxOut) error {
+	fmt.Printf("disconnect block %v, %v\n", block.Sha(), block.Height())
+
 	// Sanity check the correct number of stxos are provided.
 	if len(stxos) != countSpentOutputs(block, parent) {
+		panic(fmt.Sprintf("%v, %v", block.Sha(), block.Height()))
 		return AssertError(fmt.Sprintf("disconnectTransactions "+
 			"called with bad spent transaction out information "+
 			"(len stxos %v, count is %v)", len(stxos),

@@ -309,8 +309,15 @@ func deserializeSpendJournalEntry(serialized []byte, txns []*wire.MsgTx, view *U
 	// Calculate the total number of stxos.
 	var numStxos int
 	for _, tx := range txns {
+		tt := stake.DetermineTxType(dcrutil.NewTx(tx))
+
+		if tt == stake.TxTypeSSGen {
+			numStxos++
+			continue
+		}
 		numStxos += len(tx.TxIn)
 	}
+	fmt.Printf("Calculated %v stxos in func\n", numStxos)
 
 	// When a block has no spent txouts there is nothing to serialize.
 	if len(serialized) == 0 {
@@ -334,10 +341,16 @@ func deserializeSpendJournalEntry(serialized []byte, txns []*wire.MsgTx, view *U
 	stxos := make([]spentTxOut, numStxos)
 	for txIdx := len(txns) - 1; txIdx > -1; txIdx-- {
 		tx := txns[txIdx]
+		tt := stake.DetermineTxType(dcrutil.NewTx(tx))
 
 		// Loop backwards through all of the transaction inputs and read
 		// the associated stxo.
 		for txInIdx := len(tx.TxIn) - 1; txInIdx > -1; txInIdx-- {
+			// Skip empty vote stakebases.
+			if txInIdx == 0 && (tt == stake.TxTypeSSGen) {
+				continue
+			}
+
 			txIn := tx.TxIn[txInIdx]
 			stxo := &stxos[stxoIdx]
 			stxoIdx--
@@ -405,6 +418,7 @@ func serializeSpendJournalEntry(stxos []spentTxOut) []byte {
 		offset += putSpentTxOut(serialized[offset:], &stxos[i])
 	}
 
+	fmt.Printf("SERIALIZED %v STXOS %x\n", len(stxos), serialized)
 	return serialized
 }
 
@@ -413,11 +427,12 @@ func serializeSpendJournalEntry(stxos []spentTxOut) []byte {
 // view MUST have the utxos referenced by all of the transactions available for
 // the passed block since that information is required to reconstruct the spent
 // txouts.
-func dbFetchSpendJournalEntry(dbTx database.Tx, block *dcrutil.Block, view *UtxoViewpoint) ([]spentTxOut, error) {
+func dbFetchSpendJournalEntry(dbTx database.Tx, block *dcrutil.Block, parent *dcrutil.Block, view *UtxoViewpoint) ([]spentTxOut, error) {
 	// Exclude the coinbase transaction since it can't spend anything.
 	spendBucket := dbTx.Metadata().Bucket(spendJournalBucketName)
 	serialized := spendBucket.Get(block.Sha()[:])
-	blockTxns := block.MsgBlock().Transactions[1:]
+	blockTxns := append(block.MsgBlock().Transactions[1:],
+		parent.MsgBlock().STransactions...)
 	stxos, err := deserializeSpendJournalEntry(serialized, blockTxns, view)
 	if err != nil {
 		// Ensure any deserialization errors are returned as database
@@ -444,6 +459,7 @@ func dbFetchSpendJournalEntry(dbTx database.Tx, block *dcrutil.Block, view *Utxo
 func dbPutSpendJournalEntry(dbTx database.Tx, blockHash *chainhash.Hash, stxos []spentTxOut) error {
 	spendBucket := dbTx.Metadata().Bucket(spendJournalBucketName)
 	serialized := serializeSpendJournalEntry(stxos)
+	fmt.Printf("INSERTING STXOS FOR BLOCK HASH %v: %v\n", blockHash, stxos)
 	return spendBucket.Put(blockHash[:], serialized)
 }
 

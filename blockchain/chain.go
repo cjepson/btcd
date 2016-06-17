@@ -1402,10 +1402,13 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 
 	// Ensure all of the needed side chain blocks are in the cache.
 	for e := attachNodes.Front(); e != nil; e = e.Next() {
-		n := e.Value.(*blockNode)
 		b.blockCacheLock.RLock()
-		return AssertError(fmt.Sprintf("block %v is missing "+
-			"from the side chain block cache", n.hash))
+		n := e.Value.(*blockNode)
+		if _, exists := b.blockCache[*n.hash]; !exists {
+			return AssertError(fmt.Sprintf("block %v is missing "+
+				"from the side chain block cache", n.hash))
+		}
+		b.blockCacheLock.RUnlock()
 	}
 
 	// All of the blocks to detach and related spend journal entries needed
@@ -1448,6 +1451,7 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 
 		// Load all of the utxos referenced by the block that aren't
 		// already in the view.
+		view.SetStakeViewpoint(ViewpointPrevValidInitial)
 		err = view.fetchInputUtxos(b.db, block)
 		if err != nil {
 			return err
@@ -1457,7 +1461,8 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 		// journal.
 		var stxos []spentTxOut
 		err = b.db.View(func(dbTx database.Tx) error {
-			stxos, err = dbFetchSpendJournalEntry(dbTx, block, view)
+			stxos, err = dbFetchSpendJournalEntry(dbTx, block, parent, view)
+			fmt.Printf("STXOS %v\n", stxos)
 			return err
 		})
 		if err != nil {
@@ -1468,6 +1473,9 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 		detachBlocks = append(detachBlocks, block)
 		detachParents = append(detachBlocks, parent)
 		detachSpentTxOuts = append(detachSpentTxOuts, stxos)
+
+		fmt.Printf("DISCONNECT BLOCK %v, %v\n", block.Sha(), block.Height())
+		fmt.Printf("DISCONNECT PARENT %v, %v\n", parent.Sha(), parent.Height())
 
 		err = view.disconnectTransactions(block, parent, stxos)
 		if err != nil {
