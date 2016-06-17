@@ -117,6 +117,7 @@ func chainSetup(dbName string, params *chaincfg.Params) (*blockchain.BlockChain,
 	// Create the main chain instance.
 	chain, err := blockchain.New(&blockchain.Config{
 		DB:          db,
+		TMDB:        tmdb,
 		ChainParams: params,
 	})
 	if err != nil {
@@ -126,7 +127,10 @@ func chainSetup(dbName string, params *chaincfg.Params) (*blockchain.BlockChain,
 	}
 	// Start the ticket database.
 	tmdb.Initialize(params, db)
-	tmdb.RescanTicketDB()
+	err = tmdb.RescanTicketDB()
+	if err != nil {
+		return nil, nil, err
+	}
 
 	return chain, teardown, nil
 }

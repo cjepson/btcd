@@ -754,8 +754,6 @@ func dbFetchUtxoEntry(dbTx database.Tx, hash *chainhash.Hash) (*UtxoEntry, error
 func dbPutUtxoView(dbTx database.Tx, view *UtxoViewpoint) error {
 	utxoBucket := dbTx.Metadata().Bucket(utxoSetBucketName)
 	for txHashIter, entry := range view.entries {
-		fmt.Printf("dbPutUtxoView INSERT %v, %v\n", txHashIter, entry)
-
 		// No need to update the database if the entry was not modified.
 		if entry == nil || !entry.modified {
 			continue

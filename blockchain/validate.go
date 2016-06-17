@@ -1957,7 +1957,6 @@ func CountP2SHSigOps(tx *dcrutil.Tx, isCoinBaseTx bool, isStakeBaseTx bool,
 		originTxIndex := txIn.PreviousOutPoint.Index
 		utxoEntry, ok := utxoView.entries[*originTxHash]
 		if !ok || utxoEntry == nil {
-			fmt.Printf("%v\n", DebugUtxoViewpointData(utxoView))
 			str := fmt.Sprintf("unable to find unspent transaction "+
 				"%v referenced from transaction %s:%d during CountP2SHSigOps",
 				txIn.PreviousOutPoint.Hash, tx.Sha(), txInIndex)
@@ -2363,6 +2362,7 @@ func (b *BlockChain) checkTransactionsAndConnect(inputFees dcrutil.Amount,
 // This function MUST be called with the chain state lock held (for writes).
 func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 	utxoView *UtxoViewpoint, stxos *[]spentTxOut) error {
+	fmt.Printf("connect block %v, height %v\n", node.hash, node.height)
 	// If the side chain blocks end up in the database, a call to
 	// CheckBlockSanity should be done here in case a previous version
 	// allowed a block that is no longer valid.  However, since the
@@ -2578,7 +2578,6 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 			"TxTreeRegular: %v", err.Error())
 		return err
 	}
-	fmt.Printf(" 1 11 %v\n", stxos)
 
 	if runScripts {
 		err = checkBlockScripts(block, utxoView, true,
@@ -2592,7 +2591,6 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 
 	// Rollback the final tx tree regular so that we don't write it to
 	// database.
-	fmt.Printf(" 2 22 %v\n", stxos)
 	if node.height > 1 {
 		idx, err := utxoView.disconnectTransactionSlice(block.Transactions(),
 			node.height, stxos)
@@ -2601,7 +2599,6 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 		}
 		stxosDeref := *stxos
 		*stxos = stxosDeref[0:idx]
-		fmt.Printf(" 3 33 %v (len %v, idx %v)\n", stxos, len(*stxos), idx)
 	}
 
 	// First block has special rules concerning the ledger.

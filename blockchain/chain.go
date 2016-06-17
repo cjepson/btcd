@@ -1094,6 +1094,36 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block, view *U
 	blockSize := uint64(block.MsgBlock().SerializeSize())
 	state := newBestState(node, blockSize, numTxns, curTotalTxns+numTxns)
 
+	// Insert block into ticket database if we're the point where tickets begin to
+	// mature. Note that if the block is inserted into tmdb and then insertion
+	// into DB fails, the two database will be on different HEADs. This needs
+	// to be handled correctly in the near future.
+	if node.height >= b.chainParams.StakeEnabledHeight {
+		spentAndMissedTickets, newTickets, _, err :=
+			b.tmdb.InsertBlock(block)
+		if err != nil {
+			return err
+		}
+
+		nextStakeDiff, err := b.calcNextRequiredStakeDifficulty(node)
+		if err != nil {
+			return err
+		}
+
+		// Notify of spent and missed tickets
+		b.sendNotification(NTSpentAndMissedTickets,
+			&TicketNotificationsData{*node.hash,
+				node.height,
+				nextStakeDiff,
+				spentAndMissedTickets})
+		// Notify of new tickets
+		b.sendNotification(NTNewTickets,
+			&TicketNotificationsData{*node.hash,
+				node.height,
+				nextStakeDiff,
+				newTickets})
+	}
+
 	// Atomically insert info into the database.
 	err = b.db.Update(func(dbTx database.Tx) error {
 		// Update best block state.
@@ -1142,6 +1172,12 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block, view *U
 		return nil
 	})
 	if err != nil {
+		// Attempt to restore TicketDb if this fails.
+		_, _, _, errRemove := b.tmdb.RemoveBlockToHeight(node.height - 1)
+		if errRemove != nil {
+			return errRemove
+		}
+
 		return err
 	}
 
@@ -1323,10 +1359,16 @@ func (b *BlockChain) disconnectBlock(node *blockNode, block *dcrutil.Block, view
 
 // countSpentOutputs returns the number of utxos the passed block spends.
 func countSpentOutputs(block *dcrutil.Block, parent *dcrutil.Block) int {
-	// Exclude the coinbase transaction since it can't spend anything.
+	// We need to skip the regular tx tree if it's not valid.
+	// We also exclude the coinbase transaction since it can't
+	// spend anything.
+	regularTxTreeValid := dcrutil.IsFlagSet16(block.MsgBlock().Header.VoteBits,
+		dcrutil.BlockValid)
 	var numSpent int
-	for _, tx := range parent.Transactions()[1:] {
-		numSpent += len(tx.MsgTx().TxIn)
+	if regularTxTreeValid {
+		for _, tx := range parent.Transactions()[1:] {
+			numSpent += len(tx.MsgTx().TxIn)
+		}
 	}
 	for _, stx := range block.STransactions() {
 		txType := stake.DetermineTxType(stx)
@@ -1336,6 +1378,7 @@ func countSpentOutputs(block *dcrutil.Block, parent *dcrutil.Block) int {
 		}
 		numSpent += len(stx.MsgTx().TxIn)
 	}
+
 	return numSpent
 }
 
@@ -1940,6 +1983,7 @@ func New(config *Config) (*BlockChain, error) {
 	b := BlockChain{
 		checkpointsByHeight: checkpointsByHeight,
 		db:                  config.DB,
+		tmdb:                config.TMDB,
 		chainParams:         params,
 		notifications:       config.Notifications,
 		sigCache:            config.SigCache,

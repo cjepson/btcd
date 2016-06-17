@@ -10,7 +10,7 @@ import (
 	"compress/bzip2"
 	"encoding/gob"
 	"encoding/hex"
-	"fmt"
+	//	"fmt"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -203,7 +203,6 @@ func TestBlockValidationRules(t *testing.T) {
 		}
 		bl.SetHeight(int64(i))
 
-		fmt.Printf("processblock %v\n", i)
 		_, _, err = chain.ProcessBlock(bl, timeSource, blockchain.BFNone)
 		if err != nil {
 			t.Fatalf("ProcessBlock error at height %v: %v", i, err.Error())
@@ -283,7 +282,8 @@ func TestBlockValidationRules(t *testing.T) {
 
 		_, _, err = chain.ProcessBlock(bl, timeSource, blockchain.BFNone)
 		if err != nil {
-			t.Errorf("ProcessBlock error: %v", err.Error())
+			t.Errorf("ProcessBlock error at height %v: %v", i,
+				err.Error())
 		}
 	}
 

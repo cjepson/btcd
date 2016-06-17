@@ -320,7 +320,6 @@ func (view *UtxoViewpoint) AddTxOuts(tx *dcrutil.Tx, blockHeight int64,
 	for txOutIdx, txOut := range tx.MsgTx().TxOut {
 		// TODO allow pruning of stake utxs after all other outputs are spent
 		if txscript.IsUnspendable(txOut.Value, txOut.PkScript) && entry.txType == stake.TxTypeRegular {
-			fmt.Printf("hit continue on tx %v\n", tx.Sha())
 			continue
 		}
 
@@ -365,7 +364,12 @@ func (view *UtxoViewpoint) connectTransaction(tx *dcrutil.Tx, blockHeight int64,
 	// Spend the referenced utxos by marking them spent in the view and,
 	// if a slice was provided for the spent txout details, append an entry
 	// to it.
-	for _, txIn := range tx.MsgTx().TxIn {
+	txType := stake.DetermineTxType(tx)
+	for i, txIn := range tx.MsgTx().TxIn {
+		if i == 0 && (txType == stake.TxTypeSSGen) {
+			continue
+		}
+
 		originIndex := txIn.PreviousOutPoint.Index
 		entry := view.entries[txIn.PreviousOutPoint.Hash]
 
@@ -526,8 +530,10 @@ func (view *UtxoViewpoint) disconnectTransactions(block *dcrutil.Block,
 	parent *dcrutil.Block, stxos []spentTxOut) error {
 	// Sanity check the correct number of stxos are provided.
 	if len(stxos) != countSpentOutputs(block, parent) {
-		return AssertError("disconnectTransactions called with bad " +
-			"spent transaction out information")
+		return AssertError(fmt.Sprintf("disconnectTransactions "+
+			"called with bad spent transaction out information "+
+			"(len stxos %v, count is %v)", len(stxos),
+			countSpentOutputs(block, parent)))
 	}
 
 	// Loop backwards through all transactions so everything is unspent in
@@ -544,7 +550,6 @@ func (view *UtxoViewpoint) disconnectTransactions(block *dcrutil.Block,
 		// because the code relies on its existence in the view in order
 		// to signal modifications have happened.
 		isCoinbase := txIdx == 0
-		isStakeBase := txIdx == 0 && (tt == stake.TxTypeSSGen)
 		entry := view.entries[*tx.Sha()]
 		if entry == nil {
 			entry = newUtxoEntry(tx.MsgTx().Version, uint32(block.Height()),
@@ -561,7 +566,7 @@ func (view *UtxoViewpoint) disconnectTransactions(block *dcrutil.Block,
 		// spent txout entries.
 		for txInIdx := len(tx.MsgTx().TxIn) - 1; txInIdx > -1; txInIdx-- {
 			// Skip empty vote stakebases.
-			if txInIdx == 0 && isStakeBase {
+			if txInIdx == 0 && (tt == stake.TxTypeSSGen) {
 				continue
 			}
 
@@ -840,7 +845,6 @@ func (view *UtxoViewpoint) fetchUtxosMain(db database.DB,
 				return err
 			}
 
-			fmt.Printf("hash %v, entry %v, err %v\n", hash, entry, nil)
 			view.entries[hash] = entry
 		}
 
