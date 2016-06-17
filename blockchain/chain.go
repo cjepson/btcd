@@ -1075,7 +1075,12 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block, view *U
 	}
 
 	// Sanity check the correct number of stxos are provided.
-	if len(stxos) != countSpentOutputs(block) {
+	parent, err := b.getBlockFromHash(node.parent.hash)
+	if err != nil {
+		return err
+	}
+	if len(stxos) != countSpentOutputs(block, parent) {
+		fmt.Printf("count %v, len stxos %v\n", countSpentOutputs(block, parent), len(stxos))
 		return AssertError("connectBlock called with inconsistent " +
 			"spent transaction out information")
 	}
@@ -1090,7 +1095,7 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block, view *U
 	state := newBestState(node, blockSize, numTxns, curTotalTxns+numTxns)
 
 	// Atomically insert info into the database.
-	err := b.db.Update(func(dbTx database.Tx) error {
+	err = b.db.Update(func(dbTx database.Tx) error {
 		// Update best block state.
 		err := dbPutBestState(dbTx, state, node.workSum)
 		if err != nil {
@@ -1161,12 +1166,6 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block, view *U
 	b.stateLock.Lock()
 	b.stateSnapshot = state
 	b.stateLock.Unlock()
-
-	// Get the parent block.
-	parent, err := b.getBlockFromHash(node.parent.hash)
-	if err != nil {
-		return err
-	}
 
 	// Assemble the current block and the parent into a slice.
 	blockAndParent := []*dcrutil.Block{block, parent}
@@ -1323,11 +1322,19 @@ func (b *BlockChain) disconnectBlock(node *blockNode, block *dcrutil.Block, view
 }
 
 // countSpentOutputs returns the number of utxos the passed block spends.
-func countSpentOutputs(block *dcrutil.Block) int {
+func countSpentOutputs(block *dcrutil.Block, parent *dcrutil.Block) int {
 	// Exclude the coinbase transaction since it can't spend anything.
 	var numSpent int
-	for _, tx := range block.Transactions()[1:] {
+	for _, tx := range parent.Transactions()[1:] {
 		numSpent += len(tx.MsgTx().TxIn)
+	}
+	for _, stx := range block.STransactions() {
+		txType := stake.DetermineTxType(stx)
+		if txType == stake.TxTypeSSGen || txType == stake.TxTypeSSRtx {
+			numSpent += 1
+			continue
+		}
+		numSpent += len(stx.MsgTx().TxIn)
 	}
 	return numSpent
 }
@@ -1534,7 +1541,7 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 		// as spent and add all transactions being created by this block
 		// to it.  Also, provide an stxo slice so the spent txout
 		// details are generated.
-		stxos := make([]spentTxOut, 0, countSpentOutputs(block))
+		stxos := make([]spentTxOut, 0, countSpentOutputs(block, parent))
 		err = view.connectTransactions(block, parent, &stxos)
 		if err != nil {
 			return err
@@ -1660,13 +1667,20 @@ func (b *BlockChain) connectBestChain(node *blockNode, block *dcrutil.Block,
 	// We are extending the main (best) chain with a new block.  This is the
 	// most common case.
 	if node.parentHash.IsEqual(b.bestNode.hash) {
+		// Fetch the best block, now the parent, to be able to
+		// connect the txTreeRegular if needed.
+		// TODO optimize by not fetching if not needed?
+		parent, err := b.getBlockFromHash(node.parentHash)
+		if err != nil {
+			return false, err
+		}
 		// Perform several checks to verify the block can be connected
 		// to the main chain without violating any rules and without
 		// actually connecting the block.
 		view := NewUtxoViewpoint()
 		view.SetBestHash(node.parentHash)
 		view.SetStakeViewpoint(ViewpointPrevValidInitial)
-		stxos := make([]spentTxOut, 0, countSpentOutputs(block))
+		stxos := make([]spentTxOut, 0)
 		if !fastAdd {
 			err := b.checkConnectBlock(node, block, view, &stxos)
 			if err != nil {
@@ -1677,14 +1691,6 @@ func (b *BlockChain) connectBestChain(node *blockNode, block *dcrutil.Block,
 		// Don't connect the block if performing a dry run.
 		if dryRun {
 			return true, nil
-		}
-
-		// Fetch the best block, now the parent, to be able to
-		// connect the txTreeRegular if needed.
-		// TODO optimize by not fetching if not needed?
-		parent, err := b.getBlockFromHash(node.parentHash)
-		if err != nil {
-			return false, err
 		}
 
 		// In the fast add case the code to check the block connection

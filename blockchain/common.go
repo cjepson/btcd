@@ -443,33 +443,63 @@ func writeTicketDataToBuf(buf *bytes.Buffer, td *stake.TicketData) {
 	}
 }
 
-// DebugTxStoreData returns a string containing information about the data
-// stored in the given TxStore.
-/*
-CJ TODO New debug function for UTXO viewpoints?
-func DebugTxStoreData(txs TxStore) string {
-	if txs == nil {
+// DebugUtxoViewpointData returns a string containing information about the data
+// stored in the given UtxoView.
+func DebugUtxoViewpointData(uv *UtxoViewpoint) string {
+	if uv == nil {
 		return ""
 	}
 
 	var buffer bytes.Buffer
 
-	for _, txd := range txs {
-		str := fmt.Sprintf("Hash: %v\n", txd.Hash)
+	for hash, utx := range uv.entries {
+		str := fmt.Sprintf("Hash: %v\n", hash)
 		buffer.WriteString(str)
-		str = fmt.Sprintf("Height: %v\n", txd.BlockHeight)
+		if utx == nil {
+			str := fmt.Sprintf("MISSING\n\n")
+			buffer.WriteString(str)
+			return buffer.String()
+		}
+
+		str = fmt.Sprintf("Height: %v\n", utx.height)
 		buffer.WriteString(str)
-		str = fmt.Sprintf("Tx: %v\n", txd.Tx)
+		str = fmt.Sprintf("Index: %v\n", utx.index)
 		buffer.WriteString(str)
-		str = fmt.Sprintf("Spent: %v\n", txd.Spent)
+		str = fmt.Sprintf("TxVersion: %v\n", utx.txVersion)
 		buffer.WriteString(str)
-		str = fmt.Sprintf("Err: %v\n\n", txd.Err)
+		str = fmt.Sprintf("TxType: %v\n", utx.txType)
+		buffer.WriteString(str)
+		str = fmt.Sprintf("IsCoinbase: %v\n", utx.isCoinBase)
+		buffer.WriteString(str)
+		str = fmt.Sprintf("HasExpiry: %v\n", utx.hasExpiry)
+		buffer.WriteString(str)
+		str = fmt.Sprintf("Number of outputs: %v\n", utx.outputsLen)
+		buffer.WriteString(str)
+
+		outputOrdered := make([]int, 0, len(utx.sparseOutputs))
+		for outputIndex := range utx.sparseOutputs {
+			outputOrdered = append(outputOrdered, int(outputIndex))
+		}
+		sort.Ints(outputOrdered)
+		for _, idx := range outputOrdered {
+			utxo := utx.sparseOutputs[uint32(idx)]
+			str = fmt.Sprintf("Output index: %v\n", idx)
+			buffer.WriteString(str)
+			str = fmt.Sprintf("Amount: %v\n", utxo.amount)
+			buffer.WriteString(str)
+			str = fmt.Sprintf("ScriptVersion: %v\n", utxo.scriptVersion)
+			buffer.WriteString(str)
+			str = fmt.Sprintf("Script: %x\n", utxo.pkScript)
+			buffer.WriteString(str)
+			str = fmt.Sprintf("Spent: %v\n\n", utxo.spent)
+			buffer.WriteString(str)
+		}
+		str = fmt.Sprintf("\n")
 		buffer.WriteString(str)
 	}
 
 	return buffer.String()
 }
-*/
 
 // TicketDbThumbprint takes all the tickets in the respective ticket db,
 // sorts them, hashes their contents into a list, and then hashes that list.
