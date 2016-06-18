@@ -522,6 +522,36 @@ func (view *UtxoViewpoint) connectTransactions(block *dcrutil.Block,
 	return nil
 }
 
+/*
+// countSpentOutputs returns the number of utxos the passed block spends for the
+// parent block regular transactions as the stake transcations of the current
+// block.
+func countSpentOutputsPerTree(block *dcrutil.Block, parent *dcrutil.Block) (int,
+	int) {
+	// We need to skip the regular tx tree if it's not valid.
+	// We also exclude the coinbase transaction since it can't
+	// spend anything.
+	regularTxTreeValid := dcrutil.IsFlagSet16(block.MsgBlock().Header.VoteBits,
+		dcrutil.BlockValid)
+	var numSpentRegParent, numSpentStakeBlock int
+	if regularTxTreeValid {
+		for _, tx := range parent.Transactions()[1:] {
+			numSpentRegParent += len(tx.MsgTx().TxIn)
+		}
+	}
+	for _, stx := range block.STransactions() {
+		txType := stake.DetermineTxType(stx)
+		if txType == stake.TxTypeSSGen || txType == stake.TxTypeSSRtx {
+			numSpentStakeBlock += 1
+			continue
+		}
+		numSpentStakeBlock += len(stx.MsgTx().TxIn)
+	}
+
+	return numSpentRegParent, numSpentStakeBlock
+}
+*/
+
 // disconnectTransactions updates the view by removing all of the transactions
 // created by the passed block, restoring all utxos the transactions spent by
 // using the provided spent txo information, and setting the best hash for the
@@ -542,6 +572,7 @@ func (view *UtxoViewpoint) disconnectTransactions(block *dcrutil.Block,
 	// Loop backwards through all transactions so everything is unspent in
 	// reverse order.  This is necessary since transactions later in a block
 	// can spend from previous ones.
+	//stxoIdxParent, stxoIdxCurrent := countSpentOutputsPerTree(block, parent)
 	stxoIdx := len(stxos) - 1
 	transactions := block.STransactions()
 	for txIdx := len(transactions) - 1; txIdx > -1; txIdx-- {
@@ -552,11 +583,10 @@ func (view *UtxoViewpoint) disconnectTransactions(block *dcrutil.Block,
 		// create a new empty entry for when it does not.  This is done
 		// because the code relies on its existence in the view in order
 		// to signal modifications have happened.
-		isCoinbase := txIdx == 0
 		entry := view.entries[*tx.Sha()]
 		if entry == nil {
 			entry = newUtxoEntry(tx.MsgTx().Version, uint32(block.Height()),
-				uint32(txIdx), uint32(len(tx.MsgTx().TxOut)), isCoinbase,
+				uint32(txIdx), uint32(len(tx.MsgTx().TxOut)), false,
 				tx.MsgTx().Expiry != 0, tt)
 			view.entries[*tx.Sha()] = entry
 		}
@@ -587,7 +617,7 @@ func (view *UtxoViewpoint) disconnectTransactions(block *dcrutil.Block,
 			entry := view.entries[*originHash]
 			if entry == nil {
 				entry = newUtxoEntry(tx.MsgTx().Version, uint32(block.Height()),
-					uint32(txIdx), uint32(len(tx.MsgTx().TxOut)), isCoinbase,
+					uint32(txIdx), uint32(len(tx.MsgTx().TxOut)), false,
 					tx.MsgTx().Expiry != 0, tt)
 				view.entries[*originHash] = entry
 			}
@@ -628,7 +658,7 @@ func (view *UtxoViewpoint) disconnectTransactions(block *dcrutil.Block,
 		// validated. Otherwise, these transactions were never in the blockchain's
 		// history in the first place.
 		if regularTxTreeValid {
-			transactions := parent.Transactions()
+			transactions := block.Transactions()
 			for txIdx := len(transactions) - 1; txIdx > -1; txIdx-- {
 				tx := transactions[txIdx]
 

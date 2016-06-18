@@ -117,17 +117,17 @@ func TestStxoSerialization(t *testing.T) {
 		// Ensure the serialized bytes are decoded back to the expected
 		// stxo.
 		var gotStxo spentTxOut
-		gotBytesRead, err := decodeSpentTxOut(test.serialized, &gotStxo,
-			test.txVersion, test.stxo.amount)
+		offset, err := decodeSpentTxOut(test.serialized, &gotStxo,
+			test.txVersion, test.stxo.amount, 0)
 		if err != nil {
 			t.Errorf("decodeSpentTxOut (%s): unexpected error: %v",
 				test.name, err)
 			continue
 		}
-		if gotBytesRead != len(test.serialized) {
+		if offset != len(test.serialized) {
 			t.Errorf("decodeSpentTxOut (%s): did not get expected "+
 				"number of bytes read - got %d, want %d",
-				test.name, gotBytesRead, len(test.serialized))
+				test.name, offset, len(test.serialized))
 			continue
 		}
 	}
@@ -194,7 +194,7 @@ func TestStxoDecodeErrors(t *testing.T) {
 	for _, test := range tests {
 		// Ensure the expected error type is returned.
 		gotBytesRead, err := decodeSpentTxOut(test.serialized,
-			&test.stxo, test.txVersion, test.stxo.amount)
+			&test.stxo, test.txVersion, test.stxo.amount, 0)
 		if reflect.TypeOf(err) != reflect.TypeOf(test.errType) {
 			t.Errorf("decodeSpentTxOut (%s): expected error type "+
 				"does not match - got %T, want %T", test.name,

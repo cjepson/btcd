@@ -203,6 +203,8 @@ func deserializeVersionedScript(serialized []byte, offset int) (uint16, []byte,
 	}
 	scriptSize := int(scriptSize64)
 
+	fmt.Printf("version %v, serialized %x, offset %v, scriptSize %v\n", version, serialized[offset:offset+scriptSize], offset, scriptSize)
+
 	return version, serialized[offset : offset+scriptSize],
 		offset + int(scriptSize), nil
 }
@@ -254,7 +256,7 @@ func putSpentTxOut(target []byte, stxo *spentTxOut) int {
 // An error will be returned if the txVersion is not serialized as a part of the
 // stxo and is also not provided to the function.
 func decodeSpentTxOut(serialized []byte, stxo *spentTxOut, txVersion int32,
-	amount int64) (int, error) {
+	amount int64, offset int) (int, error) {
 	serializedLen := len(serialized)
 
 	// Ensure there are bytes to decode.
@@ -262,8 +264,11 @@ func decodeSpentTxOut(serialized []byte, stxo *spentTxOut, txVersion int32,
 		return 0, errDeserialize("no serialized bytes")
 	}
 
-	scriptVersion, pkScript, offset, err :=
-		deserializeVersionedScript(serialized, 0)
+	var scriptVersion uint16
+	var pkScript []byte
+	var err error
+	scriptVersion, pkScript, offset, err =
+		deserializeVersionedScript(serialized, offset)
 	if err != nil {
 		return 0, err
 	}
@@ -384,8 +389,8 @@ func deserializeSpendJournalEntry(serialized []byte, txns []*wire.MsgTx, view *U
 			}
 
 			var err error
-			offset, err = decodeSpentTxOut(serialized[offset:], stxo,
-				txVersion, txIn.ValueIn)
+			offset, err = decodeSpentTxOut(serialized, stxo,
+				txVersion, txIn.ValueIn, offset)
 			if err != nil {
 				return nil, errDeserialize(fmt.Sprintf("unable "+
 					"to decode stxo for %v: %v",
