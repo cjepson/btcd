@@ -11,7 +11,6 @@ import (
 	"math/big"
 	"sort"
 
-	"github.com/decred/bitset"
 	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg/chainhash"
 	database "github.com/decred/dcrd/database2"
@@ -104,31 +103,29 @@ func isDeserializeErr(err error) bool {
 //
 // The serialized format is:
 //
-//   [<scriptVersion><pkScript>],...
-//   OPTIONAL: [<txVersion><height><index><flags>]
+//   [<flags><script version><compressed pk script>],...
+//   OPTIONAL: [<txVersion>]
 //
 //   Field                Type           Size
+//   flags                VLQ            byte
 //   scriptVersion        uint16         2 bytes
-//   pkScript             VarInt+[]byte  variable
+//   pkScript             VLQ+[]byte     variable
 //
 //   OPTIONAL
-//     outputsLen         VarInt         variable (usually 1 byte)
-//     txVersion          VarInt         variable
-//     height             VarInt         variable
-//     index              VarInt         variable
-//     flags              byte           byte
+//     txVersion          VLQ            variable
+//
 //
 // The serialized flags code format is:
-//   bit  0   - containing transaction is a coinbase
-//   bit  1   - containing transaction has an expiry
-//   bits 2-3 - transaction type
-//   bits 4-7 - unused
+//   bit  0   - is fully spent
+//   bit  1   - containing transaction is a coinbase
+//   bit  2   - containing transaction has an expiry
+//   bits 3-4 - transaction type
 //
-//   NOTE: The optional section of data is only inserted if the transaction
-//         has been fully spent. Otherwise, these fields are left blank and
-//         their presence is checked for by checking the len of the serialized
-//         byte slice against the final cursor after popping off the first
-//         three elements.
+//   NOTE: The transaction version and flags are only encoded when the spent
+//   txout was the final unspent output of the containing transaction.
+//   Otherwise, the header code will be 0 and the version is not serialized at
+//   all. This is  done because that information is only needed when the utxo
+//   set no longer has it.
 //
 // Example:
 //   TODO
@@ -141,88 +138,33 @@ func isDeserializeErr(err error) bool {
 // the comments above, the additional contextual information will only be valid
 // when this spent txout is spending the last unspent output of the containing
 // transaction.
+//
+// The struct is aligned for memory efficiency.
 type spentTxOut struct {
 	pkScript      []byte       // The public key script for the output.
 	amount        int64        // The amount of the output.
-	outputsLen    uint32       // The number of outputs in this tx.
 	txVersion     int32        // The txVersion of creating tx.
 	height        uint32       // Height of the the block containing the tx.
 	index         uint32       // Index in the block of the transaction.
-	txType        stake.TxType // The stake type of the transaction.
 	scriptVersion uint16       // The version of the scripting language.
+	txType        stake.TxType // The stake type of the transaction.
 
 	txFullySpent bool // Whether or not the transaction is fully spent.
 	isCoinBase   bool // Whether creating tx is a coinbase.
 	hasExpiry    bool // The expiry of the creating tx.
-}
 
-// serializeVersionedScriptSize gets the size of a pkScript and the VarInt
-// describing its size in bytes.
-func serializeVersionedScriptSize(pkScript []byte) int {
-	return 2 + serializeSizeVarInt(int64(len(pkScript))) + len(pkScript)
-}
-
-// putVersionedScript inserts a versioned pkScript into a byte slice and returns
-// the offset of the cursor after writing. It takes a cursor as an argument to
-// know where to start writing. This function will fail if the script is written
-// out of bounds, producing a panic.
-func putVersionedScript(target []byte, version uint16, pkScript []byte,
-	offset int) int {
-	binary.LittleEndian.PutUint16(target[offset:offset+2], version)
-	offset += 2
-
-	pkScriptLen := len(pkScript)
-	offset = putVarInt(target, int64(pkScriptLen), offset)
-
-	copy(target[offset:], pkScript[:])
-	return offset + pkScriptLen
-}
-
-// deserializeVersionedScript deserialized a versioned script and returns the
-// version followed by the script. The final offset after reading is also
-// returned.
-func deserializeVersionedScript(serialized []byte, offset int) (uint16, []byte,
-	int, error) {
-	serializedLen := len(serialized)
-
-	if serializedLen < 2 {
-		return 0, nil, 0, errDeserialize("unexpected end of " +
-			"data before reading the script version")
-	}
-
-	// Read the script version.
-	version := binary.LittleEndian.Uint16(serialized[offset : offset+2])
-	offset += 2
-
-	// Read the size of the script.
-	var scriptSize64 int64
-	scriptSize64, offset = deserializeVarInt(serialized, offset)
-	if offset >= serializedLen {
-		return 0, nil, offset, errDeserialize("unexpected end of " +
-			"data after reading the script size")
-	}
-	scriptSize := int(scriptSize64)
-
-	fmt.Printf("version %v, serialized %x, offset %v, scriptSize %v\n", version, serialized[offset:offset+scriptSize], offset, scriptSize)
-
-	return version, serialized[offset : offset+scriptSize],
-		offset + int(scriptSize), nil
+	compressed bool // Whether or not the script is compressed.
 }
 
 // spentTxOutSerializeSize returns the number of bytes it would take to
 // serialize the passed stxo according to the format described above.
+// The amount is never encoded into spent transaction outputs in Decred
+// because they're already encoded into the transactions, so skip them when
+// determining the serialization size.
 func spentTxOutSerializeSize(stxo *spentTxOut) int {
-	size := serializeVersionedScriptSize(stxo.pkScript)
-
-	if stxo.txFullySpent {
-		size += serializeSizeVarInt(int64(stxo.outputsLen))
-		size += serializeSizeVarInt(int64(stxo.txVersion))
-		size += serializeSizeVarInt(int64(stxo.height))
-		size += serializeSizeVarInt(int64(stxo.index))
-		size += 1 // Flags
-	}
-
-	return size
+	size := serializeSizeVLQ(uint64(stxo.txVersion))
+	return size + compressedTxOutSize(uint64(stxo.amount), stxo.scriptVersion,
+		stxo.pkScript, currentCompressionVersion, stxo.compressed, false)
 }
 
 // putSpentTxOut serializes the passed stxo according to the format described
@@ -230,16 +172,14 @@ func spentTxOutSerializeSize(stxo *spentTxOut) int {
 // be at least large enough to handle the number of bytes returned by the
 // spentTxOutSerializeSize function or it will panic.
 func putSpentTxOut(target []byte, stxo *spentTxOut) int {
-	offset := putVersionedScript(target, stxo.scriptVersion,
-		stxo.pkScript, 0)
-
-	if stxo.txFullySpent {
-		offset = putVarInt(target, int64(stxo.outputsLen), offset)
-		offset = putVarInt(target, int64(stxo.txVersion), offset)
-		offset = putVarInt(target, int64(stxo.height), offset)
-		offset = putVarInt(target, int64(stxo.index), offset)
+	flags := encodeFlags(stxo.isCoinBase, stxo.hasExpiry, stxo.txType,
+		stxo.txFullySpent)
+	offset := putVLQ(target, uint64(flags))
+	offset += putCompressedTxOut(target[offset:], uint64(stxo.amount),
+		stxo.pkScript, stxo.txVersion, stxo.compressed)
+	if flags != 0 {
+		offset += putVLQ(target[offset:], uint64(stxo.txVersion))
 	}
-
 	return offset
 }
 
@@ -247,58 +187,68 @@ func putSpentTxOut(target []byte, stxo *spentTxOut) int {
 // by other data, into the passed stxo struct.  It returns the number of bytes
 // read.
 //
-// Since the serialized stxo entry does not contain the height, txVersion, or
+// Since the serialized stxo entry does not contain the height, version, or
 // coinbase flag of the containing transaction when it still has utxos, the
-// caller is responsible for passing in the containing transaction txVersion in
-// that case.  The provided txVersion is ignore when it is serialized as a part of
+// caller is responsible for passing in the containing transaction version in
+// that case.  The provided version is ignore when it is serialized as a part of
 // the stxo.
 //
-// An error will be returned if the txVersion is not serialized as a part of the
+// An error will be returned if the version is not serialized as a part of the
 // stxo and is also not provided to the function.
-func decodeSpentTxOut(serialized []byte, stxo *spentTxOut, txVersion int32,
-	amount int64, offset int) (int, error) {
-	serializedLen := len(serialized)
-
+func decodeSpentTxOut(serialized []byte, stxo *spentTxOut, amount int64,
+	height uint32, index uint32) (int, error) {
 	// Ensure there are bytes to decode.
-	if serializedLen == 0 {
+	if len(serialized) == 0 {
 		return 0, errDeserialize("no serialized bytes")
 	}
 
-	var scriptVersion uint16
-	var pkScript []byte
-	var err error
-	scriptVersion, pkScript, offset, err =
-		deserializeVersionedScript(serialized, offset)
+	// Deserialize the header code.
+	flags, offset := deserializeVLQ(serialized)
+	if offset >= len(serialized) {
+		return offset, errDeserialize("unexpected end of data after " +
+			"spent tx out flags")
+	}
+
+	// Decode the flags. If the flags are non-zero, it means that the
+	// transaction was fully spent at this spend.
+	if flags != 0 {
+		isCoinBase, hasExpiry, txType, _ := decodeFlags(byte(flags))
+
+		stxo.height = height
+		stxo.index = index
+		stxo.isCoinBase = isCoinBase
+		stxo.hasExpiry = hasExpiry
+		stxo.txType = txType
+	}
+
+	// Decode the compressed txout. We pass false for the amount flag,
+	// since in Decred we only need pkScript at most due to fraud proofs
+	// already storing the decompressed amount.
+	_, scriptVersion, compScript, bytesRead, err :=
+		decodeCompressedTxOut(serialized[offset:], currentCompressionVersion,
+			false)
+	offset += bytesRead
 	if err != nil {
-		return 0, err
+		return offset, errDeserialize(fmt.Sprintf("unable to decode "+
+			"txout: %v", err))
 	}
-
-	stxo.amount = amount
 	stxo.scriptVersion = scriptVersion
-	stxo.pkScript = pkScript
+	stxo.amount = amount
+	stxo.pkScript = compScript
+	stxo.compressed = true
 
-	// This script was not fully spent at this spending, so we're
-	// done.
-	if serializedLen <= offset {
-		return offset, nil
+	// Deserialize the containing transaction if the flags indicate that
+	// the transaction has been fully spent.
+	if flags != 0 {
+		txVersion, bytesRead := deserializeVLQ(serialized[offset:])
+		offset += bytesRead
+		if offset >= len(serialized) {
+			return offset, errDeserialize("unexpected end of data " +
+				"after version")
+		}
+
+		stxo.txVersion = int32(txVersion)
 	}
-
-	// Decode the rest of the transaction details, since the transaction
-	// was fully spent here.
-	stxo.txFullySpent = true
-
-	var outputsLen64, txVersion64, height64, index64 int64
-	outputsLen64, offset = deserializeVarInt(serialized, offset)
-	txVersion64, offset = deserializeVarInt(serialized, offset)
-	height64, offset = deserializeVarInt(serialized, offset)
-	index64, offset = deserializeVarInt(serialized, offset)
-
-	stxo.txVersion = int32(txVersion64)
-	stxo.height = uint32(height64)
-	stxo.index = uint32(index64)
-	stxo.outputsLen = uint32(outputsLen64)
-
-	stxo.isCoinBase, stxo.hasExpiry, stxo.txType = decodeFlags(serialized[offset])
 
 	return offset, nil
 }
@@ -310,7 +260,8 @@ func decodeSpentTxOut(serialized []byte, stxo *spentTxOut, txVersion int32,
 // format comments, this function also requires the transactions that spend the
 // txouts and a utxo view that contains any remaining existing utxos in the
 // transactions referenced by the inputs to the passed transasctions.
-func deserializeSpendJournalEntry(serialized []byte, txns []*wire.MsgTx, view *UtxoViewpoint) ([]spentTxOut, error) {
+func deserializeSpendJournalEntry(serialized []byte, txns []*wire.MsgTx,
+	view *UtxoViewpoint) ([]spentTxOut, error) {
 	// Calculate the total number of stxos.
 	var numStxos int
 	for _, tx := range txns {
@@ -341,26 +292,19 @@ func deserializeSpendJournalEntry(serialized []byte, txns []*wire.MsgTx, view *U
 	// Loop backwards through all transactions so everything is read in
 	// reverse order to match the serialization order.
 	stxoIdx := numStxos - 1
-	stxoInFlight := make(map[chainhash.Hash]int)
 	offset := 0
 	stxos := make([]spentTxOut, numStxos)
 	for txIdx := len(txns) - 1; txIdx > -1; txIdx-- {
 		tx := txns[txIdx]
-		tt := stake.DetermineTxType(dcrutil.NewTx(tx))
 
 		// Loop backwards through all of the transaction inputs and read
 		// the associated stxo.
 		for txInIdx := len(tx.TxIn) - 1; txInIdx > -1; txInIdx-- {
-			// Skip empty vote stakebases.
-			if txInIdx == 0 && (tt == stake.TxTypeSSGen) {
-				continue
-			}
-
 			txIn := tx.TxIn[txInIdx]
 			stxo := &stxos[stxoIdx]
 			stxoIdx--
 
-			// Get the transaction txVersion for the stxo based on
+			// Get the transaction version for the stxo based on
 			// whether or not it should be serialized as a part of
 			// the stxo.  Recall that it is only serialized when the
 			// stxo spends the final utxo of a transaction.  Since
@@ -369,28 +313,17 @@ func deserializeSpendJournalEntry(serialized []byte, txns []*wire.MsgTx, view *U
 			// encountered that is not already in the utxo view it
 			// must have been the final spend and thus the extra
 			// data will be serialized with the stxo.  Otherwise,
-			// the txVersion must be pulled from the utxo entry.
+			// the version must be pulled from the utxo entry.
 			//
 			// Since the view is not actually modified as the stxos
 			// are read here and it's possible later entries
 			// reference earlier ones, an inflight map is maintained
-			// to detect this case and pull the tx txVersion from the
-			// entry that contains the txVersion information as just
+			// to detect this case and pull the tx version from the
+			// entry that contains the version information as just
 			// described.
-			var txVersion int32
-			originHash := &txIn.PreviousOutPoint.Hash
-			entry := view.LookupEntry(originHash)
-			if entry != nil {
-				txVersion = entry.TxVersion()
-			} else if idx, ok := stxoInFlight[*originHash]; ok {
-				txVersion = stxos[idx].txVersion
-			} else {
-				stxoInFlight[*originHash] = stxoIdx + 1
-			}
-
-			var err error
-			offset, err = decodeSpentTxOut(serialized, stxo,
-				txVersion, txIn.ValueIn, offset)
+			n, err := decodeSpentTxOut(serialized[offset:], stxo, txIn.ValueIn,
+				txIn.BlockHeight, txIn.BlockIndex)
+			offset += n
 			if err != nil {
 				return nil, errDeserialize(fmt.Sprintf("unable "+
 					"to decode stxo for %v: %v",
@@ -423,7 +356,6 @@ func serializeSpendJournalEntry(stxos []spentTxOut) []byte {
 		offset += putSpentTxOut(serialized[offset:], &stxos[i])
 	}
 
-	fmt.Printf("SERIALIZED %v STXOS %x\n", len(stxos), serialized)
 	return serialized
 }
 
@@ -432,7 +364,8 @@ func serializeSpendJournalEntry(stxos []spentTxOut) []byte {
 // view MUST have the utxos referenced by all of the transactions available for
 // the passed block since that information is required to reconstruct the spent
 // txouts.
-func dbFetchSpendJournalEntry(dbTx database.Tx, block *dcrutil.Block, parent *dcrutil.Block, view *UtxoViewpoint) ([]spentTxOut, error) {
+func dbFetchSpendJournalEntry(dbTx database.Tx, block *dcrutil.Block,
+	parent *dcrutil.Block, view *UtxoViewpoint) ([]spentTxOut, error) {
 	// Exclude the coinbase transaction since it can't spend anything.
 	spendBucket := dbTx.Metadata().Bucket(spendJournalBucketName)
 	serialized := spendBucket.Get(block.Sha()[:])
@@ -464,7 +397,6 @@ func dbFetchSpendJournalEntry(dbTx database.Tx, block *dcrutil.Block, parent *dc
 func dbPutSpendJournalEntry(dbTx database.Tx, blockHash *chainhash.Hash, stxos []spentTxOut) error {
 	spendBucket := dbTx.Metadata().Bucket(spendJournalBucketName)
 	serialized := serializeSpendJournalEntry(stxos)
-	fmt.Printf("INSERTING STXOS FOR BLOCK HASH %v: %v\n", blockHash, stxos)
 	return spendBucket.Put(blockHash[:], serialized)
 }
 
@@ -505,71 +437,87 @@ func dbRemoveSpendJournalEntry(dbTx database.Tx, blockHash *chainhash.Hash) erro
 //
 // -----------------------------------------------------------------------------
 
-// SerializeSize give the size of a serialized UTXO.
-func (u *utxoOutput) SerializeSize() int {
-	return serializeSizeVarInt(int64(compressTxOutAmount(uint64(u.amount)))) +
-		serializeVersionedScriptSize(u.pkScript)
-}
-
-// SerializeTo serializes and writes a utxoOutput to a given target slice at
-// the given offset. The function will panic if it attempts to write outside
-// the slice bounds.
-// utxoOutputs are serialized to the following:
+// -----------------------------------------------------------------------------
+// The unspent transaction output (utxo) set consists of an entry for each
+// transaction which contains a utxo serialized using a format that is highly
+// optimized to reduce space using domain specific compression algorithms.  This
+// format is a slightly modified version of the format used in Bitcoin Core.
 //
-//  <amount><scriptVersion><pkScriptLen><pkScript>
+// The serialized format is:
 //
-//   Field                Type     Size
-//   amount               VarInt   variable
-//   scriptVersion        uint16   variable
-//   pkScriptLen          VarInt   variable
-//   pkScript             []byte   variable
+//   <version><height><header code><unspentness bitmap>[<compressed txouts>,...]
 //
-func (u *utxoOutput) PutSerialized(target []byte, offset int) int {
-	// Write the amount.
-	offset = putTxOutAmount(target, u.amount, offset)
+//   Field                 Type     Size
+//   transaction version   VLQ      variable
+//   block height          VLQ      variable
+//   block index           VLQ      variable
+//   flags                 VLQ      variable (currently 1 byte)
+//   header code           VLQ      variable
+//   unspentness bitmap    []byte   variable
+//   compressed txouts
+//     compressed amount   VLQ      variable
+//     compressed version  VLQ      variable
+//     compressed script   []byte   variable
+//
+// The serialized header code format is:
+//   bit 0 - output zero is unspent
+//   bit 1 - output one is unspent
+//   bits 2-x - number of bytes in unspentness bitmap.  When both bits 1 and 2
+//     are unset, it encodes N-1 since there must be at least one unspent
+//     output.
+//
+// The rationale for the header code scheme is as follows:
+//   - Transactions which only pay to a single output and a change output are
+//     extremely common, thus an extra byte for the unspentness bitmap can be
+//     avoided for them by encoding those two outputs in the low order bits.
+//   - Given it is encoded as a VLQ which can encode values up to 127 with a
+//     single byte, that leaves 4 bits to represent the number of bytes in the
+//     unspentness bitmap while still only consuming a single byte for the
+//     header code.  In other words, an unspentness bitmap with up to 120
+//     transaction outputs can be encoded with a single-byte header code.
+//     This covers the vast majority of transactions.
+//   - Encoding N-1 bytes when both bits 0 and 1 are unset allows an additional
+//     8 outpoints to be encoded before causing the header code to require an
+//     additional byte.
+//
+// Example 1: TODO
+// -----------------------------------------------------------------------------
 
-	// Write the script.
-	offset = putVersionedScript(target, u.scriptVersion, u.pkScript, offset)
+// utxoEntryHeaderCode returns the calculated header code to be used when
+// serializing the provided utxo entry and the number of bytes needed to encode
+// the unspentness bitmap.
+func utxoEntryHeaderCode(entry *UtxoEntry, highestOutputIndex uint32) (uint64, int, error) {
+	// The first two outputs are encoded separately, so offset the index
+	// accordingly to calculate the correct number of bytes needed to encode
+	// up to the highest unspent output index.
+	numBitmapBytes := int((highestOutputIndex + 6) / 8)
 
-	return offset
-}
+	// As previously described, one less than the number of bytes is encoded
+	// when both output 0 and 1 are spent because there must be at least one
+	// unspent output.  Adjust the number of bytes to encode accordingly and
+	// encode the value by shifting it over 2 bits.
+	output0Unspent := !entry.IsOutputSpent(0)
+	output1Unspent := !entry.IsOutputSpent(1)
+	var numBitmapBytesAdjustment int
+	if !output0Unspent && !output1Unspent {
+		if numBitmapBytes == 0 {
+			return 0, 0, AssertError("attempt to serialize utxo " +
+				"header for fully spent transaction")
+		}
+		numBitmapBytesAdjustment = 1
+	}
+	headerCode := uint64(numBitmapBytes-numBitmapBytesAdjustment) << 2
 
-// FromSerialized deserializes a UTXO from the passed byte slice, starting
-// at index offset. It returns the final offset after reading.
-func (u *utxoOutput) FromSerialized(serialized []byte, offset int) (int, error) {
-	// Write the amount.
-	var amount int64
-	amount, offset = deserializeTxOutAmount(serialized, offset)
-
-	// Write the script.
-	var scriptVersion uint16
-	var pkScript []byte
-	var err error
-	scriptVersion, pkScript, offset, err = deserializeVersionedScript(serialized,
-		offset)
-	if err != nil {
-		return 0, err
+	// Set the output 0 and output 1 bits in the header code
+	// accordingly.
+	if output0Unspent {
+		headerCode |= 0x01 // bit 0
+	}
+	if output1Unspent {
+		headerCode |= 0x02 // bit 1
 	}
 
-	u.amount = amount
-	u.scriptVersion = scriptVersion
-	u.pkScript = pkScript
-	u.spent = false
-
-	return offset, nil
-}
-
-// NewUTXOFromSerialized instantiates a new utxoOutput, then fills in the data
-// using the serialized data and starting from offset. It returns the final
-// offset.
-func NewUTXOFromSerialized(serialized []byte, offset int) (*utxoOutput,
-	int, error) {
-	u := new(utxoOutput)
-
-	var err error
-	offset, err = u.FromSerialized(serialized, offset)
-
-	return u, offset, err
+	return headerCode, numBitmapBytes, nil
 }
 
 // serializeUtxoEntry returns the entry serialized to a format that is suitable
@@ -581,71 +529,65 @@ func serializeUtxoEntry(entry *UtxoEntry) ([]byte, error) {
 	}
 
 	// Determine the output order by sorting the sparse output index keys.
-	outputOrdered := make([]int, 0, len(entry.sparseOutputs))
+	outputOrder := make([]int, 0, len(entry.sparseOutputs))
 	for outputIndex := range entry.sparseOutputs {
-		outputOrdered = append(outputOrdered, int(outputIndex))
+		outputOrder = append(outputOrder, int(outputIndex))
 	}
-	sort.Ints(outputOrdered)
+	sort.Ints(outputOrder)
 
-	// Create the bitmap defining the spentness, then encode the
-	// spentness information into it. We will copy it into the
-	// final slice later.
-	bitmap := bitset.NewBytes(int(entry.outputsLen))
-	for i := uint32(0); i < entry.outputsLen; i++ {
-		utxo, ok := entry.sparseOutputs[i]
-		// Pruned or missing from deserializing.
-		if !ok {
-			bitmap.Set(int(i))
-			continue
-		}
-
-		// Actually spent.
-		if utxo.spent {
-			bitmap.Set(int(i))
-		}
+	// Encode the header code and determine the number of bytes the
+	// unspentness bitmap needs.
+	highIndex := uint32(outputOrder[len(outputOrder)-1])
+	headerCode, numBitmapBytes, err := utxoEntryHeaderCode(entry, highIndex)
+	if err != nil {
+		return nil, err
 	}
 
-	// Get the size of the byte slice required to accomodate
-	// the entirety of the serialized unspent transaction.
-	size := serializeSizeVarInt(int64(entry.txVersion)) +
-		serializeSizeVarInt(int64(entry.height)) +
-		serializeSizeVarInt(int64(entry.index)) +
-		serializeSizeVarInt(int64(entry.outputsLen)) +
-		len(bitmap) +
-		1 // flags
-
-	for _, outputIndex := range outputOrdered {
+	// Calculate the size needed to serialize the entry.
+	size := serializeSizeVLQ(uint64(entry.version)) +
+		serializeSizeVLQ(uint64(entry.blockHeight)) +
+		serializeSizeVLQ(headerCode) + numBitmapBytes
+	for _, outputIndex := range outputOrder {
 		out := entry.sparseOutputs[uint32(outputIndex)]
 		if out.spent {
 			continue
 		}
-		size += out.SerializeSize()
+		size += compressedTxOutSize(uint64(out.amount), out.pkScript,
+			entry.version, out.compressed)
 	}
 
-	// Allocate the byte slice and begin serializing.
+	// Serialize the version, block height of the containing transaction,
+	// and header code.
 	serialized := make([]byte, size)
-	offset := putVarInt(serialized, int64(entry.txVersion), 0)
-	offset = putVarInt(serialized, int64(entry.height), offset)
-	offset = putVarInt(serialized, int64(entry.index), offset)
-	offset = putVarInt(serialized, int64(entry.outputsLen), offset)
+	offset := putVLQ(serialized, uint64(entry.version))
+	offset += putVLQ(serialized[offset:], uint64(entry.blockHeight))
+	offset += putVLQ(serialized[offset:], headerCode)
 
-	copy(serialized[offset:], bitmap[:])
-	offset += len(bitmap)
-
-	// Insert the flags.
-	serialized[offset] = encodeFlags(entry.isCoinBase, entry.hasExpiry,
-		entry.txType)
-	offset++
+	// Serialize the unspentness bitmap.
+	for i := uint32(0); i < uint32(numBitmapBytes); i++ {
+		unspentBits := byte(0)
+		for j := uint32(0); j < 8; j++ {
+			// The first 2 outputs are encoded via the header code,
+			// so adjust the output index accordingly.
+			if !entry.IsOutputSpent(2 + i*8 + j) {
+				unspentBits |= 1 << uint8(j)
+			}
+		}
+		serialized[offset] = unspentBits
+		offset++
+	}
 
 	// Serialize the compressed unspent transaction outputs.  Outputs that
 	// are already compressed are serialized without modifications.
-	for _, outputIndex := range outputOrdered {
+	for _, outputIndex := range outputOrder {
 		out := entry.sparseOutputs[uint32(outputIndex)]
 		if out.spent {
 			continue
 		}
 
-		offset = out.PutSerialized(serialized, offset)
+		offset += putCompressedTxOut(serialized[offset:],
+			uint64(out.amount), out.pkScript, entry.version,
+			out.compressed)
 	}
 
 	return serialized, nil
@@ -655,73 +597,100 @@ func serializeUtxoEntry(entry *UtxoEntry) ([]byte, error) {
 // slice into a new UtxoEntry using a format that is suitable for long-term
 // storage.  The format is described in detail above.
 func deserializeUtxoEntry(serialized []byte) (*UtxoEntry, error) {
-	// Deserialize the txVersion.
-	txVersion64, offset := deserializeVarInt(serialized, 0)
+	// Deserialize the version.
+	version, bytesRead := deserializeVLQ(serialized)
+	offset := bytesRead
 	if offset >= len(serialized) {
-		return nil, errDeserialize("unexpected end of data after txVersion")
+		return nil, errDeserialize("unexpected end of data after version")
 	}
 
-	// Deserialize the height.
-	var height64 int64
-	height64, offset = deserializeVarInt(serialized, offset)
+	// Deserialize the block height.
+	blockHeight, bytesRead := deserializeVLQ(serialized[offset:])
+	offset += bytesRead
 	if offset >= len(serialized) {
 		return nil, errDeserialize("unexpected end of data after height")
 	}
 
-	// Deserialize the index.
-	var index64 int64
-	index64, offset = deserializeVarInt(serialized, offset)
+	// Deserialize the header code.
+	code, bytesRead := deserializeVLQ(serialized[offset:])
+	offset += bytesRead
 	if offset >= len(serialized) {
-		return nil, errDeserialize("unexpected end of data after index")
+		return nil, errDeserialize("unexpected end of data after header")
 	}
 
-	// Deserialize the number of outputs.
-	var outputsLen64 int64
-	outputsLen64, offset = deserializeVarInt(serialized, offset)
-	if offset >= len(serialized) {
-		return nil, errDeserialize("unexpected end of data after num outputs")
+	// Decode the header code.
+	//
+	// Bit 0 indicates whether the containing transaction is a coinbase.
+	// Bit 1 indicates output 0 is unspent.
+	// Bit 2 indicates output 1 is unspent.
+	// Bits 3-x encodes the number of non-zero unspentness bitmap bytes that
+	// follow.  When both output 0 and 1 are spent, it encodes N-1.
+	isCoinBase := code&0x01 != 0
+	output0Unspent := code&0x02 != 0
+	output1Unspent := code&0x04 != 0
+	numBitmapBytes := code >> 3
+	if !output0Unspent && !output1Unspent {
+		numBitmapBytes++
 	}
-
-	// Create the empty bitmap.
-	bitmap := bitset.NewBytes(int(outputsLen64))
 
 	// Ensure there are enough bytes left to deserialize the unspentness
 	// bitmap.
-	if len(serialized[offset:]) < len(bitmap) {
+	if uint64(len(serialized[offset:])) < numBitmapBytes {
 		return nil, errDeserialize("unexpected end of data for " +
 			"unspentness bitmap")
 	}
-	copy(bitmap[:], serialized[offset:])
-	offset += len(bitmap)
-
-	// Decode the flags.
-	isCoinBase, hasExpiry, txType := decodeFlags(serialized[offset])
-	offset += 1
 
 	// Create a new utxo entry with the details deserialized above to house
 	// all of the utxos.
-	entry := newUtxoEntry(
-		int32(txVersion64),
-		uint32(height64),
-		uint32(index64),
-		uint32(outputsLen64),
-		isCoinBase,
-		hasExpiry,
-		txType,
-	)
+	entry := newUtxoEntry(int32(version), isCoinBase, int32(blockHeight))
+
+	// Add sparse output for unspent outputs 0 and 1 as needed based on the
+	// details provided by the header code.
+	var outputIndexes []uint32
+	if output0Unspent {
+		outputIndexes = append(outputIndexes, 0)
+	}
+	if output1Unspent {
+		outputIndexes = append(outputIndexes, 1)
+	}
 
 	// Decode the unspentness bitmap adding a sparse output for each unspent
 	// output.
-	for i := int(0); i < int(outputsLen64); i++ {
-		if !bitmap.Get(i) { // if unspent
-			var utxo *utxoOutput
-			var err error
-			utxo, offset, err = NewUTXOFromSerialized(serialized, offset)
-			if err != nil {
-				return nil, err
+	for i := uint32(0); i < uint32(numBitmapBytes); i++ {
+		unspentBits := serialized[offset]
+		for j := uint32(0); j < 8; j++ {
+			if unspentBits&0x01 != 0 {
+				// The first 2 outputs are encoded via the
+				// header code, so adjust the output number
+				// accordingly.
+				outputNum := 2 + i*8 + j
+				outputIndexes = append(outputIndexes, outputNum)
 			}
+			unspentBits >>= 1
+		}
+		offset++
+	}
 
-			entry.sparseOutputs[uint32(i)] = utxo
+	// Decode and add all of the utxos.
+	for i, outputIndex := range outputIndexes {
+		// Decode the next utxo.  The script and amount fields of the
+		// utxo output are left compressed so decompression can be
+		// avoided on those that are not accessed.  This is done since
+		// it is quite common for a redeeming transaction to only
+		// reference a single utxo from a referenced transaction.
+		compAmount, compScript, bytesRead, err := decodeCompressedTxOut(
+			serialized[offset:], int32(version))
+		if err != nil {
+			return nil, errDeserialize(fmt.Sprintf("unable to "+
+				"decode utxo at index %d: %v", i, err))
+		}
+		offset += bytesRead
+
+		entry.sparseOutputs[outputIndex] = &utxoOutput{
+			spent:      false,
+			compressed: true,
+			pkScript:   compScript,
+			amount:     int64(compAmount),
 		}
 	}
 
@@ -733,7 +702,7 @@ func deserializeUtxoEntry(serialized []byte) (*UtxoEntry, error) {
 //
 // When there is no entry for the provided hash, nil will be returned for the
 // both the entry and the error.
-func dbFetchUtxoEntry(dbTx database.Tx, hash *chainhash.Hash) (*UtxoEntry, error) {
+func dbFetchUtxoEntry(dbTx database.Tx, hash *wire.ShaHash) (*UtxoEntry, error) {
 	// Fetch the unspent transaction output information for the passed
 	// transaction hash.  Return now when there is no entry.
 	utxoBucket := dbTx.Metadata().Bucket(utxoSetBucketName)

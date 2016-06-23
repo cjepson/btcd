@@ -60,24 +60,40 @@ const (
 // output is not uncompressed until the first time it is accessed.  This
 // provides a mechanism to avoid the overhead of needlessly uncompressing all
 // outputs for a given utxo entry at the time of load.
+//
+// The struct is aligned for memory efficiency.
 type utxoOutput struct {
 	pkScript      []byte // The public key script for the output.
 	amount        int64  // The amount of the output.
-	scriptVersion uint16 // The script version.
+	scriptVersion uint16 // The script version
+	compressed    bool   // The amount and public key script are compressed..
 	spent         bool   // Output is spent.
+}
+
+// maybeDecompress decompresses the amount and public key script fields of the
+// utxo and marks it decompressed if needed.
+func (o *utxoOutput) maybeDecompress(compressionVersion uint32) {
+	// Nothing to do if it's not compressed.
+	if !o.compressed {
+		return
+	}
+
+	o.pkScript = decompressScript(o.pkScript, compressionVersion)
+	o.compressed = false
 }
 
 // UtxoEntry contains contextual information about an unspent transaction such
 // as whether or not it is a coinbase transaction, which block it was found in,
 // and the spent status of its outputs.
+//
+// The struct is aligned for memory efficiency.
 type UtxoEntry struct {
 	sparseOutputs map[uint32]*utxoOutput // Sparse map of unspent outputs.
 
-	txVersion  int32        // The tx version of this tx.
-	height     uint32       // Height of block containing tx.
-	index      uint32       // Index of containing tx in block.
-	outputsLen uint32       // The number of outputs in this tx.
-	txType     stake.TxType // The stake type of the transaction.
+	txVersion int32        // The tx version of this tx.
+	height    uint32       // Height of block containing tx.
+	index     uint32       // Index of containing tx in block.
+	txType    stake.TxType // The stake type of the transaction.
 
 	isCoinBase bool // Whether entry is a coinbase tx.
 	hasExpiry  bool // Whether entry has an expiry.
