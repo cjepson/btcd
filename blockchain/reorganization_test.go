@@ -5,7 +5,6 @@
 
 package blockchain_test
 
-/*
 import (
 	"bytes"
 	"compress/bzip2"
@@ -129,4 +128,3 @@ func TestReorganization(t *testing.T) {
 	}
 	return
 }
-*/

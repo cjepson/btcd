@@ -1038,7 +1038,7 @@ func (b *BlockChain) CheckBlockStakeSanity(tixStore TicketStore,
 			numSSGenTx++
 
 			// Check and store the vote for TxTreeRegular.
-			ssGenVoteBits := stake.GetSSGenVoteBits(staketx)
+			ssGenVoteBits := stake.SSGenVoteBits(staketx)
 			if dcrutil.IsFlagSet16(ssGenVoteBits, dcrutil.BlockValid) {
 				voteYea++
 			} else {
@@ -1062,7 +1062,7 @@ func (b *BlockChain) CheckBlockStakeSanity(tixStore TicketStore,
 
 			// 3. Check to make sure that the SSGen tx votes on the parent block of
 			// the block in which it is included.
-			votedOnSha, votedOnHeight, err := stake.GetSSGenBlockVotedOn(staketx)
+			votedOnSha, votedOnHeight, err := stake.SSGenBlockVotedOn(staketx)
 			if err != nil {
 				errStr := fmt.Sprintf("unexpected vote tx decode error: %v",
 					err.Error())
@@ -1310,7 +1310,7 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
 		}
 
 		_, _, sstxOutAmts, sstxChangeAmts, _, _ := stake.TxSStxStakeOutputInfo(tx)
-		_, sstxOutAmtsCalc, err := stake.GetSStxNullOutputAmounts(sstxInAmts,
+		_, sstxOutAmtsCalc, err := stake.SStxNullOutputAmounts(sstxInAmts,
 			sstxChangeAmts,
 			msgTx.TxOut[0].Value)
 		if err != nil {
@@ -1319,8 +1319,9 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
 
 		err = stake.VerifySStxAmounts(sstxOutAmts, sstxOutAmtsCalc)
 		if err != nil {
+			fmt.Printf("msgTx.TxOut[0].Value %v\n", msgTx.TxOut[0].Value)
 			errStr := fmt.Sprintf("SStx output commitment amounts were not the "+
-				"same as calculated amounts; Error returned %v", err)
+				"same as calculated amounts: %v", err)
 			return 0, ruleError(ErrSStxCommitment, errStr)
 		}
 	}
@@ -1356,7 +1357,7 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
 		// Calculate the theoretical stake vote subsidy by extracting the vote
 		// height. Should be impossible because IsSSGen requires this byte string
 		// to be a certain number of bytes.
-		_, heightVotingOn, err := stake.GetSSGenBlockVotedOn(tx)
+		_, heightVotingOn, err := stake.SSGenBlockVotedOn(tx)
 		if err != nil {
 			errStr := fmt.Sprintf("Could not parse SSGen block vote information "+
 				"from SSGen %v; Error returned %v",
@@ -1403,8 +1404,18 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
 		}
 
 		minOutsSStx := convertUtxosToMinimalOutputs(utxoEntrySstx)
+		if len(minOutsSStx) == 0 {
+			return 0, AssertError("missing stake extra data for ticket used " +
+				"as input for vote")
+		}
 		sstxPayTypes, sstxPkhs, sstxAmts, _, sstxRules, sstxLimits :=
 			stake.SStxStakeOutputInfo(minOutsSStx)
+			/*
+				fmt.Printf("len minouts %v\n", len(minOutsSStx))
+				for i := range minOutsSStx {
+					fmt.Printf("amt %v scrver %v scr %x\n", minOutsSStx[i].Value, minOutsSStx[i].Version, minOutsSStx[i].PkScript)
+				}
+			*/
 
 		ssgenPayTypes, ssgenPkhs, ssgenAmts, err :=
 			stake.TxSSGenStakeOutputInfo(tx, chainParams)
@@ -1605,7 +1616,7 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
 		// Inputs won't exist for stakebase tx, so ignore them.
 		if isSSGen && idx == 0 {
 			// However, do add the reward amount.
-			_, heightVotingOn, _ := stake.GetSSGenBlockVotedOn(tx)
+			_, heightVotingOn, _ := stake.SSGenBlockVotedOn(tx)
 			stakeVoteSubsidy := CalcStakeVoteSubsidy(int64(heightVotingOn),
 				chainParams)
 			totalAtomIn += stakeVoteSubsidy
@@ -2553,7 +2564,7 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 
 	// Rollback the final tx tree regular so that we don't write it to
 	// database.
-	if node.height > 1 {
+	if node.height > 1 && stxos != nil {
 		idx, err := utxoView.disconnectTransactionSlice(block.Transactions(),
 			node.height, stxos)
 		if err != nil {
@@ -2598,7 +2609,7 @@ func (b *BlockChain) CheckConnectBlock(block *dcrutil.Block) error {
 	var voteBitsStake []uint16
 	for _, stx := range block.STransactions() {
 		if is, _ := stake.IsSSGen(stx); is {
-			vb := stake.GetSSGenVoteBits(stx)
+			vb := stake.SSGenVoteBits(stx)
 			voteBitsStake = append(voteBitsStake, vb)
 		}
 	}

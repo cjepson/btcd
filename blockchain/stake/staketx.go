@@ -504,7 +504,7 @@ func SSGenStakeOutputInfo(outs []*MinimalOutput, params *chaincfg.Params) ([]boo
 
 // GetSSGenBlockVotedOn takes an SSGen tx and returns the block voted on in the
 // first OP_RETURN by hash and height.
-func GetSSGenBlockVotedOn(tx *dcrutil.Tx) (chainhash.Hash, uint32, error) {
+func SSGenBlockVotedOn(tx *dcrutil.Tx) (chainhash.Hash, uint32, error) {
 	msgTx := tx.MsgTx()
 
 	// Get the block header hash.
@@ -521,7 +521,7 @@ func GetSSGenBlockVotedOn(tx *dcrutil.Tx) (chainhash.Hash, uint32, error) {
 
 // GetSSGenVoteBits takes an SSGen tx as input and scans through its
 // outputs, returning the VoteBits of the index 1 output.
-func GetSSGenVoteBits(tx *dcrutil.Tx) uint16 {
+func SSGenVoteBits(tx *dcrutil.Tx) uint16 {
 	msgTx := tx.MsgTx()
 
 	votebits := binary.LittleEndian.Uint16(msgTx.TxOut[1].PkScript[2:4])
@@ -573,13 +573,13 @@ func TxSSRtxStakeOutputInfo(tx *dcrutil.Tx, params *chaincfg.Params) ([]bool,
 	return isP2SH, addresses, amounts, nil
 }
 
-// GetSStxNullOutputAmounts takes an array of input amounts, change amounts, and a
+// SStxNullOutputAmounts takes an array of input amounts, change amounts, and a
 // ticket purchase amount, calculates the adjusted proportion from the purchase
 // amount, stores it in an array, then returns the array. That is, for any given
 // SStx, this function calculates the proportional outputs that any single user
 // should receive.
 // Returns: (1) Fees (2) Output Amounts (3) Error
-func GetSStxNullOutputAmounts(amounts []int64,
+func SStxNullOutputAmounts(amounts []int64,
 	changeAmounts []int64,
 	amountTicket int64) (int64, []int64, error) {
 	lengthAmounts := len(amounts)
@@ -685,7 +685,7 @@ func VerifySStxAmounts(sstxAmts []int64, sstxCalcAmts []int64) error {
 
 	for idx, amt := range sstxCalcAmts {
 		if !(amt == sstxAmts[idx]) {
-			errStr := fmt.Sprintf("SStx verify error: at index %v incongruent"+
+			errStr := fmt.Sprintf("SStx verify error: at index %v incongruent "+
 				"amt %v in SStx calculated reward and amt %v in "+
 				"SStx", idx, amt, sstxAmts[idx])
 			return stakeRuleError(ErrVerSStxAmts, errStr)

@@ -224,7 +224,7 @@ func (b *BlockChain) maybeAcceptBlock(block *dcrutil.Block,
 	var voteBitsStake []uint16
 	for _, stx := range block.STransactions() {
 		if is, _ := stake.IsSSGen(stx); is {
-			vb := stake.GetSSGenVoteBits(stx)
+			vb := stake.SSGenVoteBits(stx)
 			voteBitsStake = append(voteBitsStake, vb)
 		}
 	}

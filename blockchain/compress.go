@@ -564,11 +564,12 @@ func compressedTxOutSize(amount uint64, scriptVersion uint16, pkScript []byte,
 		return scriptVersionSize + len(pkScript)
 	}
 	if preCompressed && hasAmount {
-		return scriptVersionSize + serializeSizeVLQ(amount) + len(pkScript)
+		return scriptVersionSize + serializeSizeVLQ(compressTxOutAmount(amount)) +
+			len(pkScript)
 	}
 	if !preCompressed && !hasAmount {
-		return scriptVersionSize + serializeSizeVLQ(compressTxOutAmount(amount)) +
-			compressedScriptSize(scriptVersion, pkScript, compressionVersion)
+		return scriptVersionSize + compressedScriptSize(scriptVersion,
+			pkScript, compressionVersion)
 	}
 
 	// if !preCompressed && hasAmount
@@ -588,7 +589,7 @@ func putCompressedTxOut(target []byte, amount uint64, scriptVersion uint16,
 	pkScript []byte, compressionVersion uint32, preCompressed bool,
 	hasAmount bool) int {
 	if preCompressed && hasAmount {
-		offset := putVLQ(target, amount)
+		offset := putVLQ(target, compressTxOutAmount(amount))
 		offset += putVLQ(target[offset:], uint64(scriptVersion))
 		copy(target[offset:], pkScript)
 		return offset + len(pkScript)
@@ -607,9 +608,7 @@ func putCompressedTxOut(target []byte, amount uint64, scriptVersion uint16,
 
 	// if !preCompressed && hasAmount
 	offset := putVLQ(target, compressTxOutAmount(amount))
-	fmt.Printf("wrote %x for amount\n", target[:offset])
 	offset += putVLQ(target[offset:], uint64(scriptVersion))
-	fmt.Printf("wrote %x for scriptversion\n", target[:offset])
 	offset += putCompressedScript(target[offset:], scriptVersion, pkScript,
 		compressionVersion)
 	return offset
@@ -701,12 +700,6 @@ const (
 // encodeFlags encodes transaction flags into a single byte.
 func encodeFlags(isCoinBase bool, hasExpiry bool, txType stake.TxType,
 	fullySpent bool) byte {
-	// Don't bother to encode any extra flag information if the tx
-	// was not fully spent here.
-	if !fullySpent {
-		return 0x00
-	}
-
 	b := uint8(txType)
 	b <<= txTypeShift
 

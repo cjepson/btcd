@@ -257,14 +257,14 @@ func DebugMsgTxString(msgTx *wire.MsgTx) string {
 
 		// SSGen block/block height OP_RETURN.
 		if isSSGen && i == 0 {
-			blkHash, blkHeight, _ := stake.GetSSGenBlockVotedOn(tx)
+			blkHash, blkHeight, _ := stake.SSGenBlockVotedOn(tx)
 			str = fmt.Sprintf("SSGen block hash voted on: %v, height: %v\n",
 				blkHash, blkHeight)
 			buffer.WriteString(str)
 		}
 
 		if isSSGen && i == 1 {
-			vb := stake.GetSSGenVoteBits(tx)
+			vb := stake.SSGenVoteBits(tx)
 			str = fmt.Sprintf("SSGen vote bits: %v\n", vb)
 			buffer.WriteString(str)
 		}

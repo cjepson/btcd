@@ -268,9 +268,24 @@ type spentTxOut struct {
 // because they're already encoded into the transactions, so skip them when
 // determining the serialization size.
 func spentTxOutSerializeSize(stxo *spentTxOut) int {
-	size := serializeSizeVLQ(uint64(stxo.txVersion))
-	return size + compressedTxOutSize(uint64(stxo.amount), stxo.scriptVersion,
+	flags := encodeFlags(stxo.isCoinBase, stxo.hasExpiry, stxo.txType,
+		stxo.txFullySpent)
+	size := serializeSizeVLQ(uint64(flags))
+
+	// false below indicates that the txOut does not specify an amount.
+	size += compressedTxOutSize(uint64(stxo.amount), stxo.scriptVersion,
 		stxo.pkScript, currentCompressionVersion, stxo.compressed, false)
+
+	// The transaction was fully spent, so we need to store some extra
+	// data for UTX resurrection.
+	if flags != 0 {
+		size += serializeSizeVLQ(uint64(stxo.txVersion))
+		if stxo.txType == stake.TxTypeSStx {
+			size += len(stxo.stakeExtra)
+		}
+	}
+
+	return size
 }
 
 // putSpentTxOut serializes the passed stxo according to the format described
@@ -285,8 +300,15 @@ func putSpentTxOut(target []byte, stxo *spentTxOut) int {
 	// false below indicates that the txOut does not specify an amount.
 	offset += putCompressedTxOut(target[offset:], 0, stxo.scriptVersion,
 		stxo.pkScript, currentCompressionVersion, stxo.compressed, false)
+
+	// The transaction was fully spent, so we need to store some extra
+	// data for UTX resurrection.
 	if flags != 0 {
 		offset += putVLQ(target[offset:], uint64(stxo.txVersion))
+		if stxo.txType == stake.TxTypeSStx {
+			copy(target[offset:], stxo.stakeExtra)
+			offset += len(stxo.stakeExtra)
+		}
 	}
 	return offset
 }
@@ -356,6 +378,13 @@ func decodeSpentTxOut(serialized []byte, stxo *spentTxOut, amount int64,
 		}
 
 		stxo.txVersion = int32(txVersion)
+
+		if stxo.txType == stake.TxTypeSStx {
+			stakeExtra := make([]byte, len(serialized[offset:]))
+			copy(stakeExtra, serialized[offset:])
+			stxo.stakeExtra = stakeExtra
+			offset += len(serialized[offset:])
+		}
 	}
 
 	return offset, nil
@@ -538,6 +567,12 @@ func dbRemoveSpendJournalEntry(dbTx database.Tx, blockHash *chainhash.Hash) erro
 //     compressed script   []byte   variable
 //   stakeExtra            []byte   variable
 //
+// The serialized flags code format is:
+//   bit  0   - containing transaction is a coinbase
+//   bit  1   - containing transaction has an expiry
+//   bits 2-3 - transaction type
+//   bits 4-7 - unused
+//
 // The serialized header code format is:
 //   bit 0 - output zero is unspent
 //   bit 1 - output one is unspent
@@ -558,12 +593,6 @@ func dbRemoveSpendJournalEntry(dbTx database.Tx, blockHash *chainhash.Hash) erro
 //   - Encoding N-1 bytes when both bits 0 and 1 are unset allows an additional
 //     8 outpoints to be encoded before causing the header code to require an
 //     additional byte.
-//
-// The serialized flags code format is:
-//   bit  0   - containing transaction is a coinbase
-//   bit  1   - containing transaction has an expiry
-//   bits 2-3 - transaction type
-//   bits 4-7 - unused
 //
 // The stake extra field contains minimally encoded outputs for all
 // consensus-related outputs in the stake transaction. It is only
@@ -813,6 +842,14 @@ func deserializeUtxoEntry(serialized []byte) (*UtxoEntry, error) {
 			pkScript:      compScript,
 			amount:        amount,
 		}
+	}
+
+	// Copy the stake extra data if this was a ticket.
+	if entry.txType == stake.TxTypeSStx {
+		stakeExtra := make([]byte, len(serialized[offset:]))
+		copy(stakeExtra, serialized[offset:])
+		entry.stakeExtra = stakeExtra
+		offset += len(serialized[offset:])
 	}
 
 	return entry, nil

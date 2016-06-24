@@ -769,7 +769,6 @@ func (view *UtxoViewpoint) disconnectTransactions(block *dcrutil.Block,
 // the best hash for the view to the block before the passed block.
 func (view *UtxoViewpoint) disconnectTransactionSlice(transactions []*dcrutil.Tx,
 	height int64, stxosPtr *[]spentTxOut) (int, error) {
-
 	if stxosPtr == nil {
 		return 0, AssertError("passed pointer to non-existing stxos slice")
 	}
@@ -823,9 +822,15 @@ func (view *UtxoViewpoint) disconnectTransactionSlice(transactions []*dcrutil.Tx
 			originIndex := txIn.PreviousOutPoint.Index
 			entry := view.entries[*originHash]
 			if entry == nil {
-				entry = newUtxoEntry(tx.MsgTx().Version,
-					uint32(height), uint32(txIdx), isCoinbase,
-					tx.MsgTx().Expiry != 0, stake.DetermineTxType(tx))
+				txType := stake.DetermineTxType(tx)
+				entry = newUtxoEntry(tx.MsgTx().Version, uint32(height),
+					uint32(txIdx), isCoinbase, tx.MsgTx().Expiry != 0, txType)
+				if txType == stake.TxTypeSStx {
+					stakeExtra := make([]byte,
+						serializeSizeForMinimalOutputs(tx))
+					putTxToMinimalOutputs(stakeExtra, tx)
+					entry.stakeExtra = stakeExtra
+				}
 				view.entries[*originHash] = entry
 			}
 
