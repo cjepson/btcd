@@ -28,7 +28,7 @@ func TestVLQ(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		val        int64
+		val        uint64
 		serialized []byte
 	}{
 		{0, hexToBytes("00")},
@@ -57,7 +57,7 @@ func TestVLQ(t *testing.T) {
 	for _, test := range tests {
 		// Ensure the function to calculate the serialized size without
 		// actually serializing the value is calculated properly.
-		gotSize := serializeSizeVarInt(test.val)
+		gotSize := serializeSizeVLQ(test.val)
 		if gotSize != len(test.serialized) {
 			t.Errorf("serializeSizeVLQ: did not get expected size "+
 				"for %d - got %d, want %d", test.val, gotSize,
@@ -67,7 +67,7 @@ func TestVLQ(t *testing.T) {
 
 		// Ensure the value serializes to the expected bytes.
 		gotBytes := make([]byte, gotSize)
-		gotBytesWritten := putVarInt(gotBytes, test.val, 0)
+		gotBytesWritten := putVLQ(gotBytes, test.val)
 		if !bytes.Equal(gotBytes, test.serialized) {
 			t.Errorf("putVLQUnchecked: did not get expected bytes "+
 				"for %d - got %x, want %x", test.val, gotBytes,
@@ -83,7 +83,7 @@ func TestVLQ(t *testing.T) {
 
 		// Ensure the serialized bytes deserialize to the expected
 		// value.
-		gotVal, gotBytesRead := deserializeVarInt(test.serialized, 0)
+		gotVal, gotBytesRead := deserializeVLQ(test.serialized)
 		if gotVal != test.val {
 			t.Errorf("deserializeVLQ: did not get expected value "+
 				"for %x - got %d, want %d", test.serialized,

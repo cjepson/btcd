@@ -89,6 +89,7 @@ func (o *utxoOutput) maybeDecompress(compressionVersion uint32) {
 // The struct is aligned for memory efficiency.
 type UtxoEntry struct {
 	sparseOutputs map[uint32]*utxoOutput // Sparse map of unspent outputs.
+	stakeExtra    []byte                 // Extra data for the staking system.
 
 	txVersion int32        // The tx version of this tx.
 	height    uint32       // Height of block containing tx.
@@ -128,12 +129,6 @@ func (entry *UtxoEntry) BlockHeight() int64 {
 // utxo entry represents.
 func (entry *UtxoEntry) BlockIndex() uint32 {
 	return entry.index
-}
-
-// outputsLen returns the number of outputs in the transaction the
-// utxo entry represents.
-func (entry *UtxoEntry) OutputsLen() uint32 {
-	return entry.outputsLen
 }
 
 // outputsLen returns the transaction type of the transaction the utxo entry
@@ -229,19 +224,20 @@ func (entry *UtxoEntry) PkScriptByIndex(outputIndex uint32) []byte {
 		return nil
 	}
 
+	// Ensure the output is decompressed before returning the script.
+	output.maybeDecompress(currentCompressionVersion)
 	return output.pkScript
 }
 
 // newUtxoEntry returns a new unspent transaction output entry with the provided
 // coinbase flag and block height ready to have unspent outputs added.
-func newUtxoEntry(txVersion int32, height uint32, index uint32, outputsLen uint32,
-	isCoinBase bool, hasExpiry bool, tt stake.TxType) *UtxoEntry {
+func newUtxoEntry(txVersion int32, height uint32, index uint32, isCoinBase bool,
+	hasExpiry bool, tt stake.TxType) *UtxoEntry {
 	return &UtxoEntry{
 		sparseOutputs: make(map[uint32]*utxoOutput),
 		txVersion:     txVersion,
 		height:        height,
 		index:         index,
-		outputsLen:    outputsLen,
 		isCoinBase:    isCoinBase,
 		hasExpiry:     hasExpiry,
 		txType:        tt,
@@ -320,10 +316,14 @@ func (view *UtxoViewpoint) AddTxOuts(tx *dcrutil.Tx, blockHeight int64,
 	// add a new entry for it to the view.
 	entry := view.LookupEntry(tx.Sha())
 	if entry == nil {
+		txType := stake.DetermineTxType(tx)
 		entry = newUtxoEntry(tx.MsgTx().Version, uint32(blockHeight),
-			blockIndex, uint32(len(tx.MsgTx().TxOut)),
-			IsCoinBase(tx), tx.MsgTx().Expiry != 0,
-			stake.DetermineTxType(tx))
+			blockIndex, IsCoinBase(tx), tx.MsgTx().Expiry != 0, txType)
+		if txType == stake.TxTypeSStx {
+			stakeExtra := make([]byte, serializeSizeForMinimalOutputs(tx))
+			putTxToMinimalOutputs(stakeExtra, tx)
+			entry.stakeExtra = stakeExtra
+		}
 		view.entries[*tx.Sha()] = entry
 	} else {
 		entry.height = uint32(blockHeight)
@@ -335,7 +335,7 @@ func (view *UtxoViewpoint) AddTxOuts(tx *dcrutil.Tx, blockHeight int64,
 	// provably unspendable.
 	for txOutIdx, txOut := range tx.MsgTx().TxOut {
 		// TODO allow pruning of stake utxs after all other outputs are spent
-		if txscript.IsUnspendable(txOut.Value, txOut.PkScript) && entry.txType == stake.TxTypeRegular {
+		if txscript.IsUnspendable(txOut.Value, txOut.PkScript) {
 			continue
 		}
 
@@ -416,7 +416,6 @@ func (view *UtxoViewpoint) connectTransaction(tx *dcrutil.Tx, blockHeight int64,
 			stxo.txVersion = entry.TxVersion()
 			stxo.height = uint32(entry.BlockHeight())
 			stxo.index = entry.BlockIndex()
-			stxo.outputsLen = entry.OutputsLen()
 			stxo.isCoinBase = entry.IsCoinBase()
 			stxo.hasExpiry = entry.HasExpiry()
 			stxo.txType = entry.txType
@@ -572,6 +571,9 @@ func countSpentOutputsPerTree(block *dcrutil.Block, parent *dcrutil.Block) (int,
 // created by the passed block, restoring all utxos the transactions spent by
 // using the provided spent txo information, and setting the best hash for the
 // view to the block before the passed block.
+//
+// This function will ONLY work correctly for a single transaction tree at a
+// time because of index tracking.
 func (view *UtxoViewpoint) disconnectTransactions(block *dcrutil.Block,
 	parent *dcrutil.Block, stxos []spentTxOut) error {
 	fmt.Printf("disconnect block %v, %v\n", block.Sha(), block.Height())
@@ -602,8 +604,12 @@ func (view *UtxoViewpoint) disconnectTransactions(block *dcrutil.Block,
 		entry := view.entries[*tx.Sha()]
 		if entry == nil {
 			entry = newUtxoEntry(tx.MsgTx().Version, uint32(block.Height()),
-				uint32(txIdx), uint32(len(tx.MsgTx().TxOut)), false,
-				tx.MsgTx().Expiry != 0, tt)
+				uint32(txIdx), IsCoinBase(tx), tx.MsgTx().Expiry != 0, tt)
+			if tt == stake.TxTypeSStx {
+				stakeExtra := make([]byte, serializeSizeForMinimalOutputs(tx))
+				putTxToMinimalOutputs(stakeExtra, tx)
+				entry.stakeExtra = stakeExtra
+			}
 			view.entries[*tx.Sha()] = entry
 		}
 		entry.modified = true
@@ -633,8 +639,12 @@ func (view *UtxoViewpoint) disconnectTransactions(block *dcrutil.Block,
 			entry := view.entries[*originHash]
 			if entry == nil {
 				entry = newUtxoEntry(tx.MsgTx().Version, uint32(block.Height()),
-					uint32(txIdx), uint32(len(tx.MsgTx().TxOut)), false,
-					tx.MsgTx().Expiry != 0, tt)
+					uint32(txIdx), IsCoinBase(tx), tx.MsgTx().Expiry != 0, tt)
+				if tt == stake.TxTypeSStx {
+					stakeExtra := make([]byte, serializeSizeForMinimalOutputs(tx))
+					putTxToMinimalOutputs(stakeExtra, tx)
+					entry.stakeExtra = stakeExtra
+				}
 				view.entries[*originHash] = entry
 			}
 
@@ -674,7 +684,7 @@ func (view *UtxoViewpoint) disconnectTransactions(block *dcrutil.Block,
 		// validated. Otherwise, these transactions were never in the blockchain's
 		// history in the first place.
 		if regularTxTreeValid {
-			transactions := block.Transactions()
+			transactions := parent.Transactions()
 			for txIdx := len(transactions) - 1; txIdx > -1; txIdx-- {
 				tx := transactions[txIdx]
 
@@ -686,8 +696,7 @@ func (view *UtxoViewpoint) disconnectTransactions(block *dcrutil.Block,
 				entry := view.entries[*tx.Sha()]
 				if entry == nil {
 					entry = newUtxoEntry(tx.MsgTx().Version,
-						uint32(parent.Height()), uint32(txIdx),
-						uint32(len(tx.MsgTx().TxOut)), isCoinbase,
+						uint32(parent.Height()), uint32(txIdx), isCoinbase,
 						tx.MsgTx().Expiry != 0, stake.TxTypeRegular)
 					view.entries[*tx.Sha()] = entry
 				}
@@ -716,8 +725,7 @@ func (view *UtxoViewpoint) disconnectTransactions(block *dcrutil.Block,
 					entry := view.entries[*originHash]
 					if entry == nil {
 						entry = newUtxoEntry(tx.MsgTx().Version,
-							uint32(parent.Height()), uint32(txIdx),
-							uint32(len(tx.MsgTx().TxOut)), isCoinbase,
+							uint32(parent.Height()), uint32(txIdx), isCoinbase,
 							tx.MsgTx().Expiry != 0, stake.TxTypeRegular)
 						view.entries[*originHash] = entry
 					}
@@ -781,10 +789,14 @@ func (view *UtxoViewpoint) disconnectTransactionSlice(transactions []*dcrutil.Tx
 		isCoinbase := txIdx == 0
 		entry := view.entries[*tx.Sha()]
 		if entry == nil {
-			entry = newUtxoEntry(tx.MsgTx().Version,
-				uint32(height), uint32(txIdx),
-				uint32(len(tx.MsgTx().TxOut)), isCoinbase,
-				tx.MsgTx().Expiry != 0, stake.TxTypeRegular)
+			txType := stake.DetermineTxType(tx)
+			entry = newUtxoEntry(tx.MsgTx().Version, uint32(height),
+				uint32(txIdx), IsCoinBase(tx), tx.MsgTx().Expiry != 0, txType)
+			if txType == stake.TxTypeSStx {
+				stakeExtra := make([]byte, serializeSizeForMinimalOutputs(tx))
+				putTxToMinimalOutputs(stakeExtra, tx)
+				entry.stakeExtra = stakeExtra
+			}
 			view.entries[*tx.Sha()] = entry
 		}
 		entry.modified = true
@@ -812,8 +824,7 @@ func (view *UtxoViewpoint) disconnectTransactionSlice(transactions []*dcrutil.Tx
 			entry := view.entries[*originHash]
 			if entry == nil {
 				entry = newUtxoEntry(tx.MsgTx().Version,
-					uint32(height), uint32(txIdx),
-					uint32(len(tx.MsgTx().TxOut)), isCoinbase,
+					uint32(height), uint32(txIdx), isCoinbase,
 					tx.MsgTx().Expiry != 0, stake.DetermineTxType(tx))
 				view.entries[*originHash] = entry
 			}

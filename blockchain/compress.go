@@ -5,7 +5,11 @@
 package blockchain
 
 import (
+	"fmt"
+
 	"github.com/decred/dcrd/blockchain/stake"
+	"github.com/decred/dcrd/chaincfg/chainec"
+	"github.com/decred/dcrd/txscript"
 )
 
 // currentCompressionVersion is the current script compression version of the
@@ -221,7 +225,7 @@ func isPubKey(script []byte) (bool, []byte) {
 
 		// Ensure the public key is valid.
 		serializedPubKey := script[1:34]
-		_, err := btcec.ParsePubKey(serializedPubKey, btcec.S256())
+		_, err := chainec.Secp256k1.ParsePubKey(serializedPubKey)
 		if err == nil {
 			return true, serializedPubKey
 		}
@@ -233,7 +237,7 @@ func isPubKey(script []byte) (bool, []byte) {
 
 		// Ensure the public key is valid.
 		serializedPubKey := script[1:66]
-		_, err := btcec.ParsePubKey(serializedPubKey, btcec.S256())
+		_, err := chainec.Secp256k1.ParsePubKey(serializedPubKey)
 		if err == nil {
 			return true, serializedPubKey
 		}
@@ -301,7 +305,7 @@ func decodeCompressedScriptSize(serialized []byte, compressionVersion uint32) in
 // target byte slice.  The target byte slice must be at least large enough to
 // handle the number of bytes returned by the compressedScriptSize function or
 // it will panic.
-func putCompressedScript(target, scriptVersion uint16, pkScript []byte,
+func putCompressedScript(target []byte, scriptVersion uint16, pkScript []byte,
 	compressionVersion uint32) int {
 	// Pay-to-pubkey-hash script.
 	if valid, hash := isPubKeyHash(pkScript); valid {
@@ -337,11 +341,10 @@ func putCompressedScript(target, scriptVersion uint16, pkScript []byte,
 	// When none of the above special cases apply, encode the unmodified
 	// script preceded by the script version, the sum of its size and
 	// the number of special cases encoded as a variable length quantity.
-	scriptVersionSize := putVLQ(target, uint64(scriptVersion))
 	encodedSize := uint64(len(pkScript) + numSpecialScripts)
 	vlqSizeLen := putVLQ(target, encodedSize)
-	copy(target[scriptVersionSize+vlqSizeLen:], pkScript)
-	return scriptVersionSize + vlqSizeLen + len(pkScript)
+	copy(target[vlqSizeLen:], pkScript)
+	return vlqSizeLen + len(pkScript)
 }
 
 // decompressScript returns the original script obtained by decompressing the
@@ -407,7 +410,7 @@ func decompressScript(compressedPkScript []byte,
 		compressedKey := make([]byte, 33)
 		compressedKey[0] = byte(encodedScriptSize - 2)
 		copy(compressedKey[1:], compressedPkScript[1:])
-		key, err := btcec.ParsePubKey(compressedKey, btcec.S256())
+		key, err := chainec.Secp256k1.ParsePubKey(compressedKey)
 		if err != nil {
 			return nil
 		}
@@ -564,12 +567,13 @@ func compressedTxOutSize(amount uint64, scriptVersion uint16, pkScript []byte,
 		return scriptVersionSize + serializeSizeVLQ(amount) + len(pkScript)
 	}
 	if !preCompressed && !hasAmount {
-		scriptVersionSize + serializeSizeVLQ(compressTxOutAmount(amount)) +
-			compressedScriptSize(pkScript, version)
+		return scriptVersionSize + serializeSizeVLQ(compressTxOutAmount(amount)) +
+			compressedScriptSize(scriptVersion, pkScript, compressionVersion)
 	}
 
-	return scriptVersionSiz + serializeSizeVLQ(compressTxOutAmount(amount)) +
-		compressedScriptSize(pkScript, version)
+	// if !preCompressed && hasAmount
+	return scriptVersionSize + serializeSizeVLQ(compressTxOutAmount(amount)) +
+		compressedScriptSize(scriptVersion, pkScript, compressionVersion)
 }
 
 // putCompressedTxOut potentially compresses the passed amount and script
@@ -580,15 +584,34 @@ func compressedTxOutSize(amount uint64, scriptVersion uint16, pkScript []byte,
 // loaded utxo entries are not decompressed until the output is accessed.  The
 // target byte slice must be at least large enough to handle the number of bytes
 // returned by the compressedTxOutSize function or it will panic.
-func putCompressedTxOut(target []byte, amount uint64, pkScript []byte, version int32, preCompressed bool) int {
-	if preCompressed {
+func putCompressedTxOut(target []byte, amount uint64, scriptVersion uint16,
+	pkScript []byte, compressionVersion uint32, preCompressed bool,
+	hasAmount bool) int {
+	if preCompressed && hasAmount {
 		offset := putVLQ(target, amount)
+		offset += putVLQ(target[offset:], uint64(scriptVersion))
 		copy(target[offset:], pkScript)
 		return offset + len(pkScript)
 	}
+	if preCompressed && !hasAmount {
+		offset := putVLQ(target, uint64(scriptVersion))
+		copy(target[offset:], pkScript)
+		return offset + len(pkScript)
+	}
+	if !preCompressed && !hasAmount {
+		offset := putVLQ(target, uint64(scriptVersion))
+		offset += putCompressedScript(target[offset:], scriptVersion, pkScript,
+			compressionVersion)
+		return offset
+	}
 
+	// if !preCompressed && hasAmount
 	offset := putVLQ(target, compressTxOutAmount(amount))
-	offset += putCompressedScript(target[offset:], pkScript, version)
+	fmt.Printf("wrote %x for amount\n", target[:offset])
+	offset += putVLQ(target[offset:], uint64(scriptVersion))
+	fmt.Printf("wrote %x for scriptversion\n", target[:offset])
+	offset += putCompressedScript(target[offset:], scriptVersion, pkScript,
+		compressionVersion)
 	return offset
 }
 
@@ -596,27 +619,34 @@ func putCompressedTxOut(target []byte, amount uint64, pkScript []byte, version i
 // by other data, into its compressed amount and compressed script and returns
 // them along with the number of bytes they occupied.
 func decodeCompressedTxOut(serialized []byte, compressionVersion uint32,
-	hasAmount bool) (uint64, uint16, []byte, int, error) {
-	var compressedAmount uint64
+	hasAmount bool) (int64, uint16, []byte, int, error) {
+	var amount int64
 	var bytesRead int
 	var offset int
 	if hasAmount {
 		// Deserialize the compressed amount and ensure there are bytes
 		// remaining for the compressed script.
+		var compressedAmount uint64
 		compressedAmount, bytesRead = deserializeVLQ(serialized)
 		if bytesRead >= len(serialized) {
-			return 0, nil, bytesRead, errDeserialize("unexpected end of " +
+			return 0, 0, nil, bytesRead, errDeserialize("unexpected end of " +
 				"data after compressed amount")
 		}
+		amount = int64(decompressTxOutAmount(compressedAmount))
 		offset += bytesRead
 	}
+
+	// Decode the script version.
+	var scriptVersion uint64
+	scriptVersion, bytesRead = deserializeVLQ(serialized[offset:])
+	offset += bytesRead
 
 	// Decode the compressed script size and ensure there are enough bytes
 	// left in the slice for it.
 	scriptSize := decodeCompressedScriptSize(serialized[offset:],
 		compressionVersion)
 	if len(serialized[offset:]) < scriptSize {
-		return 0, nil, offset, errDeserialize("unexpected end of " +
+		return 0, 0, nil, offset, errDeserialize("unexpected end of " +
 			"data after script size")
 	}
 
@@ -624,7 +654,12 @@ func decodeCompressedTxOut(serialized []byte, compressionVersion uint32,
 	// can be released as soon as possible.
 	compressedScript := make([]byte, scriptSize)
 	copy(compressedScript, serialized[offset:offset+scriptSize])
-	return compressedAmount, uint16(scriptVersion64), compressedScript,
+
+	if scriptVersion > 0 {
+		scr := decompressScript(compressedScript, currentCompressionVersion)
+		panic(fmt.Sprintf("got script version %v, amount %v, decompressedscript %x, serialized %x", scriptVersion, amount, scr, serialized[0:offset+scriptSize]))
+	}
+	return amount, uint16(scriptVersion), compressedScript,
 		offset + scriptSize, nil
 }
 
@@ -691,12 +726,6 @@ func encodeFlags(isCoinBase bool, hasExpiry bool, txType stake.TxType,
 // decodeFlags decodes transaction flags from a single byte into their respective
 // data types.
 func decodeFlags(b byte) (bool, bool, stake.TxType, bool) {
-	// This should never be called with an input of 0x00, but give
-	// zeroed results if it is.
-	if b == 0x00 {
-		return false, false, 0, false
-	}
-
 	isCoinBase := b&0x01 != 0
 	hasExpiry := b&(1<<1) != 0
 	fullySpent := b&(1<<4) != 0

@@ -473,8 +473,6 @@ func DebugUtxoViewpointData(uv *UtxoViewpoint) string {
 		buffer.WriteString(str)
 		str = fmt.Sprintf("HasExpiry: %v\n", utx.hasExpiry)
 		buffer.WriteString(str)
-		str = fmt.Sprintf("Number of outputs: %v\n", utx.outputsLen)
-		buffer.WriteString(str)
 
 		outputOrdered := make([]int, 0, len(utx.sparseOutputs))
 		for outputIndex := range utx.sparseOutputs {

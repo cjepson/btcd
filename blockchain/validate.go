@@ -1222,33 +1222,6 @@ func (b *BlockChain) CheckBlockStakeSanity(tixStore TicketStore,
 	return nil
 }
 
-// convertUtxosToMinimalOutputs converts the contents of a UTX to a series of
-// minimal outputs. It does this so that these can be passed to stake subpackage
-// functions, where they will be evaluated for correctness. If entries are missing,
-// it fills them in with a zeroed variant of a missing output and assume that
-// these entries were provably pruneable.
-func convertUtxosToMinimalOutputs(utxoEntry *UtxoEntry) []*stake.MinimalOutput {
-	outs := make([]*stake.MinimalOutput, int(utxoEntry.OutputsLen()))
-	for i := uint32(0); i < utxoEntry.OutputsLen(); i++ {
-		if utxoEntry.IsOutputSpent(i) {
-			outs[i] = &stake.MinimalOutput{
-				Value:    0,
-				Version:  0,
-				PkScript: nil,
-			}
-			continue
-		}
-
-		outs[i] = &stake.MinimalOutput{
-			Value:    utxoEntry.AmountByIndex(i),
-			Version:  utxoEntry.ScriptVersionByIndex(i),
-			PkScript: utxoEntry.PkScriptByIndex(i),
-		}
-	}
-
-	return outs
-}
-
 // CheckTransactionInputs performs a series of checks on the inputs to a
 // transaction to ensure they are valid.  An example of some of the checks
 // include verifying all inputs exist, ensuring the coinbase seasoning
@@ -1325,10 +1298,10 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
 
 			if !(class == txscript.PubKeyHashTy ||
 				class == txscript.ScriptHashTy) {
-				errStr := fmt.Sprintf("SStx input using tx %x, txout %v "+
+				errStr := fmt.Sprintf("SStx input using tx %v, txout %v "+
 					"referenced a txout that was not a PubKeyHashTy or "+
-					"ScriptHashTy pkScript (class: %v)",
-					txInHash, originTxIndex, class)
+					"ScriptHashTy pkScript (class: %v, version %v, script %x)",
+					txInHash, originTxIndex, class, thisPkVersion, thisPkScript)
 				return 0, ruleError(ErrSStxInScrType, errStr)
 			}
 
@@ -1722,12 +1695,6 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
 			return 0, ruleError(ErrDoubleSpend, str)
 		}
 
-		if originTxIndex >= utxoEntry.OutputsLen() {
-			str := fmt.Sprintf("out of bounds input index %d in "+
-				"transaction %v referenced from transaction %v",
-				originTxIndex, txInHash, txHash)
-			return 0, ruleError(ErrBadTxInput, str)
-		}
 		if utxoEntry.IsOutputSpent(originTxIndex) {
 			str := fmt.Sprintf("transaction %v tried to double "+
 				"spend coins from transaction %v", txHash,
@@ -1743,11 +1710,12 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
 			indicatedTree = dcrutil.TxTreeStake
 		}
 		if indicatedTree != originTxOPTree {
-			errStr := fmt.Sprintf("Tx %v attempted to spend from a %v "+
-				"tx tree, yet the outpoint specified a %v tx tree "+
-				"instead",
+			errStr := fmt.Sprintf("tx %v attempted to spend from a %v "+
+				"tx tree (hash %v), yet the outpoint specified a %v "+
+				"tx tree instead",
 				txHash,
 				indicatedTree,
+				txIn.PreviousOutPoint.Hash,
 				originTxOPTree)
 			return 0, ruleError(ErrDiscordantTxTree, errStr)
 		}
@@ -2213,12 +2181,6 @@ func (b *BlockChain) checkTransactionsAndConnect(inputFees dcrutil.Amount,
 				}
 
 				// Ensure the transaction is not double spending coins.
-				if originTxIndex >= utxoEntry.OutputsLen() {
-					str := fmt.Sprintf("out of bounds input index %d in "+
-						"transaction %v referenced from stake transaction %v",
-						originTxIndex, txInHash, tx.Sha())
-					return ruleError(ErrBadTxInput, str)
-				}
 				if utxoEntry.IsOutputSpent(originTxIndex) {
 					str := fmt.Sprintf("stake transaction %v tried to double "+
 						"spend coins from transaction %v", tx.Sha(),
