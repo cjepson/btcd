@@ -1010,12 +1010,12 @@ func (b *BlockChain) CalcPastMedianTime() (time.Time, error) {
 // passed node is not on a side chain.
 //
 // This function MUST be called with the chain state lock held (for reads).
-func (b *BlockChain) getReorganizeNodes(node *blockNode) (*list.List, *list.List, error) {
+func (b *BlockChain) getReorganizeNodes(node *blockNode) (*list.List, *list.List) {
 	// Nothing to detach or attach if there is no node.
 	attachNodes := list.New()
 	detachNodes := list.New()
 	if node == nil {
-		return detachNodes, attachNodes, nil
+		return detachNodes, attachNodes
 	}
 
 	// Find the fork point (if any) adding each block to the list of nodes
@@ -1023,18 +1023,18 @@ func (b *BlockChain) getReorganizeNodes(node *blockNode) (*list.List, *list.List
 	// so they are attached in the appropriate order when iterating the list
 	// later.
 	ancestor := node
-	for ancestor.parent != nil {
+	for ; ancestor.parent != nil; ancestor = ancestor.parent {
 		if ancestor.inMainChain {
 			break
 		}
 		attachNodes.PushFront(ancestor)
-
-		var err error
-		ancestor, err = b.getPrevNodeFromNode(ancestor)
-		if err != nil {
-			return nil, nil, err
-		}
 	}
+
+	// TODO(davec): Use prevNodeFromNode function in case the requested
+	// node is further back than the what is in memory.  This shouldn't
+	// happen in the normal course of operation, but the ability to fetch
+	// input transactions of arbitrary blocks will likely to be exposed at
+	// some point and that could lead to an issue here.
 
 	// Start from the end of the main chain and work backwards until the
 	// common ancestor adding each block to the list of nodes to detach from
@@ -1044,15 +1044,9 @@ func (b *BlockChain) getReorganizeNodes(node *blockNode) (*list.List, *list.List
 			break
 		}
 		detachNodes.PushBack(n)
-
-		var err error
-		n, err = b.getPrevNodeFromNode(n)
-		if err != nil {
-			return nil, nil, err
-		}
 	}
 
-	return detachNodes, attachNodes, nil
+	return detachNodes, attachNodes
 }
 
 // connectBlock handles connecting the passed node/block to the end of the main
@@ -1447,6 +1441,17 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 			}
 			parent, err = dbFetchBlockByHash(dbTx, n.parentHash)
 			return err
+			/*
+				// Don't fetch the same block twice if we already fatched it
+				// on the last go of the loop.
+				var err error
+				block, err = dbFetchBlockByHash(dbTx, n.hash)
+				if err != nil {
+					return err
+				}
+				parent, err = dbFetchBlockByHash(dbTx, n.parentHash)
+				return err
+			*/
 		})
 
 		// Load all of the utxos referenced by the block that aren't
@@ -1462,7 +1467,7 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 		var stxos []spentTxOut
 		err = b.db.View(func(dbTx database.Tx) error {
 			stxos, err = dbFetchSpendJournalEntry(dbTx, block, parent, view)
-			fmt.Printf("STXOS %v\n", stxos)
+			// fmt.Printf("STXOS %v\n", stxos)
 			return err
 		})
 		if err != nil {
@@ -1475,7 +1480,7 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 		detachSpentTxOuts = append(detachSpentTxOuts, stxos)
 
 		fmt.Printf("DISCONNECT BLOCK %v, %v\n", block.Sha(), block.Height())
-		fmt.Printf("DISCONNECT PARENT %v, %v\n", parent.Sha(), parent.Height())
+		// fmt.Printf("DISCONNECT PARENT %v, %v\n", parent.Sha(), parent.Height())
 
 		err = view.disconnectTransactions(block, parent, stxos)
 		if err != nil {
@@ -1507,6 +1512,7 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 		// thus will not be generated.  This is done because the state
 		// is not being immediately written to the database, so it is
 		// not needed.
+		fmt.Printf("CHECK CONNECT BLOCK %v, %v\n", block.Sha(), block.Height())
 		err := b.checkConnectBlock(n, block, view, nil)
 		if err != nil {
 			return err
@@ -1563,6 +1569,8 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 			return err
 		}
 
+		fmt.Printf("REAL DISCONNECT BLOCK %v, %v\n", block.Sha(), block.Height())
+
 		// Update the database and chain state.
 		err = b.disconnectBlock(n, block, view)
 		if err != nil {
@@ -1597,6 +1605,8 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 		if err != nil {
 			return err
 		}
+
+		fmt.Printf("CONNECT BLOCK %v, %v\n", block.Sha(), block.Height())
 
 		// Update the database and chain state.
 		err = b.connectBlock(n, block, view, stxos)
@@ -1677,7 +1687,7 @@ func (b *BlockChain) forceHeadReorganization(formerBest chainhash.Hash,
 		return err
 	}
 
-	attach, detach, err := b.getReorganizeNodes(newBestNode)
+	attach, detach := b.getReorganizeNodes(newBestNode)
 	if err != nil {
 		return err
 	}
@@ -1870,17 +1880,14 @@ func (b *BlockChain) connectBestChain(node *blockNode, block *dcrutil.Block,
 	// blocks that form the (now) old fork from the main chain, and attach
 	// the blocks that form the new chain to the main chain starting at the
 	// common ancenstor (the point where the chain forked).
-	detachNodes, attachNodes, err := b.getReorganizeNodes(node)
-	if err != nil {
-		return false, nil
-	}
+	detachNodes, attachNodes := b.getReorganizeNodes(node)
 
 	// Reorganize the chain.
 	if !dryRun {
 		log.Infof("REORGANIZE: Block %v is causing a reorganize.",
 			node.hash)
 	}
-	err = b.reorganizeChain(detachNodes, attachNodes, flags)
+	err := b.reorganizeChain(detachNodes, attachNodes, flags)
 	if err != nil {
 		return false, err
 	}

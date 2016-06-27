@@ -298,6 +298,7 @@ func putSpentTxOut(target []byte, stxo *spentTxOut) int {
 	offset := putVLQ(target, uint64(flags))
 
 	// false below indicates that the txOut does not specify an amount.
+	//fmt.Printf("stxo pkscript %x\n", stxo.pkScript)
 	offset += putCompressedTxOut(target[offset:], 0, stxo.scriptVersion,
 		stxo.pkScript, currentCompressionVersion, stxo.compressed, false)
 
@@ -372,7 +373,7 @@ func decodeSpentTxOut(serialized []byte, stxo *spentTxOut, amount int64,
 	if flags != 0 {
 		txVersion, bytesRead := deserializeVLQ(serialized[offset:])
 		offset += bytesRead
-		if offset >= len(serialized) {
+		if offset > len(serialized) {
 			return offset, errDeserialize("unexpected end of data " +
 				"after version")
 		}
@@ -380,10 +381,11 @@ func decodeSpentTxOut(serialized []byte, stxo *spentTxOut, amount int64,
 		stxo.txVersion = int32(txVersion)
 
 		if stxo.txType == stake.TxTypeSStx {
-			stakeExtra := make([]byte, len(serialized[offset:]))
-			copy(stakeExtra, serialized[offset:])
+			sz := readDeserializeSizeOfMinimalOutputs(serialized[offset:])
+			stakeExtra := make([]byte, len(serialized[offset:sz]))
+			copy(stakeExtra, serialized[offset:sz])
 			stxo.stakeExtra = stakeExtra
-			offset += len(serialized[offset:])
+			offset += sz
 		}
 	}
 
@@ -402,15 +404,14 @@ func deserializeSpendJournalEntry(serialized []byte, txns []*wire.MsgTx,
 	// Calculate the total number of stxos.
 	var numStxos int
 	for _, tx := range txns {
-		tt := stake.DetermineTxType(dcrutil.NewTx(tx))
+		txType := stake.DetermineTxType(dcrutil.NewTx(tx))
 
-		if tt == stake.TxTypeSSGen {
+		if txType == stake.TxTypeSSGen {
 			numStxos++
 			continue
 		}
 		numStxos += len(tx.TxIn)
 	}
-	fmt.Printf("Calculated %v stxos in func\n", numStxos)
 
 	// When a block has no spent txouts there is nothing to serialize.
 	if len(serialized) == 0 {
@@ -433,10 +434,18 @@ func deserializeSpendJournalEntry(serialized []byte, txns []*wire.MsgTx,
 	stxos := make([]spentTxOut, numStxos)
 	for txIdx := len(txns) - 1; txIdx > -1; txIdx-- {
 		tx := txns[txIdx]
+		txType := stake.DetermineTxType(dcrutil.NewTx(tx))
 
 		// Loop backwards through all of the transaction inputs and read
 		// the associated stxo.
 		for txInIdx := len(tx.TxIn) - 1; txInIdx > -1; txInIdx-- {
+			// Skip stakebase.
+			if txInIdx == 0 && txType == stake.TxTypeSSGen {
+				continue
+			}
+
+			// fmt.Printf("current tx %v, current txidx %v\n", txIdx, txInIdx)
+
 			txIn := tx.TxIn[txInIdx]
 			stxo := &stxos[stxoIdx]
 			stxoIdx--
@@ -458,10 +467,12 @@ func deserializeSpendJournalEntry(serialized []byte, txns []*wire.MsgTx,
 			// to detect this case and pull the tx version from the
 			// entry that contains the version information as just
 			// described.
+			// fmt.Printf("Current ser data chunk %x\n", serialized[offset:])
 			n, err := decodeSpentTxOut(serialized[offset:], stxo, txIn.ValueIn,
 				txIn.BlockHeight, txIn.BlockIndex)
 			offset += n
 			if err != nil {
+				panic(fmt.Sprintf("fail on idx %v, txin %x: %v", txIdx, txInIdx, err))
 				return nil, errDeserialize(fmt.Sprintf("unable "+
 					"to decode stxo for %v: %v",
 					txIn.PreviousOutPoint, err))
@@ -481,8 +492,12 @@ func serializeSpendJournalEntry(stxos []spentTxOut) []byte {
 
 	// Calculate the size needed to serialize the entire journal entry.
 	var size int
+	var sizes []int
 	for i := range stxos {
-		size += spentTxOutSerializeSize(&stxos[i])
+		// size += spentTxOutSerializeSize(&stxos[i])
+		sz := spentTxOutSerializeSize(&stxos[i])
+		sizes = append(sizes, sz)
+		size += sz
 	}
 	serialized := make([]byte, size)
 
@@ -490,7 +505,15 @@ func serializeSpendJournalEntry(stxos []spentTxOut) []byte {
 	// order one after the other.
 	var offset int
 	for i := len(stxos) - 1; i > -1; i-- {
+		oldOffset := offset
 		offset += putSpentTxOut(serialized[offset:], &stxos[i])
+
+		//fmt.Printf("wrote to ser entry %x\n", serialized)
+
+		if offset-oldOffset != sizes[i] {
+			panic(fmt.Sprintf("bad write; expect sz %v, got sz %v (wrote %x)",
+				sizes[i], offset-oldOffset, serialized[oldOffset:offset]))
+		}
 	}
 
 	return serialized
@@ -506,8 +529,8 @@ func dbFetchSpendJournalEntry(dbTx database.Tx, block *dcrutil.Block,
 	// Exclude the coinbase transaction since it can't spend anything.
 	spendBucket := dbTx.Metadata().Bucket(spendJournalBucketName)
 	serialized := spendBucket.Get(block.Sha()[:])
-	blockTxns := append(block.MsgBlock().Transactions[1:],
-		parent.MsgBlock().STransactions...)
+	blockTxns := append(parent.MsgBlock().Transactions[1:],
+		block.MsgBlock().STransactions...)
 	stxos, err := deserializeSpendJournalEntry(serialized, blockTxns, view)
 	if err != nil {
 		// Ensure any deserialization errors are returned as database

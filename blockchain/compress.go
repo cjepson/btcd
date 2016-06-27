@@ -268,8 +268,7 @@ func compressedScriptSize(scriptVersion uint16, pkScript []byte,
 	// When none of the above special cases apply, encode the script as is
 	// preceded by the sum of its size and the number of special cases
 	// encoded as a variable length quantity.
-	return serializeSizeVLQ(uint64(scriptVersion)) +
-		serializeSizeVLQ(uint64(len(pkScript)+numSpecialScripts)) +
+	return serializeSizeVLQ(uint64(len(pkScript)+numSpecialScripts)) +
 		len(pkScript)
 }
 

@@ -66,7 +66,7 @@ type utxoOutput struct {
 	pkScript      []byte // The public key script for the output.
 	amount        int64  // The amount of the output.
 	scriptVersion uint16 // The script version
-	compressed    bool   // The amount and public key script are compressed..
+	compressed    bool   // The public key script is compressed.
 	spent         bool   // Output is spent.
 }
 
@@ -408,6 +408,7 @@ func (view *UtxoViewpoint) connectTransaction(tx *dcrutil.Tx, blockHeight int64,
 		// accordingly since those details will no longer be available
 		// in the utxo set.
 		var stxo = spentTxOut{
+			compressed:    false,
 			amount:        txIn.ValueIn,
 			scriptVersion: entry.ScriptVersionByIndex(originIndex),
 			pkScript:      entry.PkScriptByIndex(originIndex),
@@ -420,6 +421,10 @@ func (view *UtxoViewpoint) connectTransaction(tx *dcrutil.Tx, blockHeight int64,
 			stxo.hasExpiry = entry.HasExpiry()
 			stxo.txType = entry.txType
 			stxo.txFullySpent = true
+
+			if entry.txType == stake.TxTypeSStx {
+				stxo.stakeExtra = entry.stakeExtra
+			}
 		}
 
 		// Append the entry to the provided spent txouts slice.
@@ -576,11 +581,11 @@ func countSpentOutputsPerTree(block *dcrutil.Block, parent *dcrutil.Block) (int,
 // time because of index tracking.
 func (view *UtxoViewpoint) disconnectTransactions(block *dcrutil.Block,
 	parent *dcrutil.Block, stxos []spentTxOut) error {
-	fmt.Printf("disconnect block %v, %v\n", block.Sha(), block.Height())
+	// fmt.Printf("disconnect block %v, %v\n", block.Sha(), block.Height())
 
 	// Sanity check the correct number of stxos are provided.
 	if len(stxos) != countSpentOutputs(block, parent) {
-		panic(fmt.Sprintf("%v, %v", block.Sha(), block.Height()))
+		panic(fmt.Sprintf("%v, %v, %v, %v", block.Sha(), block.Height(), len(stxos), countSpentOutputs(block, parent)))
 		return AssertError(fmt.Sprintf("disconnectTransactions "+
 			"called with bad spent transaction out information "+
 			"(len stxos %v, count is %v)", len(stxos),
@@ -780,6 +785,7 @@ func (view *UtxoViewpoint) disconnectTransactionSlice(transactions []*dcrutil.Tx
 	}
 	for txIdx := len(transactions) - 1; txIdx > -1; txIdx-- {
 		tx := transactions[txIdx]
+		txType := stake.DetermineTxType(tx)
 
 		// Clear this transaction from the view if it already exists or
 		// create a new empty entry for when it does not.  This is done
@@ -788,7 +794,6 @@ func (view *UtxoViewpoint) disconnectTransactionSlice(transactions []*dcrutil.Tx
 		isCoinbase := txIdx == 0
 		entry := view.entries[*tx.Sha()]
 		if entry == nil {
-			txType := stake.DetermineTxType(tx)
 			entry = newUtxoEntry(tx.MsgTx().Version, uint32(height),
 				uint32(txIdx), IsCoinBase(tx), tx.MsgTx().Expiry != 0, txType)
 			if txType == stake.TxTypeSStx {
@@ -819,12 +824,14 @@ func (view *UtxoViewpoint) disconnectTransactionSlice(transactions []*dcrutil.Tx
 			// so create a new utxo entry in order to resurrect it.
 			txIn := tx.MsgTx().TxIn[txInIdx]
 			originHash := &txIn.PreviousOutPoint.Hash
-			originIndex := txIn.PreviousOutPoint.Index
+			originInIndex := txIn.PreviousOutPoint.Index
+			originHeight := txIn.BlockHeight
+			originIndex := txIn.BlockIndex
 			entry := view.entries[*originHash]
 			if entry == nil {
 				txType := stake.DetermineTxType(tx)
-				entry = newUtxoEntry(tx.MsgTx().Version, uint32(height),
-					uint32(txIdx), isCoinbase, tx.MsgTx().Expiry != 0, txType)
+				entry = newUtxoEntry(tx.MsgTx().Version, originHeight,
+					originIndex, isCoinbase, tx.MsgTx().Expiry != 0, txType)
 				if txType == stake.TxTypeSStx {
 					stakeExtra := make([]byte,
 						serializeSizeForMinimalOutputs(tx))
@@ -841,10 +848,10 @@ func (view *UtxoViewpoint) disconnectTransactionSlice(transactions []*dcrutil.Tx
 			// Restore the specific utxo using the stxo data from
 			// the spend journal if it doesn't already exist in the
 			// view.
-			output, ok := entry.sparseOutputs[originIndex]
+			output, ok := entry.sparseOutputs[originInIndex]
 			if !ok {
 				// Add the unspent transaction output.
-				entry.sparseOutputs[originIndex] = &utxoOutput{
+				entry.sparseOutputs[originInIndex] = &utxoOutput{
 					spent:         false,
 					amount:        txIn.ValueIn,
 					scriptVersion: stxo.scriptVersion,

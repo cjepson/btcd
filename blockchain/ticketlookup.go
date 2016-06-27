@@ -12,6 +12,7 @@ import (
 
 	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg/chainhash"
+	database "github.com/decred/dcrd/database2"
 	"github.com/decred/dcrutil"
 )
 
@@ -587,10 +588,14 @@ func (b *BlockChain) fetchTicketStore(node *blockNode) (TicketStore, error) {
 	// transactions and spend information for the blocks which would be
 	// disconnected during a reorganize to the point of view of the
 	// node just before the requested node.
-	detachNodes, attachNodes, err := b.getReorganizeNodes(prevNode)
+	detachNodes, attachNodes := b.getReorganizeNodes(prevNode)
 	if err != nil {
 		return nil, err
 	}
+
+	view := NewUtxoViewpoint()
+	view.SetBestHash(b.bestNode.hash)
+	view.SetStakeViewpoint(ViewpointPrevValidInitial)
 
 	for e := detachNodes.Front(); e != nil; e = e.Next() {
 		n := e.Value.(*blockNode)
@@ -599,11 +604,34 @@ func (b *BlockChain) fetchTicketStore(node *blockNode) (TicketStore, error) {
 			return nil, err
 		}
 
+		parent, err := b.getBlockFromHash(n.parentHash)
+		if err != nil {
+			return nil, err
+		}
+
 		err = b.disconnectTickets(tixStore, n, block)
 		if err != nil {
 			return nil, err
 		}
+
+		// Load all of the spent txos for the block from the spend
+		// journal.
+		var stxos []spentTxOut
+		err = b.db.View(func(dbTx database.Tx) error {
+			stxos, err = dbFetchSpendJournalEntry(dbTx, block, parent, view)
+			// fmt.Printf("STXOS %v\n", stxos)
+			return err
+		})
+		if err != nil {
+			return nil, err
+		}
+		err = view.disconnectTransactions(block, parent, stxos)
+		if err != nil {
+			return nil, err
+		}
 	}
+
+	fmt.Printf("TICKETSTORE %v\n", tixStore)
 
 	// The ticket store is now accurate to either the node where the
 	// requested node forks off the main chain (in the case where the
@@ -639,6 +667,17 @@ func (b *BlockChain) fetchTicketStore(node *blockNode) (TicketStore, error) {
 
 		// The number of blocks below this block but above the root of the fork
 		err = b.connectTickets(tixStore, n, block, view)
+		if err != nil {
+			return nil, err
+		}
+
+		parent, err := b.getBlockFromHash(n.parentHash)
+		if err != nil {
+			return nil, err
+		}
+
+		var stxos []spentTxOut
+		err = view.connectTransactions(block, parent, &stxos)
 		if err != nil {
 			return nil, err
 		}
