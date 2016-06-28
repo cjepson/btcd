@@ -147,35 +147,35 @@ func deserializeVLQ(serialized []byte) (uint64, int) {
 // NOTE: This section specifically does not use iota since these values are
 // serialized and must be stable for long-term storage.
 const (
+	// numSpecialScripts is the number of special scripts recognized by the
+	// domain-specific script compression algorithm.
+	numSpecialScripts = 0
+
 	// cstPayToPubKeyHash identifies a compressed pay-to-pubkey-hash script.
-	cstPayToPubKeyHash = 0
+	cstPayToPubKeyHash = 1
 
 	// cstPayToScriptHash identifies a compressed pay-to-script-hash script.
-	cstPayToScriptHash = 1
+	cstPayToScriptHash = 2
 
 	// cstPayToPubKeyComp2 identifies a compressed pay-to-pubkey script to
 	// a compressed pubkey.  Bit 0 specifies which y-coordinate to use
 	// to reconstruct the full uncompressed pubkey.
-	cstPayToPubKeyComp2 = 2
+	cstPayToPubKeyComp2 = 3
 
 	// cstPayToPubKeyComp3 identifies a compressed pay-to-pubkey script to
 	// a compressed pubkey.  Bit 0 specifies which y-coordinate to use
 	// to reconstruct the full uncompressed pubkey.
-	cstPayToPubKeyComp3 = 3
+	cstPayToPubKeyComp3 = 4
 
 	// cstPayToPubKeyUncomp4 identifies a compressed pay-to-pubkey script to
 	// an uncompressed pubkey.  Bit 0 specifies which y-coordinate to use
 	// to reconstruct the full uncompressed pubkey.
-	cstPayToPubKeyUncomp4 = 4
+	cstPayToPubKeyUncomp4 = 5
 
 	// cstPayToPubKeyUncomp5 identifies a compressed pay-to-pubkey script to
 	// an uncompressed pubkey.  Bit 0 specifies which y-coordinate to use
 	// to reconstruct the full uncompressed pubkey.
-	cstPayToPubKeyUncomp5 = 5
-
-	// numSpecialScripts is the number of special scripts recognized by the
-	// domain-specific script compression algorithm.
-	numSpecialScripts = 6
+	cstPayToPubKeyUncomp5 = 6
 )
 
 // isPubKeyHash returns whether or not the passed public key script is a
@@ -654,6 +654,7 @@ func decodeCompressedTxOut(serialized []byte, compressionVersion uint32,
 	copy(compressedScript, serialized[offset:offset+scriptSize])
 
 	if scriptVersion > 0 {
+		// DEBUG eventually remove!
 		scr := decompressScript(compressedScript, currentCompressionVersion)
 		panic(fmt.Sprintf("got script version %v, amount %v, decompressedscript %x, serialized %x", scriptVersion, amount, scr, serialized[0:offset+scriptSize]))
 	}
@@ -724,4 +725,9 @@ func decodeFlags(b byte) (bool, bool, stake.TxType, bool) {
 	txType := stake.TxType((b & txTypeBitmask) >> txTypeShift)
 
 	return isCoinBase, hasExpiry, txType, fullySpent
+}
+
+// decodeFlagsFullySpent decodes whether or not a transaction was fully spent.
+func decodeFlagsFullySpent(b byte) bool {
+	return b&(1<<4) != 0
 }

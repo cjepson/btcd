@@ -157,7 +157,11 @@ func (b *BlockChain) connectTickets(tixStore TicketStore, node *blockNode,
 
 		// TxStore at blockchain HEAD + TxTreeRegular of prevBlock (if
 		// validated) for this node.
-		err = view.fetchInputUtxos(b.db, block)
+		parent, err := b.getBlockFromHash(node.parentHash)
+		if err != nil {
+			return err
+		}
+		err = view.fetchInputUtxos(b.db, block, parent)
 		if err != nil {
 			errStr := fmt.Sprintf("fetchInputUtxos failed for incoming "+
 				"node %v; error given: %v", node.hash, err)
@@ -625,7 +629,7 @@ func (b *BlockChain) fetchTicketStore(node *blockNode) (TicketStore, error) {
 		if err != nil {
 			return nil, err
 		}
-		err = view.disconnectTransactions(block, parent, stxos)
+		err = b.disconnectTransactions(view, block, parent, stxos)
 		if err != nil {
 			return nil, err
 		}
@@ -654,16 +658,17 @@ func (b *BlockChain) fetchTicketStore(node *blockNode) (TicketStore, error) {
 				n.hash)
 		}
 
-		view := NewUtxoViewpoint()
-		view.SetBestHash(node.hash)
+		/*
+			view.SetBestHash(node.hash)
 
-		regularTxTreeValid := dcrutil.IsFlagSet16(node.header.VoteBits,
-			dcrutil.BlockValid)
-		thisNodeStakeViewpoint := ViewpointPrevInvalidStake
-		if regularTxTreeValid {
-			thisNodeStakeViewpoint = ViewpointPrevValidStake
-		}
-		view.SetStakeViewpoint(thisNodeStakeViewpoint)
+			regularTxTreeValid := dcrutil.IsFlagSet16(node.header.VoteBits,
+				dcrutil.BlockValid)
+			thisNodeStakeViewpoint := ViewpointPrevInvalidStake
+			if regularTxTreeValid {
+				thisNodeStakeViewpoint = ViewpointPrevValidStake
+			}
+			view.SetStakeViewpoint(thisNodeStakeViewpoint)
+		*/
 
 		// The number of blocks below this block but above the root of the fork
 		err = b.connectTickets(tixStore, n, block, view)

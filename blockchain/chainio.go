@@ -278,7 +278,7 @@ func spentTxOutSerializeSize(stxo *spentTxOut) int {
 
 	// The transaction was fully spent, so we need to store some extra
 	// data for UTX resurrection.
-	if flags != 0 {
+	if stxo.txFullySpent {
 		size += serializeSizeVLQ(uint64(stxo.txVersion))
 		if stxo.txType == stake.TxTypeSStx {
 			size += len(stxo.stakeExtra)
@@ -304,7 +304,7 @@ func putSpentTxOut(target []byte, stxo *spentTxOut) int {
 
 	// The transaction was fully spent, so we need to store some extra
 	// data for UTX resurrection.
-	if flags != 0 {
+	if stxo.txFullySpent {
 		offset += putVLQ(target[offset:], uint64(stxo.txVersion))
 		if stxo.txType == stake.TxTypeSStx {
 			copy(target[offset:], stxo.stakeExtra)
@@ -342,7 +342,7 @@ func decodeSpentTxOut(serialized []byte, stxo *spentTxOut, amount int64,
 
 	// Decode the flags. If the flags are non-zero, it means that the
 	// transaction was fully spent at this spend.
-	if flags != 0 {
+	if decodeFlagsFullySpent(byte(flags)) {
 		isCoinBase, hasExpiry, txType, _ := decodeFlags(byte(flags))
 
 		stxo.height = height
@@ -350,6 +350,7 @@ func decodeSpentTxOut(serialized []byte, stxo *spentTxOut, amount int64,
 		stxo.isCoinBase = isCoinBase
 		stxo.hasExpiry = hasExpiry
 		stxo.txType = txType
+		stxo.txFullySpent = true
 	}
 
 	// Decode the compressed txout. We pass false for the amount flag,
@@ -370,7 +371,7 @@ func decodeSpentTxOut(serialized []byte, stxo *spentTxOut, amount int64,
 
 	// Deserialize the containing transaction if the flags indicate that
 	// the transaction has been fully spent.
-	if flags != 0 {
+	if decodeFlagsFullySpent(byte(flags)) {
 		txVersion, bytesRead := deserializeVLQ(serialized[offset:])
 		offset += bytesRead
 		if offset > len(serialized) {

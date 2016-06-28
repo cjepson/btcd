@@ -473,6 +473,8 @@ func DebugUtxoViewpointData(uv *UtxoViewpoint) string {
 		buffer.WriteString(str)
 		str = fmt.Sprintf("HasExpiry: %v\n", utx.hasExpiry)
 		buffer.WriteString(str)
+		str = fmt.Sprintf("FullySpent: %v\n\n", utx.IsFullySpent())
+		buffer.WriteString(str)
 
 		outputOrdered := make([]int, 0, len(utx.sparseOutputs))
 		for outputIndex := range utx.sparseOutputs {
@@ -495,6 +497,90 @@ func DebugUtxoViewpointData(uv *UtxoViewpoint) string {
 		str = fmt.Sprintf("\n")
 		buffer.WriteString(str)
 	}
+
+	return buffer.String()
+}
+
+// DebugStxoData returns a string containing information about the data
+// stored in the given STXO.
+func DebugStxoData(stx *spentTxOut) string {
+	if stx == nil {
+		return ""
+	}
+
+	var buffer bytes.Buffer
+
+	str := fmt.Sprintf("amount: %v\n", stx.amount)
+	buffer.WriteString(str)
+	str = fmt.Sprintf("scriptVersion: %v\n", stx.scriptVersion)
+	buffer.WriteString(str)
+	str = fmt.Sprintf("pkScript: %x\n", stx.pkScript)
+	buffer.WriteString(str)
+	str = fmt.Sprintf("compressed: %v\n", stx.compressed)
+	buffer.WriteString(str)
+	str = fmt.Sprintf("stakeExtra: %x\n", stx.stakeExtra)
+	buffer.WriteString(str)
+	str = fmt.Sprintf("txVersion: %v\n", stx.txVersion)
+	buffer.WriteString(str)
+	str = fmt.Sprintf("height: %v\n", stx.height)
+	buffer.WriteString(str)
+	str = fmt.Sprintf("index: %v\n", stx.index)
+	buffer.WriteString(str)
+	str = fmt.Sprintf("isCoinbase: %v\n", stx.isCoinBase)
+	buffer.WriteString(str)
+	str = fmt.Sprintf("hasExpiry: %v\n", stx.hasExpiry)
+	buffer.WriteString(str)
+	str = fmt.Sprintf("txType: %v\n", stx.txType)
+	buffer.WriteString(str)
+	str = fmt.Sprintf("fullySpent: %v\n", stx.txFullySpent)
+	buffer.WriteString(str)
+
+	str = fmt.Sprintf("\n")
+	buffer.WriteString(str)
+
+	return buffer.String()
+}
+
+// DebugStxosData returns a string containing information about the data
+// stored in the given slice of STXOs.
+func DebugStxosData(stxs []spentTxOut) string {
+	if stxs == nil {
+		return ""
+	}
+	var buffer bytes.Buffer
+
+	// Iterate backwards.
+	var str string
+	for i := len(stxs) - 1; i >= 0; i-- {
+		str = fmt.Sprintf("STX index %v\n", i)
+		buffer.WriteString(str)
+		str = fmt.Sprintf("amount: %v\n", stxs[i].amount)
+		buffer.WriteString(str)
+		str = fmt.Sprintf("scriptVersion: %v\n", stxs[i].scriptVersion)
+		buffer.WriteString(str)
+		str = fmt.Sprintf("pkScript: %x\n", stxs[i].pkScript)
+		buffer.WriteString(str)
+		str = fmt.Sprintf("compressed: %v\n", stxs[i].compressed)
+		buffer.WriteString(str)
+		str = fmt.Sprintf("stakeExtra: %x\n", stxs[i].stakeExtra)
+		buffer.WriteString(str)
+		str = fmt.Sprintf("txVersion: %v\n", stxs[i].txVersion)
+		buffer.WriteString(str)
+		str = fmt.Sprintf("height: %v\n", stxs[i].height)
+		buffer.WriteString(str)
+		str = fmt.Sprintf("index: %v\n", stxs[i].index)
+		buffer.WriteString(str)
+		str = fmt.Sprintf("isCoinbase: %v\n", stxs[i].isCoinBase)
+		buffer.WriteString(str)
+		str = fmt.Sprintf("hasExpiry: %v\n", stxs[i].hasExpiry)
+		buffer.WriteString(str)
+		str = fmt.Sprintf("txType: %v\n", stxs[i].txType)
+		buffer.WriteString(str)
+		str = fmt.Sprintf("fullySpent: %v\n\n", stxs[i].txFullySpent)
+		buffer.WriteString(str)
+	}
+	str = fmt.Sprintf("\n")
+	buffer.WriteString(str)
 
 	return buffer.String()
 }

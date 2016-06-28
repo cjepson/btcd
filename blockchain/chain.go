@@ -777,18 +777,13 @@ func (b *BlockChain) getBlockFromHash(hash *chainhash.Hash) (*dcrutil.Block,
 	// Check main chain
 	b.chainLock.RLock()
 	var blockMainchain *dcrutil.Block
-	var errFetchMainchain error
-	err := b.db.View(func(dbTx database.Tx) error {
-		blockMainchain, errFetchMainchain = dbFetchBlockByHash(dbTx, hash)
-		return errFetchMainchain
+	errFetchMainchain := b.db.View(func(dbTx database.Tx) error {
+		var err error
+		blockMainchain, err = dbFetchBlockByHash(dbTx, hash)
+		return err
 	})
-	if err != nil {
-		return nil, err
-	}
-
 	b.chainLock.RUnlock()
-	existsMainchain := (errFetchMainchain == nil) || (blockMainchain != nil)
-	if existsMainchain {
+	if errFetchMainchain == nil && blockMainchain != nil {
 		return blockMainchain, nil
 	}
 
@@ -1074,7 +1069,7 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block, view *U
 		return err
 	}
 	if len(stxos) != countSpentOutputs(block, parent) {
-		fmt.Printf("count %v, len stxos %v\n", countSpentOutputs(block, parent), len(stxos))
+		// fmt.Printf("count %v, len stxos %v\n", countSpentOutputs(block, parent), len(stxos))
 		return AssertError("connectBlock called with inconsistent " +
 			"spent transaction out information")
 	}
@@ -1136,6 +1131,8 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block, view *U
 		// Update the utxo set using the state of the utxo view.  This
 		// entails removing all of the utxos spent and adding the new
 		// ones created by the block.
+		// fmt.Printf("INSERT BLOCK HEIGHT %v INTO DB\n", block.Height())
+		// fmt.Printf("inserting utxo view %v", DebugUtxoViewpointData(view))
 		err = dbPutUtxoView(dbTx, view)
 		if err != nil {
 			return err
@@ -1153,6 +1150,7 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block, view *U
 
 			return err
 		}
+		// fmt.Printf("Inserted STXs for height %v: %v", block.Height(), DebugStxosData(stxos))
 
 		// Insert the block into the database if it's not already there.
 		hasBlock, err := dbTx.HasBlock(block.Sha())
@@ -1250,11 +1248,7 @@ func (b *BlockChain) disconnectBlock(node *blockNode, block *dcrutil.Block, view
 
 	// Load the previous block since some details for it are needed below.
 	var prevBlock *dcrutil.Block
-	err = b.db.View(func(dbTx database.Tx) error {
-		var err error
-		prevBlock, err = dbFetchBlockByHash(dbTx, prevNode.hash)
-		return err
-	})
+	prevBlock, err = b.getBlockFromHash(prevNode.hash)
 	if err != nil {
 		return err
 	}
@@ -1426,41 +1420,31 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 		n := e.Value.(*blockNode)
 		var block *dcrutil.Block
 		var parent *dcrutil.Block
-		err := b.db.View(func(dbTx database.Tx) error {
-			// Don't fetch the same block twice if we already fatched it
-			// on the last go of the loop.
+		if len(detachParents) > 0 &&
+			detachParents[len(detachParents)-1].Sha().IsEqual(n.hash) {
+			block = detachParents[len(detachParents)-1]
+		} else {
 			var err error
-			if len(detachParents) > 0 &&
-				detachParents[len(detachParents)-1].Sha().IsEqual(n.hash) {
-				block = detachParents[len(detachParents)-1]
-			} else {
-				block, err = dbFetchBlockByHash(dbTx, n.hash)
-				if err != nil {
-					return err
-				}
-			}
-			parent, err = dbFetchBlockByHash(dbTx, n.parentHash)
-			return err
-			/*
-				// Don't fetch the same block twice if we already fatched it
-				// on the last go of the loop.
-				var err error
-				block, err = dbFetchBlockByHash(dbTx, n.hash)
-				if err != nil {
-					return err
-				}
-				parent, err = dbFetchBlockByHash(dbTx, n.parentHash)
+			block, err = b.getBlockFromHash(n.hash)
+			if err != nil {
 				return err
-			*/
-		})
-
-		// Load all of the utxos referenced by the block that aren't
-		// already in the view.
-		view.SetStakeViewpoint(ViewpointPrevValidInitial)
-		err = view.fetchInputUtxos(b.db, block)
+			}
+		}
+		parent, err := b.getBlockFromHash(n.parentHash)
 		if err != nil {
 			return err
 		}
+		/*
+			// Don't fetch the same block twice if we already fatched it
+			// on the last go of the loop.
+			var err error
+			block, err = dbFetchBlockByHash(dbTx, n.hash)
+			if err != nil {
+				return err
+			}
+			parent, err = dbFetchBlockByHash(dbTx, n.parentHash)
+			return err
+		*/
 
 		// Load all of the spent txos for the block from the spend
 		// journal.
@@ -1479,10 +1463,10 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 		detachParents = append(detachBlocks, parent)
 		detachSpentTxOuts = append(detachSpentTxOuts, stxos)
 
-		fmt.Printf("DISCONNECT BLOCK %v, %v\n", block.Sha(), block.Height())
+		// fmt.Printf("DISCONNECT BLOCK %v, %v\n", block.Sha(), block.Height())
 		// fmt.Printf("DISCONNECT PARENT %v, %v\n", parent.Sha(), parent.Height())
 
-		err = view.disconnectTransactions(block, parent, stxos)
+		err = b.disconnectTransactions(view, block, parent, stxos)
 		if err != nil {
 			return err
 		}
@@ -1556,20 +1540,20 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 
 		// Load all of the utxos referenced by the block that aren't
 		// already in the view.
-		err := view.fetchInputUtxos(b.db, block)
+		err := view.fetchInputUtxos(b.db, block, parent)
 		if err != nil {
 			return err
 		}
 
 		// Update the view to unspend all of the spent txos and remove
 		// the utxos created by the block.
-		err = view.disconnectTransactions(block, parent,
+		err = b.disconnectTransactions(view, block, parent,
 			detachSpentTxOuts[i])
 		if err != nil {
 			return err
 		}
 
-		fmt.Printf("REAL DISCONNECT BLOCK %v, %v\n", block.Sha(), block.Height())
+		// fmt.Printf("REAL DISCONNECT BLOCK %v, %v\n", block.Sha(), block.Height())
 
 		// Update the database and chain state.
 		err = b.disconnectBlock(n, block, view)
@@ -1591,7 +1575,7 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 
 		// Load all of the utxos referenced by the block that aren't
 		// already in the view.
-		err = view.fetchInputUtxos(b.db, block)
+		err = view.fetchInputUtxos(b.db, block, parent)
 		if err != nil {
 			return err
 		}
@@ -1606,7 +1590,7 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 			return err
 		}
 
-		fmt.Printf("CONNECT BLOCK %v, %v\n", block.Sha(), block.Height())
+		// fmt.Printf("CONNECT BLOCK %v, %v\n", block.Sha(), block.Height())
 
 		// Update the database and chain state.
 		err = b.connectBlock(n, block, view, stxos)
@@ -1759,7 +1743,7 @@ func (b *BlockChain) connectBestChain(node *blockNode, block *dcrutil.Block,
 		// utxos, spend them, and add the new utxos being created by
 		// this block.
 		if fastAdd {
-			err := view.fetchInputUtxos(b.db, block)
+			err := view.fetchInputUtxos(b.db, block, parent)
 			if err != nil {
 				return false, err
 			}

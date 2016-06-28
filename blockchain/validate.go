@@ -1390,7 +1390,7 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
 		// While we're here, double check to make sure that the input is from an
 		// SStx. By doing so, you also ensure the first output is OP_SSTX tagged.
 		if utxoEntrySstx.TransactionType() != stake.TxTypeSStx {
-			errStr := fmt.Sprintf("Input transaction %v for SSGen was not"+
+			errStr := fmt.Sprintf("Input transaction %v for SSGen was not "+
 				"an SStx tx (given input: %v)", txHash, sstxHash)
 			return 0, ruleError(ErrInvalidSSGenInput, errStr)
 		}
@@ -1651,8 +1651,8 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
 
 			if int64(txIn.BlockHeight) != utxoEntry.BlockHeight() {
 				str := fmt.Sprintf("bad fraud check block height (expected %v, "+
-					"given %v) for txIn %v", utxoEntry.BlockHeight(),
-					txIn.BlockHeight, idx)
+					"given %v) for txIn %v %v", utxoEntry.BlockHeight(),
+					txIn.BlockHeight, idx, DebugMsgTxString(tx.MsgTx()))
 				return 0, ruleError(ErrFraudBlockHeight, str)
 			}
 
@@ -2371,24 +2371,26 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 
 	// Check to ensure consensus via the PoS ticketing system versus the
 	// informations stored in the header.
-	ticketStore, err := b.fetchTicketStore(node)
-	if err != nil {
-		log.Tracef("Failed to generate ticket store for incoming "+
-			"node %v; error given: %v", node.hash, err)
-		return err
-	}
+	/*
+		ticketStore, err := b.fetchTicketStore(node)
+		if err != nil {
+			log.Tracef("Failed to generate ticket store for incoming "+
+				"node %v; error given: %v", node.hash, err)
+			return err
+		}
 
-	err = b.CheckBlockStakeSanity(ticketStore,
-		b.chainParams.StakeValidationHeight,
-		node,
-		block,
-		parentBlock,
-		b.chainParams)
-	if err != nil {
-		log.Tracef("CheckBlockStakeSanity failed for incoming "+
-			"node %v; error given: %v", node.hash, err)
-		return err
-	}
+			err = b.CheckBlockStakeSanity(ticketStore,
+				b.chainParams.StakeValidationHeight,
+				node,
+				block,
+				parentBlock,
+				b.chainParams)
+			if err != nil {
+				log.Tracef("CheckBlockStakeSanity failed for incoming "+
+					"node %v; error given: %v", node.hash, err)
+				return err
+			}
+	*/
 
 	// Don't run scripts if this node is before the latest known good
 	// checkpoint since the validity is verified via the checkpoints (all
@@ -2485,7 +2487,7 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 
 		utxoView.SetStakeViewpoint(ViewpointPrevValidInitial)
 		utxoView.SetConnectAfter(true)
-		err = utxoView.fetchInputUtxos(b.db, block)
+		err = utxoView.fetchInputUtxos(b.db, block, parentBlock)
 		if err != nil {
 			return err
 		}
@@ -2501,7 +2503,7 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 	// TxTreeStake of current block.
 	utxoView.SetStakeViewpoint(thisNodeStakeViewpoint)
 	utxoView.SetConnectAfter(false)
-	err = utxoView.fetchInputUtxos(b.db, block)
+	err = utxoView.fetchInputUtxos(b.db, block, parentBlock)
 	if err != nil {
 		return err
 	}
@@ -2539,7 +2541,7 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 	// disable automatic connection.
 	utxoView.SetStakeViewpoint(thisNodeRegularViewpoint)
 	utxoView.SetConnectAfter(false)
-	err = utxoView.fetchInputUtxos(b.db, block)
+	err = utxoView.fetchInputUtxos(b.db, block, parentBlock)
 	if err != nil {
 		return err
 	}
