@@ -443,6 +443,59 @@ func writeTicketDataToBuf(buf *bytes.Buffer, td *stake.TicketData) {
 	}
 }
 
+// DebugUtxoEntryData returns a string containing information about the data
+// stored in the given UtxoEntry.
+func DebugUtxoEntryData(hash chainhash.Hash, utx *UtxoEntry) string {
+	var buffer bytes.Buffer
+	str := fmt.Sprintf("Hash: %v\n", hash)
+	buffer.WriteString(str)
+	if utx == nil {
+		str := fmt.Sprintf("MISSING\n\n")
+		buffer.WriteString(str)
+		return buffer.String()
+	}
+
+	str = fmt.Sprintf("Height: %v\n", utx.height)
+	buffer.WriteString(str)
+	str = fmt.Sprintf("Index: %v\n", utx.index)
+	buffer.WriteString(str)
+	str = fmt.Sprintf("TxVersion: %v\n", utx.txVersion)
+	buffer.WriteString(str)
+	str = fmt.Sprintf("TxType: %v\n", utx.txType)
+	buffer.WriteString(str)
+	str = fmt.Sprintf("IsCoinbase: %v\n", utx.isCoinBase)
+	buffer.WriteString(str)
+	str = fmt.Sprintf("HasExpiry: %v\n", utx.hasExpiry)
+	buffer.WriteString(str)
+	str = fmt.Sprintf("FullySpent: %v\n", utx.IsFullySpent())
+	buffer.WriteString(str)
+	str = fmt.Sprintf("StakeExtra: %x\n\n", utx.stakeExtra)
+	buffer.WriteString(str)
+
+	outputOrdered := make([]int, 0, len(utx.sparseOutputs))
+	for outputIndex := range utx.sparseOutputs {
+		outputOrdered = append(outputOrdered, int(outputIndex))
+	}
+	sort.Ints(outputOrdered)
+	for _, idx := range outputOrdered {
+		utxo := utx.sparseOutputs[uint32(idx)]
+		str = fmt.Sprintf("Output index: %v\n", idx)
+		buffer.WriteString(str)
+		str = fmt.Sprintf("Amount: %v\n", utxo.amount)
+		buffer.WriteString(str)
+		str = fmt.Sprintf("ScriptVersion: %v\n", utxo.scriptVersion)
+		buffer.WriteString(str)
+		str = fmt.Sprintf("Script: %x\n", utxo.pkScript)
+		buffer.WriteString(str)
+		str = fmt.Sprintf("Spent: %v\n", utxo.spent)
+		buffer.WriteString(str)
+	}
+	str = fmt.Sprintf("\n")
+	buffer.WriteString(str)
+
+	return buffer.String()
+}
+
 // DebugUtxoViewpointData returns a string containing information about the data
 // stored in the given UtxoView.
 func DebugUtxoViewpointData(uv *UtxoViewpoint) string {
@@ -453,49 +506,7 @@ func DebugUtxoViewpointData(uv *UtxoViewpoint) string {
 	var buffer bytes.Buffer
 
 	for hash, utx := range uv.entries {
-		str := fmt.Sprintf("Hash: %v\n", hash)
-		buffer.WriteString(str)
-		if utx == nil {
-			str := fmt.Sprintf("MISSING\n\n")
-			buffer.WriteString(str)
-			return buffer.String()
-		}
-
-		str = fmt.Sprintf("Height: %v\n", utx.height)
-		buffer.WriteString(str)
-		str = fmt.Sprintf("Index: %v\n", utx.index)
-		buffer.WriteString(str)
-		str = fmt.Sprintf("TxVersion: %v\n", utx.txVersion)
-		buffer.WriteString(str)
-		str = fmt.Sprintf("TxType: %v\n", utx.txType)
-		buffer.WriteString(str)
-		str = fmt.Sprintf("IsCoinbase: %v\n", utx.isCoinBase)
-		buffer.WriteString(str)
-		str = fmt.Sprintf("HasExpiry: %v\n", utx.hasExpiry)
-		buffer.WriteString(str)
-		str = fmt.Sprintf("FullySpent: %v\n\n", utx.IsFullySpent())
-		buffer.WriteString(str)
-
-		outputOrdered := make([]int, 0, len(utx.sparseOutputs))
-		for outputIndex := range utx.sparseOutputs {
-			outputOrdered = append(outputOrdered, int(outputIndex))
-		}
-		sort.Ints(outputOrdered)
-		for _, idx := range outputOrdered {
-			utxo := utx.sparseOutputs[uint32(idx)]
-			str = fmt.Sprintf("Output index: %v\n", idx)
-			buffer.WriteString(str)
-			str = fmt.Sprintf("Amount: %v\n", utxo.amount)
-			buffer.WriteString(str)
-			str = fmt.Sprintf("ScriptVersion: %v\n", utxo.scriptVersion)
-			buffer.WriteString(str)
-			str = fmt.Sprintf("Script: %x\n", utxo.pkScript)
-			buffer.WriteString(str)
-			str = fmt.Sprintf("Spent: %v\n\n", utxo.spent)
-			buffer.WriteString(str)
-		}
-		str = fmt.Sprintf("\n")
-		buffer.WriteString(str)
+		buffer.WriteString(DebugUtxoEntryData(hash, utx))
 	}
 
 	return buffer.String()

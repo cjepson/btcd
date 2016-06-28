@@ -78,6 +78,7 @@ func (o *utxoOutput) maybeDecompress(compressionVersion uint32) {
 		return
 	}
 
+	//fmt.Printf("Script %x, compressed %v\n", o.pkScript, o.compressed)
 	o.pkScript = decompressScript(o.pkScript, compressionVersion)
 	o.compressed = false
 }
@@ -349,6 +350,7 @@ func (view *UtxoViewpoint) AddTxOuts(tx *dcrutil.Tx, blockHeight int64,
 			output.amount = txOut.Value
 			output.scriptVersion = txOut.Version
 			output.pkScript = txOut.PkScript
+			output.compressed = false
 			continue
 		}
 
@@ -358,6 +360,7 @@ func (view *UtxoViewpoint) AddTxOuts(tx *dcrutil.Tx, blockHeight int64,
 			amount:        txOut.Value,
 			scriptVersion: txOut.Version,
 			pkScript:      txOut.PkScript,
+			compressed:    false,
 		}
 	}
 	return
@@ -392,7 +395,7 @@ func (view *UtxoViewpoint) connectTransaction(tx *dcrutil.Tx, blockHeight int64,
 		// Ensure the referenced utxo exists in the view.  This should
 		// never happen unless there is a bug is introduced in the code.
 		if entry == nil {
-			//panic("")
+			panic("")
 			return AssertError(fmt.Sprintf("view missing input %v",
 				txIn.PreviousOutPoint))
 		}
@@ -512,9 +515,19 @@ func (view *UtxoViewpoint) handleTxStoreViewpoint(db database.DB,
 // spend as spent, and setting the best hash for the view to the passed block.
 // In addition, when the 'stxos' argument is not nil, it will be updated to
 // append an entry for each spent txout.
-func (view *UtxoViewpoint) connectTransactions(block *dcrutil.Block,
+func (b *BlockChain) connectTransactions(view *UtxoViewpoint, block *dcrutil.Block,
 	parent *dcrutil.Block, stxos *[]spentTxOut) error {
+	regularTxTreeValid := dcrutil.IsFlagSet16(block.MsgBlock().Header.VoteBits,
+		dcrutil.BlockValid)
+	thisNodeStakeViewpoint := ViewpointPrevInvalidStake
+	if regularTxTreeValid {
+		thisNodeStakeViewpoint = ViewpointPrevValidStake
+	}
+
 	if parent != nil && block.Height() != 0 {
+		view.SetStakeViewpoint(ViewpointPrevValidInitial)
+		view.SetConnectAfter(true)
+		view.fetchInputUtxos(b.db, block, parent)
 		mBlock := block.MsgBlock()
 		votebits := mBlock.Header.VoteBits
 		regularTxTreeValid := dcrutil.IsFlagSet16(votebits, dcrutil.BlockValid)
@@ -530,6 +543,9 @@ func (view *UtxoViewpoint) connectTransactions(block *dcrutil.Block,
 	}
 
 	for i, stx := range block.STransactions() {
+		view.SetStakeViewpoint(thisNodeStakeViewpoint)
+		view.SetConnectAfter(true)
+		view.fetchInputUtxos(b.db, block, parent)
 		err := view.connectTransaction(stx, block.Height(), uint32(i), stxos)
 		if err != nil {
 			return err
@@ -665,12 +681,12 @@ func (b *BlockChain) disconnectTransactions(view *UtxoViewpoint,
 				}
 
 				entry = newUtxoEntry(tx.MsgTx().Version, stxo.height,
-					stxo.index, IsCoinBase(tx), tx.MsgTx().Expiry != 0,
-					tt)
-				if tt == stake.TxTypeSStx {
-					stakeExtra := make([]byte, serializeSizeForMinimalOutputs(tx))
-					putTxToMinimalOutputs(stakeExtra, tx)
-					entry.stakeExtra = stakeExtra
+					stxo.index, stxo.isCoinBase, stxo.hasExpiry,
+					stxo.txType)
+				if stxo.txType == stake.TxTypeSStx {
+					//stakeExtra := make([]byte, serializeSizeForMinimalOutputs(tx))
+					//putTxToMinimalOutputs(stakeExtra, tx)
+					entry.stakeExtra = stxo.stakeExtra
 				}
 				view.entries[*originHash] = entry
 			}
@@ -686,7 +702,7 @@ func (b *BlockChain) disconnectTransactions(view *UtxoViewpoint,
 			if !ok {
 				// Add the unspent transaction output.
 				entry.sparseOutputs[originIndex] = &utxoOutput{
-					compressed:    true,
+					compressed:    stxo.compressed,
 					spent:         false,
 					amount:        txIn.ValueIn,
 					scriptVersion: stxo.scriptVersion,
@@ -755,12 +771,19 @@ func (b *BlockChain) disconnectTransactions(view *UtxoViewpoint,
 					originIndex := txIn.PreviousOutPoint.Index
 					entry := view.entries[*originHash]
 					if entry == nil {
-						panic(fmt.Sprintf("tried to revive utx %v from "+
-							"non-fully spent stx entry", originHash))
-
+						if !stxo.txFullySpent {
+							// fmt.Printf("currentview %v", DebugUtxoViewpointData(view))
+							panic(fmt.Sprintf("tried to revive utx %v from "+
+								"non-fully spent stx entry", originHash))
+						}
 						entry = newUtxoEntry(tx.MsgTx().Version,
-							stxo.height, stxo.index, isCoinbase,
-							tx.MsgTx().Expiry != 0, stake.TxTypeRegular)
+							stxo.height, stxo.index, stxo.isCoinBase,
+							stxo.hasExpiry, stxo.txType)
+						if stxo.txType == stake.TxTypeSStx {
+							//stakeExtra := make([]byte, serializeSizeForMinimalOutputs(tx))
+							//putTxToMinimalOutputs(stakeExtra, tx)
+							entry.stakeExtra = stxo.stakeExtra
+						}
 						view.entries[*originHash] = entry
 					}
 
@@ -775,7 +798,7 @@ func (b *BlockChain) disconnectTransactions(view *UtxoViewpoint,
 					if !ok {
 						// Add the unspent transaction output.
 						entry.sparseOutputs[originIndex] = &utxoOutput{
-							compressed:    true,
+							compressed:    stxo.compressed,
 							spent:         false,
 							amount:        txIn.ValueIn,
 							scriptVersion: stxo.scriptVersion,
@@ -855,13 +878,13 @@ func (view *UtxoViewpoint) disconnectTransactionSlice(transactions []*dcrutil.Tx
 			txIn := tx.MsgTx().TxIn[txInIdx]
 			originHash := &txIn.PreviousOutPoint.Hash
 			originInIndex := txIn.PreviousOutPoint.Index
-			originHeight := txIn.BlockHeight
-			originIndex := txIn.BlockIndex
+			//originHeight := txIn.BlockHeight
+			// originIndex := txIn.BlockIndex
 			entry := view.entries[*originHash]
 			if entry == nil {
-				txType := stake.DetermineTxType(tx)
-				entry = newUtxoEntry(tx.MsgTx().Version, originHeight,
-					originIndex, isCoinbase, tx.MsgTx().Expiry != 0, txType)
+				entry = newUtxoEntry(stxo.txVersion, stxo.height,
+					stxo.index, stxo.isCoinBase, stxo.hasExpiry,
+					stxo.txType)
 				if txType == stake.TxTypeSStx {
 					stakeExtra := make([]byte,
 						serializeSizeForMinimalOutputs(tx))
@@ -882,7 +905,7 @@ func (view *UtxoViewpoint) disconnectTransactionSlice(transactions []*dcrutil.Tx
 			if !ok {
 				// Add the unspent transaction output.
 				entry.sparseOutputs[originInIndex] = &utxoOutput{
-					compressed:    true,
+					compressed:    stxo.compressed,
 					spent:         false,
 					amount:        txIn.ValueIn,
 					scriptVersion: stxo.scriptVersion,

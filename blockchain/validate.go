@@ -950,6 +950,7 @@ func (b *BlockChain) CheckBlockStakeSanity(tixStore TicketStore,
 		}
 
 		// Check the ticket pool size.
+		// fmt.Printf("pool size ticket store %v\n", tixStore)
 		_, calcPoolSize, _, err := b.getWinningTicketsInclStore(node, tixStore)
 		if err != nil {
 			log.Tracef("failed to retrieve poolsize for stake "+
@@ -1319,7 +1320,7 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
 
 		err = stake.VerifySStxAmounts(sstxOutAmts, sstxOutAmtsCalc)
 		if err != nil {
-			fmt.Printf("msgTx.TxOut[0].Value %v\n", msgTx.TxOut[0].Value)
+			//fmt.Printf("msgTx.TxOut[0].Value %v\n", msgTx.TxOut[0].Value)
 			errStr := fmt.Sprintf("SStx output commitment amounts were not the "+
 				"same as calculated amounts: %v", err)
 			return 0, ruleError(ErrSStxCommitment, errStr)
@@ -1392,6 +1393,8 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
 		if utxoEntrySstx.TransactionType() != stake.TxTypeSStx {
 			errStr := fmt.Sprintf("Input transaction %v for SSGen was not "+
 				"an SStx tx (given input: %v)", txHash, sstxHash)
+			//fmt.Printf("%v", errStr)
+			//panic(DebugUtxoEntryData(sstxHash, utxoEntrySstx))
 			return 0, ruleError(ErrInvalidSSGenInput, errStr)
 		}
 
@@ -1408,6 +1411,10 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
 			return 0, AssertError("missing stake extra data for ticket used " +
 				"as input for vote")
 		}
+		//fmt.Printf("minOutsSStx \n")
+		//for i := range minOutsSStx {
+		//	fmt.Printf("%v, %v, %x\n", minOutsSStx[i].Value, minOutsSStx[i].Version, minOutsSStx[i].PkScript)
+		//}
 		sstxPayTypes, sstxPkhs, sstxAmts, _, sstxRules, sstxLimits :=
 			stake.SStxStakeOutputInfo(minOutsSStx)
 			/*
@@ -2335,7 +2342,7 @@ func (b *BlockChain) checkTransactionsAndConnect(inputFees dcrutil.Amount,
 // This function MUST be called with the chain state lock held (for writes).
 func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 	utxoView *UtxoViewpoint, stxos *[]spentTxOut) error {
-	fmt.Printf("connect block %v, height %v\n", node.hash, node.height)
+	//fmt.Printf("connect block %v, height %v, poolsize %v\n", node.hash, node.height, node.header.PoolSize)
 	// If the side chain blocks end up in the database, a call to
 	// CheckBlockSanity should be done here in case a previous version
 	// allowed a block that is no longer valid.  However, since the
@@ -2371,26 +2378,24 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 
 	// Check to ensure consensus via the PoS ticketing system versus the
 	// informations stored in the header.
-	/*
-		ticketStore, err := b.fetchTicketStore(node)
-		if err != nil {
-			log.Tracef("Failed to generate ticket store for incoming "+
-				"node %v; error given: %v", node.hash, err)
-			return err
-		}
+	ticketStore, err := b.fetchTicketStore(node)
+	if err != nil {
+		log.Tracef("Failed to generate ticket store for incoming "+
+			"node %v; error given: %v", node.hash, err)
+		return err
+	}
 
-			err = b.CheckBlockStakeSanity(ticketStore,
-				b.chainParams.StakeValidationHeight,
-				node,
-				block,
-				parentBlock,
-				b.chainParams)
-			if err != nil {
-				log.Tracef("CheckBlockStakeSanity failed for incoming "+
-					"node %v; error given: %v", node.hash, err)
-				return err
-			}
-	*/
+	err = b.CheckBlockStakeSanity(ticketStore,
+		b.chainParams.StakeValidationHeight,
+		node,
+		block,
+		parentBlock,
+		b.chainParams)
+	if err != nil {
+		log.Tracef("CheckBlockStakeSanity failed for incoming "+
+			"node %v; error given: %v", node.hash, err)
+		return err
+	}
 
 	// Don't run scripts if this node is before the latest known good
 	// checkpoint since the validity is verified via the checkpoints (all

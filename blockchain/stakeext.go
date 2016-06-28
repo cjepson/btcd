@@ -189,7 +189,8 @@ func (b *BlockChain) getWinningTicketsInclStore(node *blockNode,
 	totalTickets := 0
 	var sortedSlice []*stake.TicketData
 	for i := 0; i < stake.BucketsSize; i++ {
-		ltb, err := b.GenerateLiveTicketBucket(ticketStore, tpdBucketMap, uint8(i))
+		ltb, err := b.GenerateLiveTicketBucket(ticketStore, tpdBucketMap,
+			uint8(i))
 		if err != nil {
 			h := node.hash
 			str := fmt.Sprintf("Failed to generate a live ticket bucket "+
@@ -212,6 +213,11 @@ func (b *BlockChain) getWinningTicketsInclStore(node *blockNode,
 		sort.Sort(tempTdSlice)
 		sortedSlice = append(sortedSlice, tempTdSlice...)
 	}
+	//fmt.Printf("SORTED SLICE OF TICKETS FOR BLOCK %v\n", node.height)
+	//for i := range sortedSlice {
+	//	fmt.Printf("%v,", sortedSlice[i].SStxHash)
+	//}
+	//fmt.Printf("\n")
 
 	// Use the parent block's header to seed a PRNG that picks the
 	// lottery winners.

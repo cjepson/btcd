@@ -1514,8 +1514,8 @@ func (tmdb *TicketDB) pushMatureTicketsAtHeight(height int64) (SStxMemMap, error
 // InsertBlock.  See the comment for InsertBlock for more details.
 //
 // This function MUST be called with the tmdb lock held (for writes).
-func (tmdb *TicketDB) insertBlock(block *dcrutil.Block) (SStxMemMap,
-	SStxMemMap, SStxMemMap, error) {
+func (tmdb *TicketDB) insertBlock(block *dcrutil.Block,
+	parent *dcrutil.Block) (SStxMemMap, SStxMemMap, SStxMemMap, error) {
 
 	height := block.Height()
 	if height < tmdb.StakeEnabledHeight {
@@ -1571,12 +1571,7 @@ func (tmdb *TicketDB) insertBlock(block *dcrutil.Block) (SStxMemMap,
 	}
 
 	// Spend or miss all the necessary tickets and do some sanity checks.
-	parentBlock, err := tmdb.FetchBlockBySha(
-		&block.MsgBlock().Header.PrevBlock)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	spentAndMissedTickets, err := tmdb.spendTickets(parentBlock,
+	spentAndMissedTickets, err := tmdb.spendTickets(parent,
 		usedTickets,
 		spendingHashes)
 	if err != nil {
@@ -1624,13 +1619,13 @@ func (tmdb *TicketDB) insertBlock(block *dcrutil.Block) (SStxMemMap,
 // a consensus failure somehow.
 //
 // This function is safe for concurrent access.
-func (tmdb *TicketDB) InsertBlock(block *dcrutil.Block) (SStxMemMap,
+func (tmdb *TicketDB) InsertBlock(block, parent *dcrutil.Block) (SStxMemMap,
 	SStxMemMap, SStxMemMap, error) {
 
 	tmdb.mtx.Lock()
 	defer tmdb.mtx.Unlock()
 
-	return tmdb.insertBlock(block)
+	return tmdb.insertBlock(block, parent)
 }
 
 // unpushMatureTicketsAtHeight unmatures tickets from TICKET_MATURITY blocks ago by
@@ -1806,7 +1801,12 @@ func (tmdb *TicketDB) rescanTicketDB() error {
 					return err
 				}
 
-				_, _, _, err = tmdb.insertBlock(bl)
+				pa, err := tmdb.FetchBlockBySha(&bl.MsgBlock().Header.PrevBlock)
+				if err != nil {
+					return err
+				}
+
+				_, _, _, err = tmdb.insertBlock(bl, pa)
 				if err != nil {
 					return err
 				}
@@ -1845,7 +1845,13 @@ func (tmdb *TicketDB) rescanTicketDB() error {
 			return errBlock
 		}
 
-		_, _, _, err = tmdb.insertBlock(block)
+		parent, errBlock :=
+			tmdb.FetchBlockBySha(&block.MsgBlock().Header.PrevBlock)
+		if errBlock != nil {
+			return errBlock
+		}
+
+		_, _, _, err = tmdb.insertBlock(block, parent)
 		if err != nil {
 			return err
 		}

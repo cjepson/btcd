@@ -1089,7 +1089,7 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block, view *U
 	// to be handled correctly in the near future.
 	if node.height >= b.chainParams.StakeEnabledHeight {
 		spentAndMissedTickets, newTickets, _, err :=
-			b.tmdb.InsertBlock(block)
+			b.tmdb.InsertBlock(block, parent)
 		if err != nil {
 			return err
 		}
@@ -1237,12 +1237,6 @@ func (b *BlockChain) disconnectBlock(node *blockNode, block *dcrutil.Block, view
 	// if we're above the point in which the stake db is enabled.
 	prevNode, err := b.getPrevNodeFromNode(node)
 	if err != nil {
-		// Attempt to restore TicketDb if this fails.
-		_, _, _, errReinsert := b.tmdb.InsertBlock(block)
-		if errReinsert != nil {
-			return errReinsert
-		}
-
 		return err
 	}
 
@@ -1289,12 +1283,6 @@ func (b *BlockChain) disconnectBlock(node *blockNode, block *dcrutil.Block, view
 		// that contains all txos spent by the block .
 		err = dbRemoveSpendJournalEntry(dbTx, block.Sha())
 		if err != nil {
-			// Attempt to restore TicketDb if this fails.
-			_, _, _, errReinsert := b.tmdb.InsertBlock(block)
-			if errReinsert != nil {
-				return errReinsert
-			}
-
 			return err
 		}
 
@@ -1310,9 +1298,9 @@ func (b *BlockChain) disconnectBlock(node *blockNode, block *dcrutil.Block, view
 
 	// Put block in the side chain cache.
 	node.inMainChain = false
-	b.blockCacheLock.Lock()
+	// b.blockCacheLock.Lock()
 	b.blockCache[*node.hash] = block
-	b.blockCacheLock.Unlock()
+	// b.blockCacheLock.Unlock()
 
 	// This node's parent is now the end of the best chain.
 	b.bestNode = node.parent
@@ -1338,9 +1326,9 @@ func (b *BlockChain) disconnectBlock(node *blockNode, block *dcrutil.Block, view
 	// Notify the caller that the block was disconnected from the main
 	// chain.  The caller would typically want to react with actions such as
 	// updating wallets.
-	b.chainLock.Unlock()
-	b.sendNotification(NTBlockDisconnected, blockAndParent)
 	b.chainLock.Lock()
+	b.sendNotification(NTBlockDisconnected, blockAndParent)
+	b.chainLock.Unlock()
 
 	return nil
 }
@@ -1496,7 +1484,7 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 		// thus will not be generated.  This is done because the state
 		// is not being immediately written to the database, so it is
 		// not needed.
-		fmt.Printf("CHECK CONNECT BLOCK %v, %v\n", block.Sha(), block.Height())
+		//fmt.Printf("CHECK CONNECT BLOCK %v, %v\n", block.Sha(), block.Height())
 		err := b.checkConnectBlock(n, block, view, nil)
 		if err != nil {
 			return err
@@ -1553,7 +1541,7 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 			return err
 		}
 
-		// fmt.Printf("REAL DISCONNECT BLOCK %v, %v\n", block.Sha(), block.Height())
+		//fmt.Printf("REAL DISCONNECT BLOCK %v, %v\n", block.Sha(), block.Height())
 
 		// Update the database and chain state.
 		err = b.disconnectBlock(n, block, view)
@@ -1573,19 +1561,12 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 			return err
 		}
 
-		// Load all of the utxos referenced by the block that aren't
-		// already in the view.
-		err = view.fetchInputUtxos(b.db, block, parent)
-		if err != nil {
-			return err
-		}
-
 		// Update the view to mark all utxos referenced by the block
 		// as spent and add all transactions being created by this block
 		// to it.  Also, provide an stxo slice so the spent txout
 		// details are generated.
 		stxos := make([]spentTxOut, 0, countSpentOutputs(block, parent))
-		err = view.connectTransactions(block, parent, &stxos)
+		err = b.connectTransactions(view, block, parent, &stxos)
 		if err != nil {
 			return err
 		}
@@ -1597,9 +1578,9 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 		if err != nil {
 			return err
 		}
-		b.blockCacheLock.Lock()
+		//	b.blockCacheLock.Lock()
 		delete(b.blockCache, *n.hash)
-		b.blockCacheLock.Unlock()
+		//	b.blockCacheLock.Unlock()
 	}
 
 	// Log the point where the chain forked.
@@ -1747,7 +1728,7 @@ func (b *BlockChain) connectBestChain(node *blockNode, block *dcrutil.Block,
 			if err != nil {
 				return false, err
 			}
-			err = view.connectTransactions(block, parent, &stxos)
+			err = b.connectTransactions(view, block, parent, &stxos)
 			if err != nil {
 				return false, err
 			}

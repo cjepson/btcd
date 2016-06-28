@@ -161,6 +161,13 @@ func (b *BlockChain) connectTickets(tixStore TicketStore, node *blockNode,
 		if err != nil {
 			return err
 		}
+		regularTxTreeValid := dcrutil.IsFlagSet16(node.header.VoteBits,
+			dcrutil.BlockValid)
+		thisNodeStakeViewpoint := ViewpointPrevInvalidStake
+		if regularTxTreeValid {
+			thisNodeStakeViewpoint = ViewpointPrevValidStake
+		}
+		view.SetStakeViewpoint(thisNodeStakeViewpoint)
 		err = view.fetchInputUtxos(b.db, block, parent)
 		if err != nil {
 			errStr := fmt.Sprintf("fetchInputUtxos failed for incoming "+
@@ -187,10 +194,9 @@ func (b *BlockChain) connectTickets(tixStore TicketStore, node *blockNode,
 					return ruleError(ErrMissingTx, str)
 				}
 
-				sstxHeight := originUTXO.BlockHeight()
-
 				// Check maturity of ticket; we can only spend the ticket after it
 				// hits maturity at height + tM + 1.
+				sstxHeight := originUTXO.BlockHeight()
 				if (height - sstxHeight) < (tM + 1) {
 					blockSha := block.Sha()
 					errStr := fmt.Sprintf("Error: A ticket spend as an SSGen in "+
@@ -472,6 +478,8 @@ func (b *BlockChain) disconnectTickets(tixStore TicketStore,
 	node *blockNode,
 	block *dcrutil.Block) error {
 
+	// fmt.Printf("DISCONNECT TICKETS FOR BLOCK %v, %v, len(tixStore) %v\n", block.Height(), block.Sha(), len(tixStore))
+
 	tM := int64(b.chainParams.TicketMaturity)
 	height := node.height
 
@@ -493,6 +501,8 @@ func (b *BlockChain) disconnectTickets(tixStore TicketStore,
 	if errBlock != nil {
 		return errBlock
 	}
+
+	// fmt.Printf("matureBlock %v, matureBlockHeight %v\n", matureBlock.Sha(), matureBlock.Height())
 
 	// Store pointers to empty ticket data in the ticket store and mark them as
 	// non-existing.
@@ -543,6 +553,8 @@ func (b *BlockChain) disconnectTickets(tixStore TicketStore,
 	if errDump != nil {
 		return errDump
 	}
+
+	// fmt.Printf("spent tickets %v\n", spentTickets)
 
 	// Move all of these tickets into the ticket store as available tickets.
 	for hash, td := range spentTickets {
@@ -613,11 +625,6 @@ func (b *BlockChain) fetchTicketStore(node *blockNode) (TicketStore, error) {
 			return nil, err
 		}
 
-		err = b.disconnectTickets(tixStore, n, block)
-		if err != nil {
-			return nil, err
-		}
-
 		// Load all of the spent txos for the block from the spend
 		// journal.
 		var stxos []spentTxOut
@@ -633,9 +640,13 @@ func (b *BlockChain) fetchTicketStore(node *blockNode) (TicketStore, error) {
 		if err != nil {
 			return nil, err
 		}
+		err = b.disconnectTickets(tixStore, n, block)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	fmt.Printf("TICKETSTORE %v\n", tixStore)
+	// fmt.Printf("TICKETSTORE %v\n", tixStore)
 
 	// The ticket store is now accurate to either the node where the
 	// requested node forks off the main chain (in the case where the
@@ -682,10 +693,12 @@ func (b *BlockChain) fetchTicketStore(node *blockNode) (TicketStore, error) {
 		}
 
 		var stxos []spentTxOut
-		err = view.connectTransactions(block, parent, &stxos)
+		err = b.connectTransactions(view, block, parent, &stxos)
 		if err != nil {
 			return nil, err
 		}
+
+		view.SetBestHash(node.hash)
 	}
 
 	return tixStore, nil
