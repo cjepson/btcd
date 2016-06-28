@@ -9,7 +9,7 @@ import (
 	"compress/bzip2"
 	"encoding/gob"
 	"encoding/hex"
-	"fmt"
+	//	"fmt"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -196,7 +196,7 @@ func TestBlockValidationRules(t *testing.T) {
 	// Add the rest of the blocks up to the stake early test block.
 	stakeEarlyTest := 142
 	for i := 1; i < stakeEarlyTest; i++ {
-		fmt.Printf("Try to connect block %v\n", i)
+		// fmt.Printf("Try to connect block %v\n", i)
 		bl, err := dcrutil.NewBlockFromBytes(blockChain[int64(i)])
 		if err != nil {
 			t.Errorf("NewBlockFromBytes error: %v", err.Error())
@@ -1545,7 +1545,7 @@ func TestBlockValidationRules(t *testing.T) {
 
 	expiredTx154 := new(wire.MsgBlock)
 	expiredTx154.FromBytes(block154Bytes)
-	expiredTx154.AddTransaction(mtxFromB)
+	expiredTx154.Transactions[11] = mtxFromB
 	recalculateMsgBlockMerkleRootsSize(expiredTx154)
 	b154test = dcrutil.NewBlock(expiredTx154)
 	b154test.SetHeight(int64(testsIdx2))
@@ -1753,7 +1753,9 @@ func TestBlockValidationRules(t *testing.T) {
 	}
 
 	// ----------------------------------------------------------------------------
-	// ErrZeroValueOutputSpend
+	// ErrMissingTx (formerly ErrZeroValueOutputSpend). In the latest version of
+	// the database, zero value outputs are automatically pruned, so the output
+	// is simply missing.
 	mtxFromB = new(wire.MsgTx)
 	mtxFromB.FromBytes(regularTx154)
 
@@ -1786,9 +1788,9 @@ func TestBlockValidationRules(t *testing.T) {
 	// Fails and hits ErrZeroValueOutputSpend.
 	err = chain.CheckConnectBlock(b154test)
 	if err == nil || err.(blockchain.RuleError).GetCode() !=
-		blockchain.ErrZeroValueOutputSpend {
+		blockchain.ErrMissingTx {
 		t.Errorf("Unexpected no or wrong error for "+
-			"ErrZeroValueOutputSpend test: %v", err)
+			"ErrMissingTx test: %v", err)
 	}
 
 	// ----------------------------------------------------------------------------
@@ -1907,7 +1909,8 @@ func TestBlockValidationRules(t *testing.T) {
 	}
 
 	// ----------------------------------------------------------------------------
-	// Try to spend immature change from one SStx in another SStx.
+	// Try to spend immature change from one SStx in another SStx, hitting
+	// ErrImmatureSpend.
 	sstxSpend2Invalid166 := new(wire.MsgBlock)
 	sstxSpend2Invalid166.FromBytes(block166Bytes)
 	sstxToUse166 = sstxSpend2Invalid166.STransactions[6]
@@ -1937,7 +1940,7 @@ func TestBlockValidationRules(t *testing.T) {
 
 	err = blockchain.CheckWorklessBlockSanity(b166test, timeSource, simNetParams)
 	if err != nil {
-		t.Errorf("got unexpected error for ErrMissingTx test 3 sanity "+
+		t.Errorf("got unexpected error for ErrImmatureSpend test sanity "+
 			"check: %v", err)
 	}
 
@@ -1949,9 +1952,9 @@ func TestBlockValidationRules(t *testing.T) {
 	// This output doesn't become legal to spend until the next block.
 	err = chain.CheckConnectBlock(b166test)
 	if err == nil || err.(blockchain.RuleError).GetCode() !=
-		blockchain.ErrMissingTx {
+		blockchain.ErrImmatureSpend {
 		t.Errorf("Unexpected no or wrong error for "+
-			"ErrMissingTx test 3: %v", err)
+			"ErrImmatureSpend test: %v", err)
 	}
 
 	// ----------------------------------------------------------------------------
@@ -1960,26 +1963,24 @@ func TestBlockValidationRules(t *testing.T) {
 	sstxSpend3Invalid166.FromBytes(block166Bytes)
 	sstxToUse166 = sstxSpend3Invalid166.STransactions[6]
 	sstxToUse166.AddTxIn(sstxSpend3Invalid166.STransactions[5].TxIn[0])
-
 	sstxToUse166.AddTxOut(sstxSpend3Invalid166.STransactions[5].TxOut[1])
 	sstxToUse166.AddTxOut(sstxSpend3Invalid166.STransactions[5].TxOut[2])
-
 	recalculateMsgBlockMerkleRootsSize(sstxSpend3Invalid166)
 	b166test = dcrutil.NewBlock(sstxSpend3Invalid166)
 	b166test.SetHeight(int64(testsIdx3))
 
 	err = blockchain.CheckWorklessBlockSanity(b166test, timeSource, simNetParams)
 	if err != nil {
-		t.Errorf("got unexpected error for ErrDoubleSpend test 1 sanity "+
+		t.Errorf("got unexpected error for double spend test 1 sanity "+
 			"check: %v", err)
 	}
 
-	// Fails and hits ErrDoubleSpend.
+	// Fails and hits ErrMissingTx.
 	err = chain.CheckConnectBlock(b166test)
 	if err == nil || err.(blockchain.RuleError).GetCode() !=
-		blockchain.ErrDoubleSpend {
+		blockchain.ErrMissingTx {
 		t.Errorf("Unexpected no or wrong error for "+
-			"ErrDoubleSpend test 1: %v", err)
+			"double spend test 1: %v", err)
 	}
 
 	// ----------------------------------------------------------------------------
@@ -1996,16 +1997,16 @@ func TestBlockValidationRules(t *testing.T) {
 
 	err = blockchain.CheckWorklessBlockSanity(b166test, timeSource, simNetParams)
 	if err != nil {
-		t.Errorf("got unexpected error for ErrDoubleSpend test 2 sanity "+
+		t.Errorf("got unexpected error for deouble spend test 2 sanity "+
 			"check: %v", err)
 	}
 
-	// Fails and hits ErrDoubleSpend.
+	// Fails and hits ErrMissingTx.
 	err = chain.CheckConnectBlock(b166test)
 	if err == nil || err.(blockchain.RuleError).GetCode() !=
-		blockchain.ErrDoubleSpend {
+		blockchain.ErrMissingTx {
 		t.Errorf("Unexpected no or wrong error for "+
-			"ErrDoubleSpend test 2: %v", err)
+			"double spend test 2: %v", err)
 	}
 }
 

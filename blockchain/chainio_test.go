@@ -4,7 +4,6 @@
 
 package blockchain
 
-/*
 import (
 	"bytes"
 	"errors"
@@ -50,21 +49,24 @@ func TestStxoSerialization(t *testing.T) {
 		txVersion  int32 // When the txout is not fully spent.
 		serialized []byte
 	}{
-		// From block 170 in main blockchain.
 		{
 			name: "Spends last output of coinbase",
 			stxo: spentTxOut{
-				amount:     5000000000,
-				pkScript:   hexToBytes("410411db93e1dcdb8a016b49840f8c53bc1eb68a382e97b1482ecad7b148a6909a5cb2e0eaddfb84ccf9744464f82e160bfa9b8b64f9d4c03f999b8643f656b412a3ac"),
-				isCoinBase: true,
-				height:     9,
-				txVersion:  1,
+				amount:        9999,
+				scriptVersion: 0,
+				pkScript:      hexToBytes("410411db93e1dcdb8a016b49840f8c53bc1eb68a382e97b1482ecad7b148a6909a5cb2e0eaddfb84ccf9744464f82e160bfa9b8b64f9d4c03f999b8643f656b412a3ac"),
+				height:        12345,
+				index:         54321,
+				isCoinBase:    true,
+				hasExpiry:     false,
+				txFullySpent:  true,
+				txType:        0,
+				txVersion:     1,
 			},
-			serialized: hexToBytes("1301320511db93e1dcdb8a016b49840f8c53bc1eb68a382e97b1482ecad7b148a6909a5c"),
+			serialized: hexToBytes("11000511db93e1dcdb8a016b49840f8c53bc1eb68a382e97b1482ecad7b148a6909a5c01"),
 		},
-		// Adapted from block 100025 in main blockchain.
 		{
-			name: "Spends last output of non coinbase",
+			name: "Spends last output of non coinbase and is a ticket",
 			stxo: spentTxOut{
 				amount:     13761000000,
 				pkScript:   hexToBytes("76a914b2fb57eadf61e106a100a7445a8c3f67898841ec88ac"),
@@ -74,7 +76,6 @@ func TestStxoSerialization(t *testing.T) {
 			},
 			serialized: hexToBytes("8b99700186c64700b2fb57eadf61e106a100a7445a8c3f67898841ec"),
 		},
-		// Adapted from block 100025 in main blockchain.
 		{
 			name: "Does not spend last output",
 			stxo: spentTxOut{
@@ -119,7 +120,7 @@ func TestStxoSerialization(t *testing.T) {
 		// stxo.
 		var gotStxo spentTxOut
 		offset, err := decodeSpentTxOut(test.serialized, &gotStxo,
-			test.txVersion, test.stxo.amount, 0)
+			test.stxo.amount, test.stxo.height, test.stxo.index)
 		if err != nil {
 			t.Errorf("decodeSpentTxOut (%s): unexpected error: %v",
 				test.name, err)
@@ -195,7 +196,7 @@ func TestStxoDecodeErrors(t *testing.T) {
 	for _, test := range tests {
 		// Ensure the expected error type is returned.
 		gotBytesRead, err := decodeSpentTxOut(test.serialized,
-			&test.stxo, test.txVersion, test.stxo.amount, 0)
+			&test.stxo, test.stxo.amount, test.stxo.height, test.stxo.index)
 		if reflect.TypeOf(err) != reflect.TypeOf(test.errType) {
 			t.Errorf("decodeSpentTxOut (%s): expected error type "+
 				"does not match - got %T, want %T", test.name,
@@ -960,4 +961,3 @@ func TestBestChainStateDeserializeErrors(t *testing.T) {
 		}
 	}
 }
-*/

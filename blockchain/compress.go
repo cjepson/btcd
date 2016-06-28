@@ -5,7 +5,7 @@
 package blockchain
 
 import (
-	"fmt"
+	//	"fmt"
 
 	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg/chainec"
@@ -653,11 +653,6 @@ func decodeCompressedTxOut(serialized []byte, compressionVersion uint32,
 	compressedScript := make([]byte, scriptSize)
 	copy(compressedScript, serialized[offset:offset+scriptSize])
 
-	if scriptVersion > 0 {
-		// DEBUG eventually remove!
-		scr := decompressScript(compressedScript, currentCompressionVersion)
-		panic(fmt.Sprintf("got script version %v, amount %v, decompressedscript %x, serialized %x", scriptVersion, amount, scr, serialized[0:offset+scriptSize]))
-	}
 	return amount, uint16(scriptVersion), compressedScript,
 		offset + scriptSize, nil
 }

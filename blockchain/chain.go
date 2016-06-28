@@ -36,6 +36,10 @@ const (
 	// searchDepth is the distance in blocks to search down the blockchain
 	// to find some parent.
 	searchDepth = 2048
+
+	// mainchainBlockCacheSize is the number of mainchain blocks to keep
+	// in memory.
+	mainchainBlockCacheSize = 128
 )
 
 // blockNode represents a block within the block chain and is primarily used to
@@ -214,6 +218,11 @@ type BlockChain struct {
 	blockCacheLock sync.RWMutex
 	blockCache     map[chainhash.Hash]*dcrutil.Block
 
+	// The block cache for mainchain blocks, to facilitate faster
+	// reorganizations.
+	mainchainBlockCache     map[chainhash.Hash]*dcrutil.Block
+	mainchainBlockCacheLock sync.Mutex
+
 	// These fields are related to checkpoint handling.  They are protected
 	// by the chain lock.
 	nextCheckpoint  *chaincfg.Checkpoint
@@ -277,9 +286,34 @@ func (b *BlockChain) MissedTickets() (stake.SStxMemMap, error) {
 // This function is NOT safe for concurrent access.
 func (b *BlockChain) TicketsWithAddress(address dcrutil.Address) ([]chainhash.Hash,
 	error) {
-	// TODO CJ fixme
-	// return b.tmdb.GetLiveTicketsForAddress(address)
-	return nil, nil
+	tickets, err := b.tmdb.DumpAllLiveTicketHashes()
+	if err != nil {
+		return nil, err
+	}
+
+	var ticketsWithAddr []chainhash.Hash
+	err = b.db.View(func(dbTx database.Tx) error {
+		var err error
+		for _, hash := range tickets {
+			utxo, err := dbFetchUtxoEntry(dbTx, hash)
+			if err != nil {
+				return err
+			}
+
+			_, addrs, _, err :=
+				txscript.ExtractPkScriptAddrs(txscript.DefaultScriptVersion,
+					utxo.PkScriptByIndex(0), b.chainParams)
+			if addrs[0].EncodeAddress() == address.EncodeAddress() {
+				ticketsWithAddr = append(ticketsWithAddr, *hash)
+			}
+		}
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return ticketsWithAddr, nil
 }
 
 // CheckLiveTicket returns whether or not a ticket exists in the live ticket
@@ -758,7 +792,7 @@ func (b *BlockChain) getNodeAtHeightFromTopNode(node *blockNode,
 // This function is NOT safe for concurrent access.
 func (b *BlockChain) getBlockFromHash(hash *chainhash.Hash) (*dcrutil.Block,
 	error) {
-	// Check block cache
+	// Check side chain block cache
 	b.blockCacheLock.RLock()
 	blockSidechain, existsSidechain := b.blockCache[*hash]
 	b.blockCacheLock.RUnlock()
@@ -775,6 +809,11 @@ func (b *BlockChain) getBlockFromHash(hash *chainhash.Hash) (*dcrutil.Block,
 	}
 
 	// Check main chain
+	block, ok := b.mainchainBlockCache[*hash]
+	if ok {
+		return block, nil
+	}
+
 	b.chainLock.RLock()
 	var blockMainchain *dcrutil.Block
 	errFetchMainchain := b.db.View(func(dbTx database.Tx) error {
@@ -1044,6 +1083,21 @@ func (b *BlockChain) getReorganizeNodes(node *blockNode) (*list.List, *list.List
 	return detachNodes, attachNodes
 }
 
+// pushMainChainBlockCache pushes a block onto the main chain block cache,
+// and removes any old blocks from the cache that might be present.
+func (b *BlockChain) pushMainChainBlockCache(block *dcrutil.Block) {
+	curHeight := block.Height()
+	curHash := block.Sha()
+	b.mainchainBlockCacheLock.Lock()
+	b.mainchainBlockCache[*curHash] = block
+	for hash, bl := range b.mainchainBlockCache {
+		if bl.Height() <= curHeight-mainchainBlockCacheSize {
+			delete(b.mainchainBlockCache, hash)
+		}
+	}
+	b.mainchainBlockCacheLock.Unlock()
+}
+
 // connectBlock handles connecting the passed node/block to the end of the main
 // (best) chain.
 //
@@ -1205,14 +1259,25 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block, view *U
 	b.sendNotification(NTBlockConnected, blockAndParent)
 	//b.chainLock.Unlock()
 
+	b.pushMainChainBlockCache(block)
+
 	return nil
+}
+
+// dropMainChainBlockCache drops a block from the main chain block cache.
+func (b *BlockChain) dropMainChainBlockCache(block *dcrutil.Block) {
+	curHash := block.Sha()
+	b.mainchainBlockCacheLock.Lock()
+	delete(b.mainchainBlockCache, *curHash)
+	b.mainchainBlockCacheLock.Unlock()
 }
 
 // disconnectBlock handles disconnecting the passed node/block from the end of
 // the main (best) chain.
 //
 // This function MUST be called with the chain state lock held (for writes).
-func (b *BlockChain) disconnectBlock(node *blockNode, block *dcrutil.Block, view *UtxoViewpoint) error {
+func (b *BlockChain) disconnectBlock(node *blockNode, block *dcrutil.Block,
+	view *UtxoViewpoint) error {
 	// Make sure the node being disconnected is the end of the best chain.
 	if !node.hash.IsEqual(b.bestNode.hash) {
 		return AssertError("disconnectBlock must be called with the " +
@@ -1329,6 +1394,8 @@ func (b *BlockChain) disconnectBlock(node *blockNode, block *dcrutil.Block, view
 	b.chainLock.Lock()
 	b.sendNotification(NTBlockDisconnected, blockAndParent)
 	b.chainLock.Unlock()
+
+	b.dropMainChainBlockCache(block)
 
 	return nil
 }
@@ -1974,6 +2041,7 @@ func New(config *Config) (*BlockChain, error) {
 		orphans:             make(map[chainhash.Hash]*orphanBlock),
 		prevOrphans:         make(map[chainhash.Hash][]*orphanBlock),
 		blockCache:          make(map[chainhash.Hash]*dcrutil.Block),
+		mainchainBlockCache: make(map[chainhash.Hash]*dcrutil.Block),
 	}
 
 	// Initialize the chain state from the passed database.  When the db

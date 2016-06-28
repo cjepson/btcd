@@ -473,7 +473,6 @@ func deserializeSpendJournalEntry(serialized []byte, txns []*wire.MsgTx,
 				txIn.BlockHeight, txIn.BlockIndex)
 			offset += n
 			if err != nil {
-				panic(fmt.Sprintf("fail on idx %v, txin %x: %v", txIdx, txInIdx, err))
 				return nil, errDeserialize(fmt.Sprintf("unable "+
 					"to decode stxo for %v: %v",
 					txIn.PreviousOutPoint, err))
