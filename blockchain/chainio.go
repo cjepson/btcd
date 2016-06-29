@@ -6,11 +6,11 @@ package blockchain
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
 	"math/big"
 	"sort"
 
+	"github.com/decred/dcrd/blockchain/dbnamespace"
 	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg/chainhash"
 	database "github.com/decred/dcrd/database2"
@@ -20,32 +20,6 @@ import (
 
 const (
 	maxUint32 = 1<<32 - 1
-)
-
-var (
-	// hashIndexBucketName is the name of the db bucket used to house to the
-	// block hash -> block height index.
-	hashIndexBucketName = []byte("hashidx")
-
-	// heightIndexBucketName is the name of the db bucket used to house to
-	// the block height -> block hash index.
-	heightIndexBucketName = []byte("heightidx")
-
-	// chainStateKeyName is the name of the db key used to store the best
-	// chain state.
-	chainStateKeyName = []byte("chainstate")
-
-	// spendJournalBucketName is the name of the db bucket used to house
-	// transactions outputs that are spent in each block.
-	spendJournalBucketName = []byte("spendjournal")
-
-	// utxoSetBucketName is the name of the db bucket used to house the
-	// unspent transaction output set.
-	utxoSetBucketName = []byte("utxoset")
-
-	// byteOrder is the preferred byte order used for serializing numeric
-	// fields for storage in the database.
-	byteOrder = binary.LittleEndian
 )
 
 // errNotInMainChain signifies that a block hash or height that is not in the
@@ -527,7 +501,7 @@ func serializeSpendJournalEntry(stxos []spentTxOut) []byte {
 func dbFetchSpendJournalEntry(dbTx database.Tx, block *dcrutil.Block,
 	parent *dcrutil.Block, view *UtxoViewpoint) ([]spentTxOut, error) {
 	// Exclude the coinbase transaction since it can't spend anything.
-	spendBucket := dbTx.Metadata().Bucket(spendJournalBucketName)
+	spendBucket := dbTx.Metadata().Bucket(dbnamespace.SpendJournalBucketName)
 	serialized := spendBucket.Get(block.Sha()[:])
 	blockTxns := append(parent.MsgBlock().Transactions[1:],
 		block.MsgBlock().STransactions...)
@@ -555,7 +529,7 @@ func dbFetchSpendJournalEntry(dbTx database.Tx, block *dcrutil.Block,
 // spent txouts.   The spent txouts slice must contain an entry for every txout
 // the transactions in the block spend in the order they are spent.
 func dbPutSpendJournalEntry(dbTx database.Tx, blockHash *chainhash.Hash, stxos []spentTxOut) error {
-	spendBucket := dbTx.Metadata().Bucket(spendJournalBucketName)
+	spendBucket := dbTx.Metadata().Bucket(dbnamespace.SpendJournalBucketName)
 	serialized := serializeSpendJournalEntry(stxos)
 	return spendBucket.Put(blockHash[:], serialized)
 }
@@ -563,7 +537,7 @@ func dbPutSpendJournalEntry(dbTx database.Tx, blockHash *chainhash.Hash, stxos [
 // dbRemoveSpendJournalEntry uses an existing database transaction to remove the
 // spend journal entry for the passed block hash.
 func dbRemoveSpendJournalEntry(dbTx database.Tx, blockHash *chainhash.Hash) error {
-	spendBucket := dbTx.Metadata().Bucket(spendJournalBucketName)
+	spendBucket := dbTx.Metadata().Bucket(dbnamespace.SpendJournalBucketName)
 	return spendBucket.Delete(blockHash[:])
 }
 
@@ -886,7 +860,7 @@ func deserializeUtxoEntry(serialized []byte) (*UtxoEntry, error) {
 func dbFetchUtxoEntry(dbTx database.Tx, hash *chainhash.Hash) (*UtxoEntry, error) {
 	// Fetch the unspent transaction output information for the passed
 	// transaction hash.  Return now when there is no entry.
-	utxoBucket := dbTx.Metadata().Bucket(utxoSetBucketName)
+	utxoBucket := dbTx.Metadata().Bucket(dbnamespace.UtxoSetBucketName)
 	serializedUtxo := utxoBucket.Get(hash[:])
 	if serializedUtxo == nil {
 		return nil, nil
@@ -923,7 +897,7 @@ func dbFetchUtxoEntry(dbTx database.Tx, hash *chainhash.Hash) (*UtxoEntry, error
 // particular, only the entries that have been marked as modified are written
 // to the database.
 func dbPutUtxoView(dbTx database.Tx, view *UtxoViewpoint) error {
-	utxoBucket := dbTx.Metadata().Bucket(utxoSetBucketName)
+	utxoBucket := dbTx.Metadata().Bucket(dbnamespace.UtxoSetBucketName)
 	for txHashIter, entry := range view.entries {
 		// No need to update the database if the entry was not modified.
 		if entry == nil || !entry.modified {
@@ -986,17 +960,17 @@ func dbPutUtxoView(dbTx database.Tx, view *UtxoViewpoint) error {
 func dbPutBlockIndex(dbTx database.Tx, hash *chainhash.Hash, height int64) error {
 	// Serialize the height for use in the index entries.
 	var serializedHeight [4]byte
-	byteOrder.PutUint32(serializedHeight[:], uint32(height))
+	dbnamespace.ByteOrder.PutUint32(serializedHeight[:], uint32(height))
 
 	// Add the block hash to height mapping to the index.
 	meta := dbTx.Metadata()
-	hashIndex := meta.Bucket(hashIndexBucketName)
+	hashIndex := meta.Bucket(dbnamespace.HashIndexBucketName)
 	if err := hashIndex.Put(hash[:], serializedHeight[:]); err != nil {
 		return err
 	}
 
 	// Add the block height to hash mapping to the index.
-	heightIndex := meta.Bucket(heightIndexBucketName)
+	heightIndex := meta.Bucket(dbnamespace.HeightIndexBucketName)
 	return heightIndex.Put(serializedHeight[:], hash[:])
 }
 
@@ -1006,15 +980,15 @@ func dbPutBlockIndex(dbTx database.Tx, hash *chainhash.Hash, height int64) error
 func dbRemoveBlockIndex(dbTx database.Tx, hash *chainhash.Hash, height int64) error {
 	// Remove the block hash to height mapping.
 	meta := dbTx.Metadata()
-	hashIndex := meta.Bucket(hashIndexBucketName)
+	hashIndex := meta.Bucket(dbnamespace.HashIndexBucketName)
 	if err := hashIndex.Delete(hash[:]); err != nil {
 		return err
 	}
 
 	// Remove the block height to hash mapping.
 	var serializedHeight [4]byte
-	byteOrder.PutUint32(serializedHeight[:], uint32(height))
-	heightIndex := meta.Bucket(heightIndexBucketName)
+	dbnamespace.ByteOrder.PutUint32(serializedHeight[:], uint32(height))
+	heightIndex := meta.Bucket(dbnamespace.HeightIndexBucketName)
 	return heightIndex.Delete(serializedHeight[:])
 }
 
@@ -1022,24 +996,24 @@ func dbRemoveBlockIndex(dbTx database.Tx, hash *chainhash.Hash, height int64) er
 // height for the provided hash from the index.
 func dbFetchHeightByHash(dbTx database.Tx, hash *chainhash.Hash) (int64, error) {
 	meta := dbTx.Metadata()
-	hashIndex := meta.Bucket(hashIndexBucketName)
+	hashIndex := meta.Bucket(dbnamespace.HashIndexBucketName)
 	serializedHeight := hashIndex.Get(hash[:])
 	if serializedHeight == nil {
 		str := fmt.Sprintf("block %s is not in the main chain", hash)
 		return 0, errNotInMainChain(str)
 	}
 
-	return int64(byteOrder.Uint32(serializedHeight)), nil
+	return int64(dbnamespace.ByteOrder.Uint32(serializedHeight)), nil
 }
 
 // dbFetchHashByHeight uses an existing database transaction to retrieve the
 // hash for the provided height from the index.
 func dbFetchHashByHeight(dbTx database.Tx, height int64) (*chainhash.Hash, error) {
 	var serializedHeight [4]byte
-	byteOrder.PutUint32(serializedHeight[:], uint32(height))
+	dbnamespace.ByteOrder.PutUint32(serializedHeight[:], uint32(height))
 
 	meta := dbTx.Metadata()
-	heightIndex := meta.Bucket(heightIndexBucketName)
+	heightIndex := meta.Bucket(dbnamespace.HeightIndexBucketName)
 	hashBytes := heightIndex.Get(serializedHeight[:])
 	if hashBytes == nil {
 		str := fmt.Sprintf("no block at height %d exists", height)
@@ -1090,11 +1064,11 @@ func serializeBestChainState(state bestChainState) []byte {
 	serializedData := make([]byte, serializedLen)
 	copy(serializedData[0:chainhash.HashSize], state.hash[:])
 	offset := uint32(chainhash.HashSize)
-	byteOrder.PutUint32(serializedData[offset:], state.height)
+	dbnamespace.ByteOrder.PutUint32(serializedData[offset:], state.height)
 	offset += 4
-	byteOrder.PutUint64(serializedData[offset:], state.totalTxns)
+	dbnamespace.ByteOrder.PutUint64(serializedData[offset:], state.totalTxns)
 	offset += 8
-	byteOrder.PutUint32(serializedData[offset:], workSumBytesLen)
+	dbnamespace.ByteOrder.PutUint32(serializedData[offset:], workSumBytesLen)
 	offset += 4
 	copy(serializedData[offset:], workSumBytes)
 	return serializedData[:]
@@ -1117,11 +1091,13 @@ func deserializeBestChainState(serializedData []byte) (bestChainState, error) {
 	state := bestChainState{}
 	copy(state.hash[:], serializedData[0:chainhash.HashSize])
 	offset := uint32(chainhash.HashSize)
-	state.height = byteOrder.Uint32(serializedData[offset : offset+4])
+	state.height = dbnamespace.ByteOrder.Uint32(serializedData[offset : offset+4])
 	offset += 4
-	state.totalTxns = byteOrder.Uint64(serializedData[offset : offset+8])
+	state.totalTxns = dbnamespace.ByteOrder.Uint64(
+		serializedData[offset : offset+8])
 	offset += 8
-	workSumBytesLen := byteOrder.Uint32(serializedData[offset : offset+4])
+	workSumBytesLen := dbnamespace.ByteOrder.Uint32(
+		serializedData[offset : offset+4])
 	offset += 4
 
 	// Ensure the serialized data has enough bytes to deserialize the work
@@ -1150,7 +1126,7 @@ func dbPutBestState(dbTx database.Tx, snapshot *BestState, workSum *big.Int) err
 	})
 
 	// Store the current best chain state into the database.
-	return dbTx.Metadata().Put(chainStateKeyName, serializedData)
+	return dbTx.Metadata().Put(dbnamespace.ChainStateKeyName, serializedData)
 }
 
 // createChainState initializes both the database and the chain state to the
@@ -1180,20 +1156,20 @@ func (b *BlockChain) createChainState() error {
 		// Create the bucket that houses the chain block hash to height
 		// index.
 		meta := dbTx.Metadata()
-		_, err := meta.CreateBucket(hashIndexBucketName)
+		_, err := meta.CreateBucket(dbnamespace.HashIndexBucketName)
 		if err != nil {
 			return err
 		}
 
 		// Create the bucket that houses the chain block height to hash
 		// index.
-		_, err = meta.CreateBucket(heightIndexBucketName)
+		_, err = meta.CreateBucket(dbnamespace.HeightIndexBucketName)
 		if err != nil {
 			return err
 		}
 
 		// Create the bucket that houses the spend journal data.
-		_, err = meta.CreateBucket(spendJournalBucketName)
+		_, err = meta.CreateBucket(dbnamespace.SpendJournalBucketName)
 		if err != nil {
 			return err
 		}
@@ -1201,7 +1177,7 @@ func (b *BlockChain) createChainState() error {
 		// Create the bucket that houses the utxo set.  Note that the
 		// genesis block coinbase transaction is intentionally not
 		// inserted here since it is not spendable by consensus rules.
-		_, err = meta.CreateBucket(utxoSetBucketName)
+		_, err = meta.CreateBucket(dbnamespace.UtxoSetBucketName)
 		if err != nil {
 			return err
 		}
@@ -1236,7 +1212,7 @@ func (b *BlockChain) initChainState() error {
 		// When it doesn't exist, it means the database hasn't been
 		// initialized for use with chain yet, so break out now to allow
 		// that to happen under a writable database transaction.
-		serializedData := dbTx.Metadata().Get(chainStateKeyName)
+		serializedData := dbTx.Metadata().Get(dbnamespace.ChainStateKeyName)
 		if serializedData == nil {
 			return nil
 		}
@@ -1380,7 +1356,7 @@ func dbFetchBlockByHeight(dbTx database.Tx, height int64) (*dcrutil.Block, error
 // dbMainChainHasBlock uses an existing database transaction to return whether
 // or not the main chain contains the block identified by the provided hash.
 func dbMainChainHasBlock(dbTx database.Tx, hash *chainhash.Hash) bool {
-	hashIndex := dbTx.Metadata().Bucket(hashIndexBucketName)
+	hashIndex := dbTx.Metadata().Bucket(dbnamespace.HashIndexBucketName)
 	return hashIndex.Get(hash[:]) != nil
 }
 

@@ -220,8 +220,8 @@ type BlockChain struct {
 
 	// The block cache for mainchain blocks, to facilitate faster
 	// reorganizations.
+	mainchainBlockCacheLock sync.RWMutex
 	mainchainBlockCache     map[chainhash.Hash]*dcrutil.Block
-	mainchainBlockCacheLock sync.Mutex
 
 	// These fields are related to checkpoint handling.  They are protected
 	// by the chain lock.
@@ -809,10 +809,13 @@ func (b *BlockChain) getBlockFromHash(hash *chainhash.Hash) (*dcrutil.Block,
 	}
 
 	// Check main chain
+	b.mainchainBlockCacheLock.RLock()
 	block, ok := b.mainchainBlockCache[*hash]
 	if ok {
+		b.mainchainBlockCacheLock.RUnlock()
 		return block, nil
 	}
+	b.mainchainBlockCacheLock.RUnlock()
 
 	b.chainLock.RLock()
 	var blockMainchain *dcrutil.Block
@@ -1255,9 +1258,9 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block, view *U
 	// Notify the caller that the block was connected to the main chain.
 	// The caller would typically want to react with actions such as
 	// updating wallets.
-	//b.chainLock.Lock()
+	b.chainLock.Lock()
 	b.sendNotification(NTBlockConnected, blockAndParent)
-	//b.chainLock.Unlock()
+	b.chainLock.Unlock()
 
 	b.pushMainChainBlockCache(block)
 
@@ -1475,31 +1478,15 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 		n := e.Value.(*blockNode)
 		var block *dcrutil.Block
 		var parent *dcrutil.Block
-		if len(detachParents) > 0 &&
-			detachParents[len(detachParents)-1].Sha().IsEqual(n.hash) {
-			block = detachParents[len(detachParents)-1]
-		} else {
-			var err error
-			block, err = b.getBlockFromHash(n.hash)
-			if err != nil {
-				return err
-			}
-		}
-		parent, err := b.getBlockFromHash(n.parentHash)
+		var err error
+		block, err = b.getBlockFromHash(n.hash)
 		if err != nil {
 			return err
 		}
-		/*
-			// Don't fetch the same block twice if we already fatched it
-			// on the last go of the loop.
-			var err error
-			block, err = dbFetchBlockByHash(dbTx, n.hash)
-			if err != nil {
-				return err
-			}
-			parent, err = dbFetchBlockByHash(dbTx, n.parentHash)
+		parent, err = b.getBlockFromHash(n.parentHash)
+		if err != nil {
 			return err
-		*/
+		}
 
 		// Load all of the spent txos for the block from the spend
 		// journal.

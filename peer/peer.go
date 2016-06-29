@@ -352,8 +352,8 @@ type StatsSnap struct {
 	Version        uint32
 	UserAgent      string
 	Inbound        bool
-	StartingHeight int32
-	LastBlock      int32
+	StartingHeight int64
+	LastBlock      int64
 	LastPingNonce  uint64
 	LastPingTime   time.Time
 	LastPingMicros int64
@@ -438,8 +438,8 @@ type Peer struct {
 	timeConnected      time.Time
 	lastSend           time.Time
 	lastRecv           time.Time
-	startingHeight     int32
-	lastBlock          int32
+	startingHeight     int64
+	lastBlock          int64
 	lastAnnouncedBlock *chainhash.Hash
 	lastPingNonce      uint64    // Set to nonce if we have a pending ping.
 	lastPingTime       time.Time // Time we sent last ping.
@@ -467,11 +467,11 @@ func (p *Peer) String() string {
 // UpdateLastBlockHeight updates the last known block for the peer.
 //
 // This function is safe for concurrent access.
-func (p *Peer) UpdateLastBlockHeight(newHeight int32) {
+func (p *Peer) UpdateLastBlockHeight(newHeight int64) {
 	p.statsMtx.Lock()
 	log.Tracef("Updating last block height of peer %v from %v to %v",
 		p.addr, p.lastBlock, newHeight)
-	p.lastBlock = int32(newHeight)
+	p.lastBlock = newHeight
 	p.statsMtx.Unlock()
 }
 
@@ -663,7 +663,7 @@ func (p *Peer) ProtocolVersion() uint32 {
 // LastBlock returns the last block of the peer.
 //
 // This function is safe for concurrent access.
-func (p *Peer) LastBlock() int32 {
+func (p *Peer) LastBlock() int64 {
 	p.statsMtx.RLock()
 	defer p.statsMtx.RUnlock()
 
@@ -730,7 +730,7 @@ func (p *Peer) TimeOffset() int64 {
 // initial negotiation phase.
 //
 // This function is safe for concurrent access.
-func (p *Peer) StartingHeight() int32 {
+func (p *Peer) StartingHeight() int64 {
 	p.statsMtx.RLock()
 	defer p.statsMtx.RUnlock()
 
@@ -1018,8 +1018,9 @@ func (p *Peer) handleVersionMsg(msg *wire.MsgVersion) error {
 
 	// Updating a bunch of stats.
 	p.statsMtx.Lock()
-	p.lastBlock = msg.LastBlock
-	p.startingHeight = msg.LastBlock
+	p.lastBlock = int64(msg.LastBlock)
+	p.startingHeight = int64(msg.LastBlock)
+
 	// Set the peer's time offset.
 	p.timeOffset = msg.Timestamp.Unix() - time.Now().Unix()
 	p.statsMtx.Unlock()

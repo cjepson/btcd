@@ -24,10 +24,9 @@ import (
 	"github.com/decred/dcrd/addrmgr"
 	"github.com/decred/dcrd/blockchain"
 	"github.com/decred/dcrd/blockchain/stake"
-	database "github.com/decred/dcrd/database2"
 	"github.com/decred/dcrd/chaincfg"
 	"github.com/decred/dcrd/chaincfg/chainhash"
-	"github.com/decred/dcrd/database"
+	database "github.com/decred/dcrd/database2"
 	"github.com/decred/dcrd/mining"
 	"github.com/decred/dcrd/peer"
 	"github.com/decred/dcrd/txscript"
@@ -248,7 +247,7 @@ func newServerPeer(s *server, isPersistent bool) *serverPeer {
 
 // newestBlock returns the current best block hash and height using the format
 // required by the configuration for the peer package.
-func (sp *serverPeer) newestBlock() (*wire.ShaHash, int32, error) {
+func (sp *serverPeer) newestBlock() (*wire.ShaHash, int64, error) {
 	best := sp.server.blockManager.chain.BestSnapshot()
 	return best.Hash, best.Height, nil
 }
@@ -742,7 +741,7 @@ func (sp *serverPeer) OnGetBlocks(p *peer.Peer, msg *wire.MsgGetBlocks) {
 	// no stop hash was specified.
 	// Attempt to find the ending index of the stop hash if specified.
 	chain := sp.server.blockManager.chain
-	endIdx := int32(math.MaxInt32)
+	endIdx := int64(math.MaxInt64)
 	if !msg.HashStop.IsEqual(&zeroHash) {
 		height, err := chain.BlockHeightByHash(&msg.HashStop)
 		if err == nil {
@@ -810,7 +809,7 @@ func (sp *serverPeer) OnGetHeaders(p *peer.Peer, msg *wire.MsgGetHeaders) {
 
 	// Attempt to look up the height of the provided stop hash.
 	chain := sp.server.blockManager.chain
-	endIdx := int32(math.MaxInt32)
+	endIdx := int64(math.MaxInt64)
 	height, err := chain.BlockHeightByHash(&msg.HashStop)
 	if err == nil {
 		endIdx = height + 1
@@ -822,7 +821,7 @@ func (sp *serverPeer) OnGetHeaders(p *peer.Peer, msg *wire.MsgGetHeaders) {
 		// No blocks with the stop hash were found so there is nothing
 		// to do.  Just return.  This behavior mirrors the reference
 		// implementation.
-		if endIdx == math.MaxInt32 {
+		if endIdx == math.MaxInt64 {
 			return
 		}
 
@@ -2131,7 +2130,7 @@ func (s *server) NetTotals() (uint64, uint64) {
 // the latest connected main chain block, or a recognized orphan. These height
 // updates allow us to dynamically refresh peer heights, ensuring sync peer
 // selection has access to the latest block heights for each peer.
-func (s *server) UpdatePeerHeights(latestBlkSha *chainhash.Hash, latestHeight int32, updateSource *serverPeer) {
+func (s *server) UpdatePeerHeights(latestBlkSha *chainhash.Hash, latestHeight int64, updateSource *serverPeer) {
 	s.peerHeightsUpdate <- updatePeerHeightsMsg{
 		newSha:     latestBlkSha,
 		newHeight:  latestHeight,
@@ -2429,7 +2428,6 @@ out:
 // decred network type specified by chainParams.  Use start to begin accepting
 // connections from peers.
 func newServer(listenAddrs []string, db database.DB, tmdb *stake.TicketDB, chainParams *chaincfg.Params) (*server, error) {
-	chainParams *chaincfg.Params) (*server, error) {
 
 	services := defaultServices
 	if cfg.NoPeerBloomFilters {
@@ -2591,8 +2589,8 @@ func newServer(listenAddrs []string, db database.DB, tmdb *stake.TicketDB, chain
 	s.blockManager = bm
 
 	txC := mempoolConfig{
-		ChainParams:           chainParams,
-		EnableAddrIndex:       !cfg.NoAddrIndex,
+		ChainParams:     chainParams,
+		EnableAddrIndex: !cfg.NoAddrIndex,
 		NewestSha: func() (*chainhash.Hash, int64, error) {
 			bm.chainState.Lock()
 			hash := bm.chainState.newestHash

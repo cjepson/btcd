@@ -5,6 +5,7 @@
 
 package main
 
+/*
 import (
 	"fmt"
 	"sync"
@@ -20,6 +21,8 @@ import (
 
 	"github.com/btcsuite/golangcrypto/ripemd160"
 )
+
+TODO Replace this with a new addrindexer
 
 type indexState int
 
@@ -480,3 +483,4 @@ func (a *addrIndexer) RemoveBlock(block *dcrutil.Block,
 
 	return nil
 }
+*/

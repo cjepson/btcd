@@ -21,7 +21,6 @@ package stake
 
 import (
 	"bytes"
-	"encoding/binary"
 	"encoding/gob"
 	"errors"
 	"fmt"
@@ -32,14 +31,12 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/decred/dcrd/blockchain/dbnamespace"
 	"github.com/decred/dcrd/chaincfg"
 	"github.com/decred/dcrd/chaincfg/chainhash"
 	database "github.com/decred/dcrd/database2"
 	"github.com/decred/dcrutil"
 )
-
-// byteOrder
-var byteOrder = binary.LittleEndian
 
 // BucketsSize is the number of pre-sort buckets for the in memory database of
 // live tickets. This allows an approximately 1.5x-2.5x increase in sorting
@@ -265,11 +262,13 @@ func deserializeBestChainState(serializedData []byte) (bestChainState, error) {
 	state := bestChainState{}
 	copy(state.hash[:], serializedData[0:chainhash.HashSize])
 	offset := uint32(chainhash.HashSize)
-	state.height = byteOrder.Uint32(serializedData[offset : offset+4])
+	state.height = dbnamespace.ByteOrder.Uint32(serializedData[offset : offset+4])
 	offset += 4
-	state.totalTxns = byteOrder.Uint64(serializedData[offset : offset+8])
+	state.totalTxns = dbnamespace.ByteOrder.Uint64(
+		serializedData[offset : offset+8])
 	offset += 8
-	workSumBytesLen := byteOrder.Uint32(serializedData[offset : offset+4])
+	workSumBytesLen := dbnamespace.ByteOrder.Uint32(
+		serializedData[offset : offset+4])
 	offset += 4
 
 	// Ensure the serialized data has enough bytes to deserialize the work
@@ -286,16 +285,6 @@ func deserializeBestChainState(serializedData []byte) (bestChainState, error) {
 	return state, nil
 }
 
-var (
-	// chainStateKeyName is the name of the db key used to store the best
-	// chain state.
-	chainStateKeyName = []byte("chainstate")
-
-	// heightIndexBucketName is the name of the db bucket used to house to
-	// the block height -> block hash index.
-	heightIndexBucketName = []byte("heightidx")
-)
-
 // NewestSha
 func (tmdb *TicketDB) NewestSha() (*chainhash.Hash, int64, error) {
 	var state bestChainState
@@ -304,12 +293,11 @@ func (tmdb *TicketDB) NewestSha() (*chainhash.Hash, int64, error) {
 		// When it doesn't exist, it means the database hasn't been
 		// initialized for use with chain yet, so break out now to allow
 		// that to happen under a writable database transaction.
-		serializedData := dbTx.Metadata().Get(chainStateKeyName)
+		serializedData := dbTx.Metadata().Get(dbnamespace.ChainStateKeyName)
 		if serializedData == nil {
 			return nil
 		}
 
-		log.Tracef("Serialized chain state: %x", serializedData)
 		var err error
 		state, err = deserializeBestChainState(serializedData)
 		if err != nil {
@@ -327,10 +315,10 @@ func (tmdb *TicketDB) FetchBlockShaByHeight(height int64) (*chainhash.Hash, erro
 	var hash chainhash.Hash
 	err := tmdb.database.View(func(dbTx database.Tx) error {
 		var serializedHeight [4]byte
-		byteOrder.PutUint32(serializedHeight[:], uint32(height))
+		dbnamespace.ByteOrder.PutUint32(serializedHeight[:], uint32(height))
 
 		meta := dbTx.Metadata()
-		heightIndex := meta.Bucket(heightIndexBucketName)
+		heightIndex := meta.Bucket(dbnamespace.HeightIndexBucketName)
 		hashBytes := heightIndex.Get(serializedHeight[:])
 		if hashBytes == nil {
 			return fmt.Errorf("no block at height %d exists", height)
@@ -369,7 +357,7 @@ func (tmdb *TicketDB) FetchBlockBySha(hash *chainhash.Hash) (*dcrutil.Block, err
 // WARNING: Height should be 0 for all non-debug uses.
 //
 // This function is safe for concurrent access.
-func (tmdb *TicketDB) Initialize(np *chaincfg.Params, db database.DB) {
+func (tmdb *TicketDB) Initialize(np *chaincfg.Params, db database.DB) error {
 	tmdb.mtx.Lock()
 	defer tmdb.mtx.Unlock()
 
@@ -382,10 +370,28 @@ func (tmdb *TicketDB) Initialize(np *chaincfg.Params, db database.DB) {
 
 	tmdb.StakeEnabledHeight = np.StakeEnabledHeight
 
-	// Fill in live ticket buckets
+	// Fill in live ticket buckets.
 	for i := 0; i < BucketsSize; i++ {
 		tmdb.maps.ticketMap[uint8(i)] = make(SStxMemMap)
 	}
+
+	// Get the latest block height from the db.
+	_, curHeight, err := tmdb.NewestSha()
+	if err != nil {
+		return err
+	}
+	log.Infof("Block ticket database initialized empty")
+
+	if curHeight > 0 {
+		log.Infof("Db non-empty, resyncing ticket DB")
+		err := tmdb.RescanTicketDB()
+
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // maybeInsertBlock creates a new bucket in the spentTicketMap; this should be

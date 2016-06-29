@@ -669,18 +669,6 @@ func (b *BlockChain) fetchTicketStore(node *blockNode) (TicketStore, error) {
 				n.hash)
 		}
 
-		/*
-			view.SetBestHash(node.hash)
-
-			regularTxTreeValid := dcrutil.IsFlagSet16(node.header.VoteBits,
-				dcrutil.BlockValid)
-			thisNodeStakeViewpoint := ViewpointPrevInvalidStake
-			if regularTxTreeValid {
-				thisNodeStakeViewpoint = ViewpointPrevValidStake
-			}
-			view.SetStakeViewpoint(thisNodeStakeViewpoint)
-		*/
-
 		// The number of blocks below this block but above the root of the fork
 		err = b.connectTickets(tixStore, n, block, view)
 		if err != nil {

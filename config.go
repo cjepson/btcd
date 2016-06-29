@@ -17,13 +17,12 @@ import (
 	"strings"
 	"time"
 
-	database "github.com/decred/dcrd/database2"
-	_ "github.com/decred/dcrd/database2/ffldb"
 	flags "github.com/btcsuite/go-flags"
 	"github.com/btcsuite/go-socks/socks"
-	"github.com/decred/dcrd/database"
 	_ "github.com/decred/dcrd/database/ldb"
 	_ "github.com/decred/dcrd/database/memdb"
+	database "github.com/decred/dcrd/database2"
+	_ "github.com/decred/dcrd/database2/ffldb"
 	"github.com/decred/dcrd/wire"
 	"github.com/decred/dcrutil"
 )
@@ -531,8 +530,6 @@ func loadConfig() (*config, []string, error) {
 		fmt.Fprintln(os.Stderr, usageMessage)
 		return nil, nil, err
 	}
-
-
 
 	// Validate profile port number
 	if cfg.Profile != "" {

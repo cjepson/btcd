@@ -30,7 +30,6 @@ import (
 	"sync/atomic"
 	"time"
 
-
 	"github.com/btcsuite/fastsha256"
 	"github.com/btcsuite/websocket"
 
@@ -41,12 +40,11 @@ import (
 	"github.com/decred/dcrd/chaincfg"
 	"github.com/decred/dcrd/chaincfg/chainec"
 	"github.com/decred/dcrd/chaincfg/chainhash"
-	"github.com/decred/dcrd/database"
+	database "github.com/decred/dcrd/database2"
 	"github.com/decred/dcrd/dcrjson"
 	"github.com/decred/dcrd/mining"
 	"github.com/decred/dcrd/txscript"
 	"github.com/decred/dcrd/wire"
-	database "github.com/decred/dcrd/database2"
 
 	"github.com/decred/dcrutil"
 )
@@ -169,20 +167,20 @@ type commandHandler func(*rpcServer, interface{}, <-chan struct{}) (interface{},
 var rpcHandlers map[string]commandHandler
 var rpcHandlersBeforeInit = map[string]commandHandler{
 	"addnode":              handleAddNode,
-	"createrawsstx":         handleCreateRawSStx,
-	"createrawssgentx":      handleCreateRawSSGenTx,
-	"createrawssrtx":        handleCreateRawSSRtx,
+	"createrawsstx":        handleCreateRawSStx,
+	"createrawssgentx":     handleCreateRawSSGenTx,
+	"createrawssrtx":       handleCreateRawSSRtx,
 	"createrawtransaction": handleCreateRawTransaction,
 	"debuglevel":           handleDebugLevel,
 	"decoderawtransaction": handleDecodeRawTransaction,
 	"decodescript":         handleDecodeScript,
-	"estimatefee":           handleEstimateFee,
-	"estimatestakediff":     handleEstimateStakeDiff,
-	"existsaddress":         handleExistsAddress,
-	"existsaddresses":       handleExistsAddresses,
-	"existsliveticket":      handleExistsLiveTicket,
-	"existslivetickets":     handleExistsLiveTickets,
-	"existsmempooltxs":      handleExistsMempoolTxs,
+	"estimatefee":          handleEstimateFee,
+	"estimatestakediff":    handleEstimateStakeDiff,
+	"existsaddress":        handleExistsAddress,
+	"existsaddresses":      handleExistsAddresses,
+	"existsliveticket":     handleExistsLiveTicket,
+	"existslivetickets":    handleExistsLiveTickets,
+	"existsmempooltxs":     handleExistsMempoolTxs,
 	"generate":             handleGenerate,
 	"getaddednodeinfo":     handleGetAddedNodeInfo,
 	"getbestblock":         handleGetBestBlock,
@@ -192,7 +190,7 @@ var rpcHandlersBeforeInit = map[string]commandHandler{
 	"getblockhash":         handleGetBlockHash,
 	"getblockheader":       handleGetBlockHeader,
 	"getblocktemplate":     handleGetBlockTemplate,
-	"getcoinsupply":         handleGetCoinSupply,
+	"getcoinsupply":        handleGetCoinSupply,
 	"getconnectioncount":   handleGetConnectionCount,
 	"getcurrentnet":        handleGetCurrentNet,
 	"getdifficulty":        handleGetDifficulty,
@@ -206,25 +204,25 @@ var rpcHandlersBeforeInit = map[string]commandHandler{
 	"getpeerinfo":          handleGetPeerInfo,
 	"getrawmempool":        handleGetRawMempool,
 	"getrawtransaction":    handleGetRawTransaction,
-	"getstakedifficulty":    handleGetStakeDifficulty,
-	"getticketpoolvalue":    handleGetTicketPoolValue,
+	"getstakedifficulty":   handleGetStakeDifficulty,
+	"getticketpoolvalue":   handleGetTicketPoolValue,
 	"gettxout":             handleGetTxOut,
 	"getwork":              handleGetWork,
 	"help":                 handleHelp,
-	"livetickets":           handleLiveTickets,
-	"missedtickets":         handleMissedTickets,
+	"livetickets":          handleLiveTickets,
+	"missedtickets":        handleMissedTickets,
 	"node":                 handleNode,
 	"ping":                 handlePing,
-	"rebroadcastmissed":     handleRebroadcastMissed,
-	"rebroadcastwinners":    handleRebroadcastWinners,
+	"rebroadcastmissed":    handleRebroadcastMissed,
+	"rebroadcastwinners":   handleRebroadcastWinners,
 	"sendrawtransaction":   handleSendRawTransaction,
 	"setgenerate":          handleSetGenerate,
 	"stop":                 handleStop,
 	"submitblock":          handleSubmitBlock,
-	"ticketfeeinfo":         handleTicketFeeInfo,
-	"ticketsforaddress":     handleTicketsForAddress,
-	"ticketvwap":            handleTicketVWAP,
-	"txfeeinfo":             handleTxFeeInfo,
+	"ticketfeeinfo":        handleTicketFeeInfo,
+	"ticketsforaddress":    handleTicketsForAddress,
+	"ticketvwap":           handleTicketVWAP,
+	"txfeeinfo":            handleTxFeeInfo,
 	"validateaddress":      handleValidateAddress,
 	"verifychain":          handleVerifyChain,
 	"verifymessage":        handleVerifyMessage,
@@ -2277,7 +2275,7 @@ func handleGetBlock(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (i
 	if !blockInMainChain {
 		idx = -1
 	}
-	
+
 	// Get the block height from chain.
 	blockHeight, err := s.chain.BlockHeightByHash(hash)
 	if err != nil {
@@ -2367,7 +2365,6 @@ func handleGetBlock(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (i
 		}
 		blockReply.RawSTx = rawSTxns
 	}
-
 
 	return blockReply, nil
 }
@@ -2473,7 +2470,6 @@ func handleGetBlockHeader(s *rpcServer, cmd interface{}, closeChan <-chan struct
 	}
 	return blockHeaderReply, nil
 
-		
 }
 
 // encodeTemplateID encodes the passed details into an ID that can be used to
@@ -3632,7 +3628,7 @@ func handleGetMiningInfo(s *rpcServer, cmd interface{}, closeChan <-chan struct{
 	}
 
 	best := s.chain.BestSnapshot()
-	
+
 	result := dcrjson.GetMiningInfoResult{
 		Blocks:           int64(best.Height),
 		CurrentBlockSize: best.BlockSize,
@@ -3909,7 +3905,7 @@ func handleGetRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan str
 	var blkIndex uint32
 	var tip *dcrutil.Block
 	needsVotes := false
-	
+
 	// Try to fetch the transaction from the memory pool.
 	tx, err := s.server.txMemPool.FetchTransaction(txHash)
 	if err != nil {
@@ -3919,6 +3915,7 @@ func handleGetRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan str
 			// Search the parent for transactions that need to be
 			// voted on.
 			tip, err = s.server.blockManager.GetTopBlockFromChain()
+			if err != nil {
 				return nil, &dcrjson.RPCError{
 					Code:    dcrjson.ErrRPCBlockNotFound,
 					Message: "No information available about top block",
@@ -3969,7 +3966,8 @@ func handleGetRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan str
 	}
 
 	// The verbose flag is set, so generate the JSON object and return it.
-	rawTxn, err := createTxRawResult(s.server.chainParams, tx.MsgTx(),
+	var blkHeader *wire.BlockHeader
+	var blkHashStr string
 	var chainHeight int64
 	if blkHash != nil {
 		if needsVotes {
@@ -4115,7 +4113,6 @@ func handleGetTxOut(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (i
 				Message: "No information available about transaction",
 			}
 		}
-
 
 		mtx := tx.MsgTx()
 		if c.Vout > uint32(len(mtx.TxOut)-1) {

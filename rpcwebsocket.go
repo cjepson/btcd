@@ -20,8 +20,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/btcsuite/btcd/blockchain"
-	database "github.com/decred/dcrd/database2"
 	"github.com/btcsuite/fastsha256"
 	"github.com/btcsuite/golangcrypto/ripemd160"
 	"github.com/btcsuite/websocket"
@@ -29,7 +27,7 @@ import (
 	"github.com/decred/dcrd/blockchain"
 	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg/chainhash"
-	"github.com/decred/dcrd/database"
+	database "github.com/decred/dcrd/database2"
 	"github.com/decred/dcrd/dcrjson"
 	"github.com/decred/dcrd/txscript"
 	"github.com/decred/dcrd/wire"
@@ -2502,7 +2500,7 @@ func handleRescan(wsc *wsClient, icmd interface{}) (interface{}, error) {
 		if err != nil {
 			return nil, rpcDecodeHexError(cmdOutpoint.Hash)
 		}
-		outpoint := wire.NewOutPoint(blockHash, cmdOutpoint.Index, 
+		outpoint := wire.NewOutPoint(blockHash, cmdOutpoint.Index,
 			cmdOutpoint.Tree)
 		outpoints = append(outpoints, outpoint)
 	}
@@ -2605,7 +2603,7 @@ func handleRescan(wsc *wsClient, icmd interface{}) (interface{}, error) {
 	// It equals nil when no previous blocks have been rescanned.
 	var lastBlock *dcrutil.Block
 
-	// Instead of fetching all block shas at once, fetch in smaller chunks
+	// Instead of fetching all block hashes at once, fetch in smaller chunks
 	// to ensure large rescans consume a limited amount of memory.
 fetchRange:
 	for minBlock < maxBlock {
@@ -2653,8 +2651,6 @@ fetchRange:
 			curHash := best.Hash
 			again := true
 			if lastBlockHash == nil || *lastBlockHash == *curHash {
-			if err == nil && (lastBlockHash == nil ||
-				*lastBlockHash == *curHash) {
 				again = false
 				n := wsc.server.ntfnMgr
 				n.RegisterSpentRequests(wsc, lookups.unspentSlice())
@@ -2829,6 +2825,7 @@ fetchRange:
 	// is needed to safely inform clients that all rescan notifications have
 	// been sent.
 	lastBlockHash := lastBlock.Sha()
+	n := dcrjson.NewRescanFinishedNtfn(lastBlockHash.String(),
 		lastBlock.Height(),
 		lastBlock.MsgBlock().Header.Timestamp.Unix())
 	if mn, err := dcrjson.MarshalCmd(nil, n); err != nil {
