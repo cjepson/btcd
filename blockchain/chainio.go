@@ -149,7 +149,7 @@ func readDeserializeSizeOfMinimalOutputs(serialized []byte) int {
 // convertUtxosToMinimalOutputs converts the contents of a UTX to a series of
 // minimal outputs. It does this so that these can be passed to stake subpackage
 // functions, where they will be evaluated for correctness.
-func convertUtxosToMinimalOutputs(entry *UtxoEntry) []*stake.MinimalOutput {
+func ConvertUtxosToMinimalOutputs(entry *UtxoEntry) []*stake.MinimalOutput {
 	minOuts, _ := deserializeToMinimalOutputs(entry.stakeExtra)
 
 	return minOuts
@@ -1301,6 +1301,27 @@ func dbFetchHeaderByHeight(dbTx database.Tx, height int64) (*wire.BlockHeader, e
 	return dbFetchHeaderByHash(dbTx, hash)
 }
 
+// DBFetchHeaderByHeight is the exported version of dbFetchHeaderByHeight.
+func DBFetchHeaderByHeight(dbTx database.Tx, height int64) (*wire.BlockHeader, error) {
+	return dbFetchHeaderByHeight(dbTx, height)
+}
+
+// HeaderByHeight is the exported version of dbFetchHeaderByHeight that
+// internally creates a database transaction to do the lookup.
+func (b *BlockChain) HeaderByHeight(height int64) (*wire.BlockHeader, error) {
+	var header *wire.BlockHeader
+	err := b.db.View(func(dbTx database.Tx) error {
+		var errLocal error
+		header, errLocal = dbFetchHeaderByHeight(dbTx, height)
+		return errLocal
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return header, nil
+}
+
 // dbFetchBlockByHash uses an existing database transaction to retrieve the raw
 // block for the provided hash, deserialize it, retrieve the appropriate height
 // from the index, and return a dcrutil.Block with the height set.
@@ -1353,11 +1374,29 @@ func dbFetchBlockByHeight(dbTx database.Tx, height int64) (*dcrutil.Block, error
 	return block, nil
 }
 
+// DBFetchBlockByHeight is the exported version of dbFetchBlockByHeight.
+func DBFetchBlockByHeight(dbTx database.Tx, height int64) (*dcrutil.Block, error) {
+	return dbFetchBlockByHeight(dbTx, height)
+}
+
 // dbMainChainHasBlock uses an existing database transaction to return whether
 // or not the main chain contains the block identified by the provided hash.
 func dbMainChainHasBlock(dbTx database.Tx, hash *chainhash.Hash) bool {
 	hashIndex := dbTx.Metadata().Bucket(dbnamespace.HashIndexBucketName)
 	return hashIndex.Get(hash[:]) != nil
+}
+
+// MainChainHasBlock returns whether or not the block with the given hash is in
+// the main chain.
+//
+// This function is safe for concurrent access.
+func (b *BlockChain) MainChainHasBlock(hash *chainhash.Hash) (bool, error) {
+	var exists bool
+	err := b.db.View(func(dbTx database.Tx) error {
+		exists = dbMainChainHasBlock(dbTx, hash)
+		return nil
+	})
+	return exists, err
 }
 
 // BlockHeightByHash returns the height of the block with the given hash in the
@@ -1406,13 +1445,7 @@ func (b *BlockChain) BlockByHeight(blockHeight int64) (*dcrutil.Block, error) {
 //
 // This function is safe for concurrent access.
 func (b *BlockChain) BlockByHash(hash *chainhash.Hash) (*dcrutil.Block, error) {
-	var block *dcrutil.Block
-	err := b.db.View(func(dbTx database.Tx) error {
-		var err error
-		block, err = dbFetchBlockByHash(dbTx, hash)
-		return err
-	})
-	return block, err
+	return b.getBlockFromHash(hash)
 }
 
 // HeightRange returns a range of block hashes for the given start and end

@@ -2891,6 +2891,7 @@ func newBlockManager(s *server) (*blockManager, error) {
 	var err error
 	bm.chain, err = blockchain.New(&blockchain.Config{
 		DB:            s.db,
+		TMDB:          s.tmdb,
 		ChainParams:   s.chainParams,
 		Notifications: bm.handleNotifyMsg,
 		SigCache:      s.sigCache,
@@ -3063,6 +3064,8 @@ func dumpBlockChain(height int64, db database.DB) error {
 			copy(blockB, blockBLocal)
 			blockchain[i] = blockB
 		}
+
+		return nil
 	})
 	if err != nil {
 		return err

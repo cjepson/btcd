@@ -121,6 +121,12 @@ func (h *BlockHeader) Deserialize(r io.Reader) error {
 	return readBlockHeader(r, 0, h)
 }
 
+// FromBytes deserializes a block header byte slice.
+func (h *BlockHeader) FromBytes(b []byte) error {
+	r := bytes.NewReader(b)
+	return h.Deserialize(r)
+}
+
 // Serialize encodes a block header from r into the receiver using a format
 // that is suitable for long-term storage such as a database while respecting
 // the Version field.

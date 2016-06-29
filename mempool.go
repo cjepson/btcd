@@ -84,18 +84,22 @@ type mempoolConfig struct {
 	// associated with.
 	ChainParams *chaincfg.Params
 
+	// NewestSha defines the function to retrieve the newest sha.
+	NewestSha func() (*chainhash.Hash, int64, error)
+
 	// NextStakeDifficulty defines the function to retrieve the stake
 	// difficulty for the block after the current best block.
 	//
 	// This function must be safe for concurrent access.
 	NextStakeDifficulty func() (int64, error)
+
 	// Policy defines the various mempool configuration options related
 	// to policy.
 	Policy mempoolPolicy
 
 	// FetchUtxoView defines the function to use to fetch unspent
 	// transaction output information.
-	FetchUtxoView func(*dcrutil.Tx) (*blockchain.UtxoViewpoint, error)
+	FetchUtxoView func(*dcrutil.Tx, bool) (*blockchain.UtxoViewpoint, error)
 
 	// Chain defines the concurrent safe block chain instance which houses
 	// the current best chain.
@@ -169,12 +173,12 @@ func (mp *txMemPool) insertVote(ssgen *dcrutil.Tx) error {
 	ticketHash := &msgTx.TxIn[1].PreviousOutPoint.Hash
 
 	// Get the block it is voting on; here we're agnostic of height.
-	blockHash, blockHeight, err := stake.GetSSGenBlockVotedOn(ssgen)
+	blockHash, blockHeight, err := stake.SSGenBlockVotedOn(ssgen)
 	if err != nil {
 		return err
 	}
 
-	voteBits := stake.GetSSGenVoteBits(ssgen)
+	voteBits := stake.SSGenVoteBits(ssgen)
 	vote := dcrutil.IsFlagSet16(voteBits, dcrutil.BlockValid)
 
 	voteTx := &VoteTx{*voteHash, *ticketHash, vote}
@@ -653,9 +657,12 @@ func (mp *txMemPool) removeTransaction(tx *dcrutil.Tx, removeRedeemers bool) {
 	if txDesc, exists := mp.pool[*txHash]; exists {
 		// Remove the transaction and its addresses from the address
 		// index if it's enabled.
-		if mp.cfg.EnableAddrIndex {
-			mp.pruneTxFromAddrIndex(tx, txType)
-		}
+		/*
+			TODO New address index
+			if !mp.cfg.NoAddrIndex {
+				mp.pruneTxFromAddrIndex(tx, txType)
+			}
+		*/
 
 		for _, txIn := range txDesc.Tx.MsgTx().TxIn {
 			delete(mp.outpoints, txIn.PreviousOutPoint)
@@ -726,9 +733,12 @@ func (mp *txMemPool) addTransaction(utxoView *blockchain.UtxoViewpoint,
 
 	// Add the addresses associated with the transaction to the address
 	// index if it's enabled.
-	if mp.cfg.EnableAddrIndex {
-		mp.addTransactionToAddrIndex(tx, txType)
-	}
+	/*
+		TODO New address index
+		if !mp.cfg.NoAddrIndex {
+			mp.addTransactionToAddrIndex(tx, txType)
+		}
+	*/
 }
 
 // addTransactionToAddrIndex adds all addresses related to the transaction to
@@ -780,7 +790,7 @@ func (mp *txMemPool) indexScriptAddressToTx(pkVersion uint16, pkScript []byte,
 
 	for _, addr := range addresses {
 		if mp.addrindex[addr.EncodeAddress()] == nil {
-			mp.addrindex[addr.EncodeAddress()] = make(map[wire.ShaHash]struct{})
+			mp.addrindex[addr.EncodeAddress()] = make(map[chainhash.Hash]struct{})
 		}
 		mp.addrindex[addr.EncodeAddress()][*tx.Sha()] = struct{}{}
 	}
@@ -950,14 +960,9 @@ func (mp *txMemPool) IsTxTreeValid(best *chainhash.Hash) bool {
 //
 // This function MUST be called with the mempool lock held (for reads).
 func (mp *txMemPool) fetchInputUtxos(tx *dcrutil.Tx) (*blockchain.UtxoViewpoint, error) {
-	utxoView, err := mp.cfg.FetchUtxoView(tx)
-
-	newestHash, _, err := mp.cfg.NewestSha()
-	if err != nil {
-		return nil, err
-	}
-	tv := mp.IsTxTreeValid(newestHash)
-	txStore, err := mp.cfg.FetchTransactionStore(tx, tv, includeSpent)
+	best := mp.cfg.Chain.BestSnapshot()
+	tv := mp.IsTxTreeValid(best.Hash)
+	utxoView, err := mp.cfg.FetchUtxoView(tx, tv)
 	if err != nil {
 		return nil, err
 	}
@@ -966,11 +971,11 @@ func (mp *txMemPool) fetchInputUtxos(tx *dcrutil.Tx) (*blockchain.UtxoViewpoint,
 	for originHash, entry := range utxoView.Entries() {
 		if entry != nil && !entry.IsFullySpent() {
 			continue
-			txD.BlockIndex = wire.NullBlockIndex
 		}
 
 		if poolTxDesc, exists := mp.pool[originHash]; exists {
-			utxoView.AddTxOuts(poolTxDesc.Tx, mempoolHeight)
+			utxoView.AddTxOuts(poolTxDesc.Tx, mempoolHeight,
+				wire.NullBlockIndex)
 		}
 	}
 	return utxoView, nil
@@ -1007,7 +1012,6 @@ func (mp *txMemPool) FetchTransaction(txHash *chainhash.Hash) (*dcrutil.Tx,
 func (mp *txMemPool) maybeAcceptTransaction(tx *dcrutil.Tx, isNew,
 	rateLimit, allowHighFees bool) ([]*chainhash.Hash, error) {
 	txHash := tx.Sha()
-
 	// Don't accept the transaction if it already exists in the pool.  This
 	// applies to orphan transactions as well.  This check is intended to
 	// be a quick check to weed out duplicates.
@@ -1148,17 +1152,17 @@ func (mp *txMemPool) maybeAcceptTransaction(tx *dcrutil.Tx, isNew,
 
 	// Votes that are on too old of blocks are rejected.
 	if txType == stake.TxTypeSSGen {
-		_, voteHeight, err := stake.GetSSGenBlockVotedOn(tx)
+		_, voteHeight, err := stake.SSGenBlockVotedOn(tx)
 		if err != nil {
 			return nil, err
 		}
 
-		if (int64(voteHeight) < curHeight-maximumVoteAgeDelta) &&
+		if (int64(voteHeight) < nextBlockHeight-maximumVoteAgeDelta) &&
 			!cfg.AllowOldVotes {
 			str := fmt.Sprintf("transaction %v votes on old "+
 				"block height of %v which is before the "+
 				"current cutoff height of %v",
-				tx.Sha(), voteHeight, curHeight-maximumVoteAgeDelta)
+				tx.Sha(), voteHeight, nextBlockHeight-maximumVoteAgeDelta)
 			return nil, txRuleError(wire.RejectNonstandard, str)
 		}
 	}
@@ -1741,8 +1745,11 @@ func newTxMemPool(cfg *mempoolConfig) *txMemPool {
 		votes:         make(map[chainhash.Hash][]*VoteTx),
 	}
 
-	if cfg.EnableAddrIndex {
-		memPool.addrindex = make(map[string]map[chainhash.Hash]struct{})
-	}
+	/*
+		TODO New address index
+		if cfg.EnableAddrIndex {
+			memPool.addrindex = make(map[string]map[chainhash.Hash]struct{})
+		}
+	*/
 	return memPool
 }

@@ -274,7 +274,7 @@ func checkPkScriptStandard(version uint16, pkScript []byte,
 // minimum transaction relay fee, it is considered dust.
 func isDust(txOut *wire.TxOut, minRelayTxFee dcrutil.Amount) bool {
 	// Unspendable outputs are considered dust.
-	if txscript.IsUnspendable(txOut.PkScript) {
+	if txscript.IsUnspendable(txOut.Value, txOut.PkScript) {
 		return true
 	}
 

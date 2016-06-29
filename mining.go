@@ -17,7 +17,6 @@ import (
 	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg"
 	"github.com/decred/dcrd/chaincfg/chainhash"
-	"github.com/decred/dcrd/database"
 	"github.com/decred/dcrd/mining"
 	"github.com/decred/dcrd/txscript"
 	"github.com/decred/dcrd/wire"
@@ -348,20 +347,6 @@ func txIndexFromTxList(hash chainhash.Hash, list []*dcrutil.Tx) int {
 	return -1
 }
 
-// mergeTxStore adds all of the transactions in txStoreB to txStoreA.  The
-// result is that txStoreA will contain all of its original transactions plus
-// all of the transactions in txStoreB.
-func mergeTxStore(txStoreA blockchain.TxStore, txStoreB blockchain.TxStore) {
-	for hash, txDataB := range txStoreB {
-		if txDataA, exists := txStoreA[hash]; !exists ||
-			(txDataA.Err == database.ErrTxShaMissing && txDataB.Err !=
-				database.ErrTxShaMissing) {
-
-			viewAEntries[hash] = entryB
-		}
-	}
-}
-
 // standardCoinbaseOpReturn creates a standard OP_RETURN output to insert into
 // coinbase to use as extranonces. The OP_RETURN pushes 32 bytes.
 func standardCoinbaseOpReturn(height uint32, extraNonces []uint64) ([]byte,
@@ -592,7 +577,8 @@ func createCoinbaseTx(coinbaseScript []byte,
 // spendTransaction updates the passed view by marking the inputs to the passed
 // transaction as spent.  It also adds all outputs in the passed transaction
 // which are not provably unspendable as available unspent transaction outputs.
-func spendTransaction(utxoView *blockchain.UtxoViewpoint, tx *btcutil.Tx, height int64) error {
+func spendTransaction(utxoView *blockchain.UtxoViewpoint, tx *dcrutil.Tx,
+	height int64) error {
 	for _, txIn := range tx.MsgTx().TxIn {
 		originHash := &txIn.PreviousOutPoint.Hash
 		originIndex := txIn.PreviousOutPoint.Index
@@ -603,7 +589,7 @@ func spendTransaction(utxoView *blockchain.UtxoViewpoint, tx *btcutil.Tx, height
 
 	}
 
-	utxoView.AddTxOuts(tx, height)
+	utxoView.AddTxOuts(tx, height, wire.NullBlockIndex)
 	return nil
 }
 
@@ -672,7 +658,7 @@ func medianAdjustedTime(chainState *chainState,
 func maybeInsertStakeTx(bm *blockManager, stx *dcrutil.Tx, treeValid bool) bool {
 	missingInput := false
 
-	txStore, err := bm.FetchTransactionStore(stx, treeValid)
+	view, err := bm.chain.FetchUtxoView(stx, treeValid)
 	if err != nil {
 		minrLog.Warnf("Unable to fetch transaction store for "+
 			"stx %s: %v", stx.Sha(), err)
@@ -691,15 +677,15 @@ func maybeInsertStakeTx(bm *blockManager, stx *dcrutil.Tx, treeValid bool) bool 
 		}
 
 		originHash := &txIn.PreviousOutPoint.Hash
-		txData, exists := txStore[*originHash]
-		if !exists || txData.Err != nil || txData.Tx == nil {
+		utxIn := view.LookupEntry(originHash)
+		if utxIn == nil {
 			missingInput = true
 			break
 		} else {
 			originIdx := txIn.PreviousOutPoint.Index
-			txIn.ValueIn = txData.Tx.MsgTx().TxOut[originIdx].Value
-			txIn.BlockHeight = uint32(txData.BlockHeight)
-			txIn.BlockIndex = txData.BlockIndex
+			txIn.ValueIn = utxIn.AmountByIndex(originIdx)
+			txIn.BlockHeight = uint32(utxIn.BlockHeight())
+			txIn.BlockIndex = utxIn.BlockIndex()
 		}
 	}
 	return !missingInput
@@ -1170,7 +1156,7 @@ func NewBlockTemplate(policy *mining.Policy, server *server,
 	prevHash := chainState.newestHash
 	nextBlockHeight := chainState.newestHeight + 1
 	poolSize := chainState.nextPoolSize
-	requiredStakeDifficulty := chainState.nextStakeDifficulty
+	reqStakeDifficulty := chainState.nextStakeDifficulty
 	finalState := chainState.nextFinalState
 	winningTickets := make([]chainhash.Hash, len(chainState.winningTickets),
 		len(chainState.winningTickets))
@@ -1305,7 +1291,7 @@ mempoolLoop:
 		// the ticket number.
 		isSSGen := txDesc.Type == stake.TxTypeSSGen
 		if isSSGen {
-			blockHash, blockHeight, err := stake.GetSSGenBlockVotedOn(tx)
+			blockHash, blockHeight, err := stake.SSGenBlockVotedOn(tx)
 			if err != nil { // Should theoretically never fail.
 				minrLog.Tracef("Skipping ssgen tx %s because of failure "+
 					"to extract block voting data", tx.Sha())
@@ -1324,7 +1310,7 @@ mempoolLoop:
 		// NOTE: This intentionally does not fetch inputs from the
 		// mempool since a transaction which depends on other
 		// transactions in the mempool must come after those
-		utxos, err := blockManager.chain.FetchUtxoView(tx)
+		utxos, err := blockManager.chain.FetchUtxoView(tx, treeValid)
 		if err != nil {
 			minrLog.Warnf("Unable to fetch utxo view for tx %s: "+
 				"%v", tx.Sha(), err)
@@ -1462,7 +1448,7 @@ mempoolLoop:
 
 		// Skip if the SStx commit value is below the value required by the
 		// stake diff.
-		if isSStx && (tx.MsgTx().TxOut[0].Value < requiredStakeDifficulty) {
+		if isSStx && (tx.MsgTx().TxOut[0].Value < reqStakeDifficulty) {
 			continue
 		}
 
@@ -1584,6 +1570,7 @@ mempoolLoop:
 		// Ensure the transaction inputs pass all of the necessary
 		// preconditions before allowing it to be added to the block.
 		_, err = blockchain.CheckTransactionInputs(tx,
+			nextBlockHeight,
 			blockUtxos,
 			false, // Don't check fraud proofs; missing ones are filled out below
 			server.chainParams)
@@ -1667,7 +1654,7 @@ mempoolLoop:
 		if isSSGen, _ := stake.IsSSGen(tx); isSSGen {
 			txCopy := dcrutil.NewTxDeepTxIns(tx.MsgTx())
 			if maybeInsertStakeTx(blockManager, txCopy, treeValid) {
-				vb := stake.GetSSGenVoteBits(txCopy)
+				vb := stake.SSGenVoteBits(txCopy)
 				voteBitsVoters = append(voteBitsVoters, vb)
 				blockTxnsStake = append(blockTxnsStake, txCopy)
 				voters++
@@ -1770,7 +1757,7 @@ mempoolLoop:
 			}
 
 			// Quick check for difficulty here.
-			if tx.MsgTx().TxOut[0].Value >= requiredStakeDifficulty {
+			if tx.MsgTx().TxOut[0].Value >= reqStakeDifficulty {
 				txCopy := dcrutil.NewTxDeepTxIns(tx.MsgTx())
 				if maybeInsertStakeTx(blockManager, txCopy, treeValid) {
 					blockTxnsStake = append(blockTxnsStake, txCopy)
@@ -1952,7 +1939,7 @@ mempoolLoop:
 	// are chains. maybeInsertStakeTx fills this in for stake transactions
 	// already, so only do it for regular transactions.
 	for i, tx := range blockTxnsRegular {
-		txs, err := blockManager.FetchTransactionStore(tx, treeValid)
+		utxs, err := blockManager.chain.FetchUtxoView(tx, treeValid)
 		if err != nil {
 			str := fmt.Sprintf("failed to fetch tx store for tx %v",
 				tx.Sha())
@@ -1966,16 +1953,16 @@ mempoolLoop:
 
 		for _, txIn := range tx.MsgTx().TxIn {
 			originHash := &txIn.PreviousOutPoint.Hash
-			txData, exists := txs[*originHash]
-			if !exists || txData.Err != nil || txData.Tx == nil {
+			utx := utxs.LookupEntry(originHash)
+			if utx == nil {
 				// Set a flag with the index so we can properly set
 				// the fraud proof below.
 				txIn.BlockIndex = wire.NullBlockIndex
 			} else {
 				originIdx := txIn.PreviousOutPoint.Index
-				txIn.ValueIn = txData.Tx.MsgTx().TxOut[originIdx].Value
-				txIn.BlockHeight = uint32(txData.BlockHeight)
-				txIn.BlockIndex = txData.BlockIndex
+				txIn.ValueIn = utx.AmountByIndex(originIdx)
+				txIn.BlockHeight = uint32(utx.BlockHeight())
+				txIn.BlockIndex = utx.BlockIndex()
 			}
 		}
 	}
@@ -2033,8 +2020,8 @@ mempoolLoop:
 		Revocations: uint8(revocations),
 		PoolSize:    poolSize,
 		Timestamp:   ts,
-		SBits:       requiredStakeDifficulty,
-		Bits:        requiredDifficulty,
+		SBits:       reqStakeDifficulty,
+		Bits:        reqDifficulty,
 		Height:      uint32(nextBlockHeight),
 		// Size declared below
 	}
@@ -2059,7 +2046,7 @@ mempoolLoop:
 	block := dcrutil.NewBlockDeepCopyCoinbase(&msgBlock)
 	block.SetHeight(nextBlockHeight)
 
-	if err := blockManager.chain.CheckWorklessBlockSanity(block,
+	if err := blockchain.CheckWorklessBlockSanity(block,
 		server.timeSource,
 		server.chainParams); err != nil {
 		str := fmt.Sprintf("failed to do final check for block workless "+

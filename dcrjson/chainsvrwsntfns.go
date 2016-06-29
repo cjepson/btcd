@@ -152,13 +152,13 @@ func NewRedeemingTxNtfn(hexTx string, block *BlockDetails) *RedeemingTxNtfn {
 // RescanFinishedNtfn defines the rescanfinished JSON-RPC notification.
 type RescanFinishedNtfn struct {
 	Hash   string
-	Height int32
+	Height int64
 	Time   int64
 }
 
 // NewRescanFinishedNtfn returns a new instance which can be used to issue a
 // rescanfinished JSON-RPC notification.
-func NewRescanFinishedNtfn(hash string, height int32, time int64) *RescanFinishedNtfn {
+func NewRescanFinishedNtfn(hash string, height int64, time int64) *RescanFinishedNtfn {
 	return &RescanFinishedNtfn{
 		Hash:   hash,
 		Height: height,

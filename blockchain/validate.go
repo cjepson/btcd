@@ -1406,7 +1406,7 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
 			return 0, ruleError(ErrInvalidSSGenInput, errStr)
 		}
 
-		minOutsSStx := convertUtxosToMinimalOutputs(utxoEntrySstx)
+		minOutsSStx := ConvertUtxosToMinimalOutputs(utxoEntrySstx)
 		if len(minOutsSStx) == 0 {
 			return 0, AssertError("missing stake extra data for ticket used " +
 				"as input for vote")
@@ -1539,7 +1539,7 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
 			return 0, ruleError(ErrInvalidSSRtxInput, errStr)
 		}
 
-		minOutsSStx := convertUtxosToMinimalOutputs(utxoEntrySstx)
+		minOutsSStx := ConvertUtxosToMinimalOutputs(utxoEntrySstx)
 		sstxPayTypes, sstxPkhs, sstxAmts, _, sstxRules, sstxLimits :=
 			stake.SStxStakeOutputInfo(minOutsSStx)
 
@@ -2491,7 +2491,6 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 		*/
 
 		utxoView.SetStakeViewpoint(ViewpointPrevValidInitial)
-		utxoView.SetConnectAfter(true)
 		err = utxoView.fetchInputUtxos(b.db, block, parentBlock)
 		if err != nil {
 			return err
@@ -2507,7 +2506,6 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 
 	// TxTreeStake of current block.
 	utxoView.SetStakeViewpoint(thisNodeStakeViewpoint)
-	utxoView.SetConnectAfter(false)
 	err = utxoView.fetchInputUtxos(b.db, block, parentBlock)
 	if err != nil {
 		return err
@@ -2545,7 +2543,6 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 	// have already added, so set this to the correct stake viewpoint and
 	// disable automatic connection.
 	utxoView.SetStakeViewpoint(thisNodeRegularViewpoint)
-	utxoView.SetConnectAfter(false)
 	err = utxoView.fetchInputUtxos(b.db, block, parentBlock)
 	if err != nil {
 		return err

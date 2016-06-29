@@ -197,8 +197,8 @@ type GetPeerInfoResult struct {
 	Version        uint32  `json:"version"`
 	SubVer         string  `json:"subver"`
 	Inbound        bool    `json:"inbound"`
-	StartingHeight int32   `json:"startingheight"`
-	CurrentHeight  int32   `json:"currentheight,omitempty"`
+	StartingHeight int64   `json:"startingheight"`
+	CurrentHeight  int64   `json:"currentheight,omitempty"`
 	BanScore       int32   `json:"banscore"`
 	SyncNode       bool    `json:"syncnode"`
 }
@@ -411,7 +411,7 @@ type GetWorkResult struct {
 type InfoChainResult struct {
 	Version         int32   `json:"version"`
 	ProtocolVersion int32   `json:"protocolversion"`
-	Blocks          int32   `json:"blocks"`
+	Blocks          int64   `json:"blocks"`
 	TimeOffset      int64   `json:"timeoffset"`
 	Connections     int32   `json:"connections"`
 	Proxy           string  `json:"proxy"`

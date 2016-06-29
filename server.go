@@ -102,7 +102,7 @@ type relayMsg struct {
 // selecting sync peer candidacy.
 type updatePeerHeightsMsg struct {
 	newSha     *chainhash.Hash
-	newHeight  int32
+	newHeight  int64
 	originPeer *serverPeer
 }
 
@@ -247,7 +247,7 @@ func newServerPeer(s *server, isPersistent bool) *serverPeer {
 
 // newestBlock returns the current best block hash and height using the format
 // required by the configuration for the peer package.
-func (sp *serverPeer) newestBlock() (*wire.ShaHash, int64, error) {
+func (sp *serverPeer) newestBlock() (*chainhash.Hash, int64, error) {
 	best := sp.server.blockManager.chain.BestSnapshot()
 	return best.Hash, best.Height, nil
 }
@@ -1263,7 +1263,7 @@ func (s *server) handleUpdatePeerHeights(state *peerState, umsg updatePeerHeight
 		// matches our newly accepted block, then update their block
 		// height.
 		if *latestBlkSha == *umsg.newSha {
-			sp.UpdateLastBlockHeight(umsg.newHeight)
+			sp.UpdateLastBlockHeight(int64(umsg.newHeight))
 			sp.UpdateLastAnnouncedBlock(nil)
 		}
 	})
@@ -1965,9 +1965,11 @@ out:
 		}
 	}
 
+	/* TODO addrindex
 	if !cfg.NoAddrIndex {
 		s.addrIndexer.Stop()
 	}
+	*/
 	s.blockManager.Stop()
 	s.addrManager.Stop()
 
@@ -2237,9 +2239,11 @@ func (s *server) Start() {
 		s.cpuMiner.Start()
 	}
 
+	/* TODO addrindex
 	if !cfg.NoAddrIndex {
 		s.addrIndexer.Start()
 	}
+	*/
 }
 
 // Stop gracefully shuts down the server by stopping and disconnecting all
@@ -2576,7 +2580,7 @@ func newServer(listenAddrs []string, db database.DB, tmdb *stake.TicketDB, chain
 		modifyRebroadcastInv: make(chan interface{}),
 		peerHeightsUpdate:    make(chan updatePeerHeightsMsg),
 		nat:                  nat,
-		db:                   database,
+		db:                   db,
 		tmdb:                 tmdb,
 		timeSource:           blockchain.NewMedianTime(),
 		services:             services,
@@ -2589,8 +2593,8 @@ func newServer(listenAddrs []string, db database.DB, tmdb *stake.TicketDB, chain
 	s.blockManager = bm
 
 	txC := mempoolConfig{
-		ChainParams:     chainParams,
-		EnableAddrIndex: !cfg.NoAddrIndex,
+		ChainParams: chainParams,
+		// EnableAddrIndex: !cfg.NoAddrIndex, TODO
 		NewestSha: func() (*chainhash.Hash, int64, error) {
 			bm.chainState.Lock()
 			hash := bm.chainState.newestHash
@@ -2615,7 +2619,6 @@ func newServer(listenAddrs []string, db database.DB, tmdb *stake.TicketDB, chain
 		},
 		FetchUtxoView: s.blockManager.chain.FetchUtxoView,
 		Chain:         s.blockManager.chain,
-		RelayNtfnChan: s.relayNtfnChan,
 		SigCache:      s.sigCache,
 		TimeSource:    s.timeSource,
 	}
@@ -2632,6 +2635,7 @@ func newServer(listenAddrs []string, db database.DB, tmdb *stake.TicketDB, chain
 	}
 	s.cpuMiner = newCPUMiner(&policy, &s)
 
+	/* TODO new addrindex
 	if !cfg.NoAddrIndex {
 		ai, err := newAddrIndexer(&s)
 		if err != nil {
@@ -2639,6 +2643,7 @@ func newServer(listenAddrs []string, db database.DB, tmdb *stake.TicketDB, chain
 		}
 		s.addrIndexer = ai
 	}
+	*/
 
 	if !cfg.DisableRPC {
 		s.rpcServer, err = newRPCServer(cfg.RPCListeners, &policy, &s)

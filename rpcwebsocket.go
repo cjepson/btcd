@@ -424,7 +424,7 @@ out:
 				// tx notification requests exist.
 				if len(watchedOutPoints) != 0 || len(watchedAddrs) != 0 {
 					if dcrutil.IsFlagSet16(votebits, dcrutil.BlockValid) {
-						prevblock, err := m.server.server.db.FetchBlockBySha(
+						prevblock, err := m.server.chain.BlockByHash(
 							&msgblock.Header.PrevBlock)
 						if err != nil {
 							rpcsLog.Error("Previous block could not be loaded "+
@@ -2261,7 +2261,7 @@ func rescanBlock(wsc *wsClient, lookups *rescanKeys, blk *dcrutil.Block,
 // range of blocks.  If this condition does not hold true, the JSON-RPC error
 // for an unrecoverable reorganize is returned.
 func recoverFromReorg(chain *blockchain.BlockChain, minBlock, maxBlock int64,
-	lastBlock *chainhash.Hash) ([]chainhash.Hash, error) {
+	lastBlock *dcrutil.Block) ([]chainhash.Hash, error) {
 
 	hashList, err := chain.HeightRange(minBlock, maxBlock)
 	if err != nil {
@@ -2602,6 +2602,7 @@ func handleRescan(wsc *wsClient, icmd interface{}) (interface{}, error) {
 	// lastBlock tracks the previously-rescanned block.
 	// It equals nil when no previous blocks have been rescanned.
 	var lastBlock *dcrutil.Block
+	var lastBlockHash *chainhash.Hash
 
 	// Instead of fetching all block hashes at once, fetch in smaller chunks
 	// to ensure large rescans consume a limited amount of memory.
@@ -2692,7 +2693,7 @@ fetchRange:
 
 				// If an absolute max block was specified, don't
 				// attempt to handle the reorg.
-				if maxBlock != math.MaxInt32 {
+				if maxBlock != math.MaxInt64 {
 					rpcsLog.Errorf("Stopping rescan for "+
 						"reorged block %v",
 						cmd.EndBlock)
@@ -2711,7 +2712,7 @@ fetchRange:
 				// reevaluated for the new hashList.
 				minBlock += int64(i)
 				hashList, err = recoverFromReorg(chain,
-					minBlock, maxBlock, lastBlockHash)
+					minBlock, maxBlock, lastBlock)
 				if err != nil {
 					return nil, err
 				}
@@ -2736,20 +2737,14 @@ fetchRange:
 
 			// No need to get a parent for the genesis block.
 			if !hashList[i].IsEqual(activeNetParams.GenesisHash) {
-				parent, err = db.FetchBlockBySha(
+				parent, err = wsc.server.chain.BlockByHash(
 					&blk.MsgBlock().Header.PrevBlock)
 			} else {
 				parent = nil
 				err = nil
 			}
 			if err != nil {
-				if err != database.ErrBlockShaMissing {
-					rpcsLog.Errorf("Error looking up "+
-						"block: %v", err)
-					return nil, err
-				}
-
-				if maxBlock != database.AllShas {
+				if maxBlock != math.MaxInt64 {
 					rpcsLog.Errorf("Stopping rescan for "+
 						"reorged block %v",
 						cmd.EndBlock)
@@ -2757,7 +2752,7 @@ fetchRange:
 				}
 
 				minBlock += int64(i)
-				hashList, err = recoverFromReorg(db, minBlock,
+				hashList, err = recoverFromReorg(wsc.server.chain, minBlock,
 					maxBlock, lastBlock)
 				if err != nil {
 					return nil, err
@@ -2824,7 +2819,7 @@ fetchRange:
 	// received before the rescan RPC returns.  Therefore, another method
 	// is needed to safely inform clients that all rescan notifications have
 	// been sent.
-	lastBlockHash := lastBlock.Sha()
+	lastBlockHash = lastBlock.Sha()
 	n := dcrjson.NewRescanFinishedNtfn(lastBlockHash.String(),
 		lastBlock.Height(),
 		lastBlock.MsgBlock().Header.Timestamp.Unix())

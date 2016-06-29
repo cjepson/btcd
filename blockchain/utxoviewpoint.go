@@ -253,10 +253,9 @@ func newUtxoEntry(txVersion int32, height uint32, index uint32, isCoinBase bool,
 // The unspent outputs are needed by other transactions for things such as
 // script validation and double spend prevention.
 type UtxoViewpoint struct {
-	entries      map[chainhash.Hash]*UtxoEntry
-	bestHash     chainhash.Hash
-	stakeView    stakeViewpoint
-	connectAfter bool
+	entries   map[chainhash.Hash]*UtxoEntry
+	bestHash  chainhash.Hash
+	stakeView stakeViewpoint
 }
 
 // BestHash returns the hash of the best block in the chain the view currently
@@ -279,19 +278,6 @@ func (view *UtxoViewpoint) StakeViewpoint() stakeViewpoint {
 // SetStakeViewpoint sets the stake viewpoint of the current UTXO state.
 func (view *UtxoViewpoint) SetStakeViewpoint(sv stakeViewpoint) {
 	view.stakeView = sv
-}
-
-// ConnectAfter returns whether or not state updates should be performed
-// automatically within the fetch functions, or whether to allow the caller
-// to manually update the state with connectTransaction.
-func (view *UtxoViewpoint) ConnectAfter() bool {
-	return view.connectAfter
-}
-
-// SetConnectAfter sets whether or not state updates regarding the stake
-// viewpoint should be performed.
-func (view *UtxoViewpoint) SetConnectAfter(ca bool) {
-	view.connectAfter = ca
 }
 
 // LookupEntry returns information about a given transaction according to the
@@ -440,76 +426,6 @@ func (view *UtxoViewpoint) connectTransaction(tx *dcrutil.Tx, blockHeight int64,
 	return nil
 }
 
-// handleTxStoreViewpoint appends extra Tx Trees to update to a different
-// stake viewpoint. This is required for the progressive validation of
-// the two transaction trees when attempting to connect blocks.
-func (view *UtxoViewpoint) handleTxStoreViewpoint(db database.DB,
-	stxos *[]spentTxOut) error {
-
-	/*
-		viewpoint := view.StakeViewpoint()
-
-		// We don't need to do anything for the current top block viewpoint.
-		if viewpoint == ViewpointPrevValidInitial {
-			return nil
-		}
-
-		// ViewpointPrevValidStake: Append the prev block TxTreeRegular
-		// txs to fill out TxIns.
-		if viewpoint == ViewpointPrevValidStake {
-			var parent *dcrutil.Block
-			err := db.View(func(dbTx database.Tx) error {
-				var err error
-				parent, err = dbFetchBlockByHash(dbTx, view.BestHash())
-				if err != nil {
-					return err
-				}
-
-				return nil
-			})
-			if err != nil {
-				return err
-			}
-
-
-			return nil
-		}
-
-		// ViewpointPrevInvalidStake: Do not append the prev block
-		// TxTreeRegular txs, since they don't exist.
-		if viewpoint == ViewpointPrevInvalidStake {
-			return nil
-		}
-
-		// ViewpointPrevValidRegular: Append the prev block TxTreeRegular
-		// txs to fill in TxIns, then append the cur block TxTreeStake
-		// txs to fill in TxInss. TxTreeRegular from current block will
-		// never be allowed to spend from the stake tree of the current
-		// block anyway because of the consensus rules regarding output
-		// maturity, but do it anyway.
-		if viewpoint == ViewpointPrevValidRegular {
-			return fmt.Errorf("ViewpointPrevValidRegular unsupported with " +
-				"automatic connection mode (try disabling ConnectAfter and " +
-				"instead connecting the transactions manually)")
-		}
-
-		// ViewpointPrevInvalidRegular: Append the cur block TxTreeStake
-		// txs to fill in TxIns. TxTreeRegular from current block will
-		// never be allowed to spend from the stake tree of the current
-		// block anyway because of the consensus rules regarding output
-		// maturity, but do it anyway.
-		if viewpoint == ViewpointPrevInvalidRegular {
-			return fmt.Errorf("ViewpointPrevValidRegular unsupported with " +
-				"automatic connection mode (try disabling ConnectAfter and " +
-				"instead connecting the transactions manually)")
-		}
-
-		return fmt.Errorf("Error: invalid viewpoint '0x%x' given to "+
-			"handleTxStoreViewpoint", viewpoint)
-	*/
-	return nil
-}
-
 // connectTransactions updates the view by adding all new utxos created by all
 // of the transactions in the passed block, marking all utxos the transactions
 // spend as spent, and setting the best hash for the view to the passed block.
@@ -526,7 +442,6 @@ func (b *BlockChain) connectTransactions(view *UtxoViewpoint, block *dcrutil.Blo
 
 	if parent != nil && block.Height() != 0 {
 		view.SetStakeViewpoint(ViewpointPrevValidInitial)
-		view.SetConnectAfter(true)
 		view.fetchInputUtxos(b.db, block, parent)
 		mBlock := block.MsgBlock()
 		votebits := mBlock.Header.VoteBits
@@ -544,7 +459,6 @@ func (b *BlockChain) connectTransactions(view *UtxoViewpoint, block *dcrutil.Blo
 
 	for i, stx := range block.STransactions() {
 		view.SetStakeViewpoint(thisNodeStakeViewpoint)
-		view.SetConnectAfter(true)
 		view.fetchInputUtxos(b.db, block, parent)
 		err := view.connectTransaction(stx, block.Height(), uint32(i), stxos)
 		if err != nil {
@@ -622,7 +536,6 @@ func (b *BlockChain) disconnectTransactions(view *UtxoViewpoint,
 		thisNodeStakeViewpoint = ViewpointPrevValidStake
 	}
 	view.SetStakeViewpoint(thisNodeStakeViewpoint)
-	view.SetConnectAfter(true)
 	err := view.fetchInputUtxos(b.db, block, parent)
 	if err != nil {
 		return err
@@ -725,7 +638,6 @@ func (b *BlockChain) disconnectTransactions(view *UtxoViewpoint,
 		// history in the first place.
 		if regularTxTreeValid {
 			view.SetStakeViewpoint(ViewpointPrevValidInitial)
-			view.SetConnectAfter(true)
 			err = view.fetchInputUtxos(b.db, block, parent)
 			if err != nil {
 				return err
@@ -967,6 +879,10 @@ func (view *UtxoViewpoint) fetchUtxosMain(db database.DB,
 	err := db.View(func(dbTx database.Tx) error {
 		for hash := range txSet {
 			hashCopy := hash
+			// If the UTX already exists in the view, skip adding it.
+			if _, ok := view.entries[hashCopy]; ok {
+				continue
+			}
 			entry, err := dbFetchUtxoEntry(dbTx, &hashCopy)
 			if err != nil {
 				return err
@@ -981,11 +897,6 @@ func (view *UtxoViewpoint) fetchUtxosMain(db database.DB,
 		return err
 	}
 
-	// Connect up to the stake viewpoint that was requested
-	// if the flag to do so is given.
-	if view.connectAfter {
-		return view.handleTxStoreViewpoint(db, nil)
-	}
 	return nil
 }
 
@@ -1017,9 +928,6 @@ func (view *UtxoViewpoint) fetchUtxos(db database.DB, txSet map[chainhash.Hash]s
 
 	// Connect up to the stake viewpoint that was requested
 	// if the flag to do so is given.
-	if view.connectAfter {
-		return view.handleTxStoreViewpoint(db, nil)
-	}
 	return nil
 }
 
@@ -1221,7 +1129,8 @@ func NewUtxoViewpoint() *UtxoViewpoint {
 // returned view can be examined for duplicate unspent transaction outputs.
 //
 // This function is safe for concurrent access however the returned view is NOT.
-func (b *BlockChain) FetchUtxoView(tx *dcrutil.Tx) (*UtxoViewpoint, error) {
+func (b *BlockChain) FetchUtxoView(tx *dcrutil.Tx, treeValid bool) (*UtxoViewpoint,
+	error) {
 	b.chainLock.RLock()
 	defer b.chainLock.RUnlock()
 
@@ -1240,6 +1149,25 @@ func (b *BlockChain) FetchUtxoView(tx *dcrutil.Tx) (*UtxoViewpoint, error) {
 	// Request the utxos from the point of view of the end of the main
 	// chain.
 	view := NewUtxoViewpoint()
+	if treeValid {
+		view.SetStakeViewpoint(ViewpointPrevValidInitial)
+		block, err := b.getBlockFromHash(b.bestNode.hash)
+		if err != nil {
+			return nil, err
+		}
+		parentBlock, err := b.getBlockFromHash(b.bestNode.parentHash)
+		err = view.fetchInputUtxos(b.db, block, parentBlock)
+		if err != nil {
+			return nil, err
+		}
+		for i, tx := range parentBlock.Transactions() {
+			err := view.connectTransaction(tx, b.bestNode.parent.height,
+				uint32(i), nil)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	err := view.fetchUtxosMain(b.db, txNeededSet)
 	return view, err
 }
