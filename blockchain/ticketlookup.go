@@ -604,7 +604,7 @@ func (b *BlockChain) fetchTicketStore(node *blockNode) (TicketStore, error) {
 	// transactions and spend information for the blocks which would be
 	// disconnected during a reorganize to the point of view of the
 	// node just before the requested node.
-	detachNodes, attachNodes := b.getReorganizeNodes(prevNode)
+	detachNodes, attachNodes := b.getReorganizeNodes(node)
 	if err != nil {
 		return nil, err
 	}

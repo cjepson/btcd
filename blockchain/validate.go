@@ -2378,7 +2378,7 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 
 	// Check to ensure consensus via the PoS ticketing system versus the
 	// informations stored in the header.
-	ticketStore, err := b.fetchTicketStore(node)
+	ticketStore, err := b.fetchTicketStore(node.parent)
 	if err != nil {
 		log.Tracef("Failed to generate ticket store for incoming "+
 			"node %v; error given: %v", node.hash, err)

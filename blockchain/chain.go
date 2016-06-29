@@ -817,14 +817,12 @@ func (b *BlockChain) getBlockFromHash(hash *chainhash.Hash) (*dcrutil.Block,
 	}
 	b.mainchainBlockCacheLock.RUnlock()
 
-	b.chainLock.RLock()
 	var blockMainchain *dcrutil.Block
 	errFetchMainchain := b.db.View(func(dbTx database.Tx) error {
 		var err error
 		blockMainchain, err = dbFetchBlockByHash(dbTx, hash)
 		return err
 	})
-	b.chainLock.RUnlock()
 	if errFetchMainchain == nil && blockMainchain != nil {
 		return blockMainchain, nil
 	}
@@ -1258,9 +1256,7 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block, view *U
 	// Notify the caller that the block was connected to the main chain.
 	// The caller would typically want to react with actions such as
 	// updating wallets.
-	b.chainLock.Lock()
 	b.sendNotification(NTBlockConnected, blockAndParent)
-	b.chainLock.Unlock()
 
 	b.pushMainChainBlockCache(block)
 
@@ -1394,9 +1390,7 @@ func (b *BlockChain) disconnectBlock(node *blockNode, block *dcrutil.Block,
 	// Notify the caller that the block was disconnected from the main
 	// chain.  The caller would typically want to react with actions such as
 	// updating wallets.
-	b.chainLock.Lock()
 	b.sendNotification(NTBlockDisconnected, blockAndParent)
-	b.chainLock.Unlock()
 
 	b.dropMainChainBlockCache(block)
 
