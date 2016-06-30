@@ -1713,13 +1713,6 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
 			return 0, ruleError(ErrDoubleSpend, str)
 		}
 
-		if utxoEntry.IsOutputSpent(originTxIndex) {
-			str := fmt.Sprintf("transaction %v tried to double "+
-				"spend coins from transaction %v", txHash,
-				txInHash)
-			return 0, ruleError(ErrDoubleSpend, str)
-		}
-
 		// Ensure that the outpoint's tx tree makes sense.
 		originTxOPTree := txIn.PreviousOutPoint.Tree
 		originTxType := utxoEntry.TransactionType()
@@ -2173,39 +2166,6 @@ func (b *BlockChain) checkTransactionsAndConnect(inputFees dcrutil.Amount,
 			cumulativeSigOps)
 		if err != nil {
 			return err
-		}
-
-		// Check double spending for some stake types, because
-		// checkTransactionInputs doesn't do this for SSGens or
-		// SSRtxs.
-		isSSGen, _ := stake.IsSSGen(tx)
-		isSSRtx, _ := stake.IsSSRtx(tx)
-		if isSSGen || isSSRtx {
-			for i, txIn := range tx.MsgTx().TxIn {
-				// Stakebase handling.
-				if isSSGen && i == 0 {
-					continue
-				}
-
-				// Ensure the input is available.
-				txInHash := &txIn.PreviousOutPoint.Hash
-				utxoEntry, exists := utxoView.entries[*txInHash]
-				originTxIndex := txIn.PreviousOutPoint.Index
-				if !exists {
-					str := fmt.Sprintf("missing input tx for index %d in "+
-						"transaction %v referenced from stake transaction %v",
-						originTxIndex, txInHash, tx.Sha())
-					return ruleError(ErrBadTxInput, str)
-				}
-
-				// Ensure the transaction is not double spending coins.
-				if utxoEntry.IsOutputSpent(originTxIndex) {
-					str := fmt.Sprintf("stake transaction %v tried to double "+
-						"spend coins from transaction %v", tx.Sha(),
-						txInHash)
-					return ruleError(ErrDoubleSpend, str)
-				}
-			}
 		}
 
 		// This step modifies the txStore and marks the tx outs used
