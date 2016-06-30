@@ -767,33 +767,35 @@ func (mp *txMemPool) addTransactionToAddrIndex(tx *dcrutil.Tx,
 // This function MUST be called with the mempool lock held (for writes).
 func (mp *txMemPool) indexScriptAddressToTx(pkVersion uint16, pkScript []byte,
 	tx *dcrutil.Tx, txType stake.TxType) error {
-	class, addresses, _, err := txscript.ExtractPkScriptAddrs(pkVersion, pkScript,
-		activeNetParams.Params)
-	if err != nil {
-		txmpLog.Tracef("Unable to extract encoded addresses from script "+
-			"for addrindex: %v", err)
-		return err
-	}
-
-	// An exception is SStx commitments. Handle these manually.
-	if txType == stake.TxTypeSStx && class == txscript.NullDataTy {
-		addr, err := stake.AddrFromSStxPkScrCommitment(pkScript,
-			mp.cfg.ChainParams)
+	/*
+		class, addresses, _, err := txscript.ExtractPkScriptAddrs(pkVersion, pkScript,
+			activeNetParams.Params)
 		if err != nil {
-			txmpLog.Tracef("Unable to extract encoded addresses "+
-				"from sstx commitment script for addrindex: %v", err)
+			txmpLog.Tracef("Unable to extract encoded addresses from script "+
+				"for addrindex: %v", err)
 			return err
 		}
 
-		addresses = []dcrutil.Address{addr}
-	}
+		// An exception is SStx commitments. Handle these manually.
+		if txType == stake.TxTypeSStx && class == txscript.NullDataTy {
+			addr, err := stake.AddrFromSStxPkScrCommitment(pkScript,
+				mp.cfg.ChainParams)
+			if err != nil {
+				txmpLog.Tracef("Unable to extract encoded addresses "+
+					"from sstx commitment script for addrindex: %v", err)
+				return err
+			}
 
-	for _, addr := range addresses {
-		if mp.addrindex[addr.EncodeAddress()] == nil {
-			mp.addrindex[addr.EncodeAddress()] = make(map[chainhash.Hash]struct{})
+			addresses = []dcrutil.Address{addr}
 		}
-		mp.addrindex[addr.EncodeAddress()][*tx.Sha()] = struct{}{}
-	}
+
+		for _, addr := range addresses {
+			if mp.addrindex[addr.EncodeAddress()] == nil {
+				mp.addrindex[addr.EncodeAddress()] = make(map[chainhash.Hash]struct{})
+			}
+			mp.addrindex[addr.EncodeAddress()][*tx.Sha()] = struct{}{}
+		}
+	*/
 
 	return nil
 }
@@ -804,45 +806,47 @@ func (mp *txMemPool) indexScriptAddressToTx(pkVersion uint16, pkScript []byte,
 //
 // This function MUST be called with the mempool lock held (for writes).
 func (mp *txMemPool) pruneTxFromAddrIndex(tx *dcrutil.Tx, txType stake.TxType) {
-	txHash := tx.Sha()
+	/*
+		txHash := tx.Sha()
 
-	for _, txOut := range tx.MsgTx().TxOut {
-		class, addresses, _, err := txscript.ExtractPkScriptAddrs(txOut.Version,
-			txOut.PkScript, activeNetParams.Params)
-		if err != nil {
-			// If we couldn't extract addresses, skip this output.
-			continue
-		}
-
-		// An exception is SStx commitments. Handle these manually.
-		if txType == stake.TxTypeSStx && class == txscript.NullDataTy {
-			addr, err := stake.AddrFromSStxPkScrCommitment(txOut.PkScript,
-				mp.cfg.ChainParams)
+		for _, txOut := range tx.MsgTx().TxOut {
+			class, addresses, _, err := txscript.ExtractPkScriptAddrs(txOut.Version,
+				txOut.PkScript, activeNetParams.Params)
 			if err != nil {
 				// If we couldn't extract addresses, skip this output.
 				continue
 			}
 
-			addresses = []dcrutil.Address{addr}
-		}
-
-		for _, addr := range addresses {
-			if mp.addrindex[addr.EncodeAddress()] != nil {
-				// First remove all references to the transaction hash.
-				for thisTxHash := range mp.addrindex[addr.EncodeAddress()] {
-					if thisTxHash == *txHash {
-						delete(mp.addrindex[addr.EncodeAddress()], thisTxHash)
-					}
+			// An exception is SStx commitments. Handle these manually.
+			if txType == stake.TxTypeSStx && class == txscript.NullDataTy {
+				addr, err := stake.AddrFromSStxPkScrCommitment(txOut.PkScript,
+					mp.cfg.ChainParams)
+				if err != nil {
+					// If we couldn't extract addresses, skip this output.
+					continue
 				}
 
-				// Then, if the address has no transactions referenced,
-				// remove it too.
-				if len(mp.addrindex[addr.EncodeAddress()]) == 0 {
-					delete(mp.addrindex, addr.EncodeAddress())
+				addresses = []dcrutil.Address{addr}
+			}
+
+			for _, addr := range addresses {
+				if mp.addrindex[addr.EncodeAddress()] != nil {
+					// First remove all references to the transaction hash.
+					for thisTxHash := range mp.addrindex[addr.EncodeAddress()] {
+						if thisTxHash == *txHash {
+							delete(mp.addrindex[addr.EncodeAddress()], thisTxHash)
+						}
+					}
+
+					// Then, if the address has no transactions referenced,
+					// remove it too.
+					if len(mp.addrindex[addr.EncodeAddress()]) == 0 {
+						delete(mp.addrindex, addr.EncodeAddress())
+					}
 				}
 			}
 		}
-	}
+	*/
 }
 
 // findTxForAddr searches for all referenced transactions for a given address
@@ -850,23 +854,26 @@ func (mp *txMemPool) pruneTxFromAddrIndex(tx *dcrutil.Tx, txType stake.TxType) {
 //
 // This function is safe for concurrent access.
 func (mp *txMemPool) findTxForAddr(addr dcrutil.Address) []*dcrutil.Tx {
-	var txs []*dcrutil.Tx
-	if mp.addrindex[addr.EncodeAddress()] != nil {
-		// Lookup all relevant transactions and append them.
-		for thisTxHash := range mp.addrindex[addr.EncodeAddress()] {
-			txDesc, exists := mp.pool[thisTxHash]
-			if !exists {
-				txmpLog.Warnf("Failed to find transaction %v in mempool "+
-					"that was referenced in the mempool addrIndex",
-					thisTxHash)
-				continue
+	/*
+		var txs []*dcrutil.Tx
+		if mp.addrindex[addr.EncodeAddress()] != nil {
+			// Lookup all relevant transactions and append them.
+			for thisTxHash := range mp.addrindex[addr.EncodeAddress()] {
+				txDesc, exists := mp.pool[thisTxHash]
+				if !exists {
+					txmpLog.Warnf("Failed to find transaction %v in mempool "+
+						"that was referenced in the mempool addrIndex",
+						thisTxHash)
+					continue
+				}
+
+				txs = append(txs, txDesc.Tx)
 			}
-
-			txs = append(txs, txDesc.Tx)
 		}
-	}
 
-	return txs
+		return txs
+	*/
+	return nil
 }
 
 // FindTxForAddr is the exported and concurrency safe version of findTxForAddr.

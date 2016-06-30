@@ -887,6 +887,8 @@ func (view *UtxoViewpoint) fetchUtxosMain(db database.DB,
 				return err
 			}
 
+			fmt.Printf("Entry for hash %v: %v\n", hashCopy, entry)
+
 			view.entries[hash] = entry
 		}
 
@@ -1133,40 +1135,49 @@ func (b *BlockChain) FetchUtxoView(tx *dcrutil.Tx, treeValid bool) (*UtxoViewpoi
 	b.chainLock.RLock()
 	defer b.chainLock.RUnlock()
 
-	// Create a set of needed transactions based on those referenced by the
-	// inputs of the passed transaction.  Also, add the passed transaction
-	// itself as a way for the caller to detect duplicates that are not
-	// fully spent.
-	txNeededSet := make(map[chainhash.Hash]struct{})
-	txNeededSet[*tx.Sha()] = struct{}{}
-	if !IsCoinBase(tx) {
-		for _, txIn := range tx.MsgTx().TxIn {
-			txNeededSet[txIn.PreviousOutPoint.Hash] = struct{}{}
-		}
-	}
-
 	// Request the utxos from the point of view of the end of the main
 	// chain.
 	view := NewUtxoViewpoint()
 	if treeValid {
-		view.SetStakeViewpoint(ViewpointPrevValidInitial)
+		view.SetStakeViewpoint(ViewpointPrevValidRegular)
 		block, err := b.getBlockFromHash(b.bestNode.hash)
 		if err != nil {
 			return nil, err
 		}
-		parentBlock, err := b.getBlockFromHash(b.bestNode.parentHash)
-		err = view.fetchInputUtxos(b.db, block, parentBlock)
+		parent, err := b.getBlockFromHash(b.bestNode.parentHash)
 		if err != nil {
 			return nil, err
 		}
-		for i, tx := range parentBlock.Transactions() {
-			err := view.connectTransaction(tx, b.bestNode.parent.height,
+		err = view.fetchInputUtxos(b.db, block, parent)
+		if err != nil {
+			return nil, err
+		}
+		for i, tx := range block.Transactions() {
+			err := view.connectTransaction(tx, b.bestNode.height,
 				uint32(i), nil)
 			if err != nil {
 				return nil, err
 			}
 		}
 	}
+	view.SetBestHash(b.bestNode.hash)
+
+	// Create a set of needed transactions based on those referenced by the
+	// inputs of the passed transaction.  Also, add the passed transaction
+	// itself as a way for the caller to detect duplicates that are not
+	// fully spent.
+	txNeededSet := make(map[chainhash.Hash]struct{})
+	txNeededSet[*tx.Sha()] = struct{}{}
+	isSSGen, _ := stake.IsSSGen(tx)
+	if !IsCoinBase(tx) {
+		for i, txIn := range tx.MsgTx().TxIn {
+			if isSSGen && i == 0 {
+				continue
+			}
+			txNeededSet[txIn.PreviousOutPoint.Hash] = struct{}{}
+		}
+	}
+
 	err := view.fetchUtxosMain(b.db, txNeededSet)
 	return view, err
 }
