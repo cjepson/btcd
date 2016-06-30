@@ -985,6 +985,9 @@ func (mp *txMemPool) fetchInputUtxos(tx *dcrutil.Tx) (*blockchain.UtxoViewpoint,
 				wire.NullBlockIndex)
 		}
 	}
+	// DEBUG
+	// fmt.Printf("UTXO VIEW RETURNED FOR TX %v IN MEMPOOL:\n %v", tx.Sha(), blockchain.DebugUtxoViewpointData(utxoView))
+
 	return utxoView, nil
 }
 
@@ -1197,14 +1200,33 @@ func (mp *txMemPool) maybeAcceptTransaction(tx *dcrutil.Tx, isNew,
 
 	// Transaction is an orphan if any of the inputs don't exist.
 	var missingParents []*chainhash.Hash
-	for originHash, entry := range utxoView.Entries() {
+	for i, txIn := range tx.MsgTx().TxIn {
+		if i == 0 && txType == stake.TxTypeSSGen {
+			continue
+		}
+
+		entry := utxoView.LookupEntry(&txIn.PreviousOutPoint.Hash)
 		if entry == nil || entry.IsFullySpent() {
 			// Must make a copy of the hash here since the iterator
 			// is replaced and taking its address directly would
 			// result in all of the entries pointing to the same
 			// memory location and thus all be the final hash.
-			hashCopy := originHash
+			hashCopy := txIn.PreviousOutPoint.Hash
 			missingParents = append(missingParents, &hashCopy)
+
+			// Prevent a panic in the logger by continuing here if the
+			// transaction input is nil.
+			if entry == nil {
+				txmpLog.Tracef("Transaction %v uses unknown input %v "+
+					"and will be considered an orphan", txHash,
+					txIn.PreviousOutPoint.Hash)
+				continue
+			}
+			if entry.IsFullySpent() {
+				txmpLog.Tracef("Transaction %v uses full spent input %v "+
+					"and will be considered an orphan", txHash,
+					txIn.PreviousOutPoint.Hash)
+			}
 		}
 	}
 
@@ -1593,16 +1615,25 @@ func (mp *txMemPool) ProcessTransaction(tx *dcrutil.Tx, allowOrphan,
 	// Protect concurrent access.
 	mp.Lock()
 	defer mp.Unlock()
+	var err error
+	defer func() {
+		if err != nil {
+			txmpLog.Tracef("Failed to process transaction %v: %s",
+				tx.Sha(), err.Error())
+		}
+	}()
 
 	txmpLog.Tracef("Processing transaction %v", tx.Sha())
 
 	// Potentially accept the transaction to the memory pool.
-	missingParents, err := mp.maybeAcceptTransaction(tx, true, rateLimit, allowHighFees)
+	var missingParents []*chainhash.Hash
+	missingParents, err = mp.maybeAcceptTransaction(tx, true, rateLimit,
+		allowHighFees)
 	if err != nil {
 		return nil, err
 	}
 
-	// If len(missingParents) == 0 then we know the tx is NOT an orphan
+	// If len(missingParents) == 0 then we know the tx is NOT an orphan.
 	if len(missingParents) == 0 {
 		// Accept any orphan transactions that depend on this
 		// transaction (they are no longer orphans if all inputs are

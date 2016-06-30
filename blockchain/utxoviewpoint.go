@@ -887,7 +887,7 @@ func (view *UtxoViewpoint) fetchUtxosMain(db database.DB,
 				return err
 			}
 
-			fmt.Printf("Entry for hash %v: %v\n", hashCopy, entry)
+			// fmt.Printf("Entry for hash %v: %v\n", hashCopy, entry)
 
 			view.entries[hash] = entry
 		}
@@ -1152,8 +1152,8 @@ func (b *BlockChain) FetchUtxoView(tx *dcrutil.Tx, treeValid bool) (*UtxoViewpoi
 		if err != nil {
 			return nil, err
 		}
-		for i, tx := range block.Transactions() {
-			err := view.connectTransaction(tx, b.bestNode.height,
+		for i, blockTx := range block.Transactions() {
+			err := view.connectTransaction(blockTx, b.bestNode.height,
 				uint32(i), nil)
 			if err != nil {
 				return nil, err
@@ -1179,6 +1179,8 @@ func (b *BlockChain) FetchUtxoView(tx *dcrutil.Tx, treeValid bool) (*UtxoViewpoi
 	}
 
 	err := view.fetchUtxosMain(b.db, txNeededSet)
+
+	// fmt.Printf("UTXO VIEW RETURNED FOR TX %v IN INITIAL LOOKUP:\n %v", tx.Sha(), DebugUtxoViewpointData(view))
 	return view, err
 }
 

@@ -1825,9 +1825,6 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
 				dcrutil.MaxAmount)
 			return 0, ruleError(ErrBadTxOutValue, str)
 		}
-
-		// Mark the referenced output as spent.
-		utxoEntry.SpendOutput(originTxIndex)
 	}
 
 	// Calculate the total output amount for this transaction.  It is safe
@@ -1944,15 +1941,18 @@ func CountP2SHSigOps(tx *dcrutil.Tx, isCoinBaseTx bool, isStakeBaseTx bool,
 		utxoEntry, ok := utxoView.entries[*originTxHash]
 		if !ok || utxoEntry == nil {
 			str := fmt.Sprintf("unable to find unspent transaction "+
-				"%v referenced from transaction %s:%d during CountP2SHSigOps",
+				"%v referenced from transaction %s:%d during "+
+				"CountP2SHSigOps: output missing",
 				txIn.PreviousOutPoint.Hash, tx.Sha(), txInIndex)
 			return 0, ruleError(ErrMissingTx, str)
 		}
 
 		if utxoEntry.IsOutputSpent(originTxIndex) {
 			str := fmt.Sprintf("unable to find unspent output "+
-				"%v referenced from transaction %s:%d during CountP2SHSigOps",
+				"%v referenced from transaction %s:%d during "+
+				"CountP2SHSigOps: output spent",
 				txIn.PreviousOutPoint, tx.Sha(), txInIndex)
+			// fmt.Printf("UTXO VIEW RETURNED FOR TX %v IN CHECKP2SH SIGOPS:\n %v", tx.Sha(), DebugUtxoViewpointData(utxoView))
 			return 0, ruleError(ErrMissingTx, str)
 		}
 
