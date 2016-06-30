@@ -1844,6 +1844,10 @@ out:
 					err: err,
 				}
 
+			case checkConnectBlockMsg:
+				err := b.chain.CheckConnectBlock(msg.block)
+				msg.reply <- err
+
 			case calcNextReqDiffNodeMsg:
 				difficulty, err :=
 					b.chain.CalcNextRequiredDiffFromNode(msg.hash,
