@@ -1388,6 +1388,11 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
 			return 0, ruleError(ErrMissingTx, errStr)
 		}
 
+		if utxoEntrySstx == nil {
+			fmt.Printf("VOTE HASH %v\n", tx.Sha())
+			fmt.Printf("VOTE UTXO VIEW\n %v\n", DebugUtxoViewpointData(utxoView))
+		}
+
 		// While we're here, double check to make sure that the input is from an
 		// SStx. By doing so, you also ensure the first output is OP_SSTX tagged.
 		if utxoEntrySstx.TransactionType() != stake.TxTypeSStx {
@@ -2587,8 +2592,6 @@ func (b *BlockChain) CheckConnectBlock(block *dcrutil.Block) error {
 		newNode.workSum.Add(prevNode.workSum, newNode.workSum)
 	}
 
-	// Leave the spent txouts entry nil in the state since the information
-	// is not needed and thus extra work can be avoided.
 	view := NewUtxoViewpoint()
 	view.SetBestHash(prevNode.hash)
 	return b.checkConnectBlock(newNode, block, view, nil)
