@@ -1939,10 +1939,16 @@ mempoolLoop:
 	// are chains. maybeInsertStakeTx fills this in for stake transactions
 	// already, so only do it for regular transactions.
 	for i, tx := range blockTxnsRegular {
+		// No need to check any of the transactions in the custom first
+		// block.
+		if nextBlockHeight == 1 {
+			break
+		}
+
 		utxs, err := blockManager.chain.FetchUtxoView(tx, treeValid)
 		if err != nil {
-			str := fmt.Sprintf("failed to fetch tx store for tx %v",
-				tx.Sha())
+			str := fmt.Sprintf("failed to fetch input utxs for tx %v: %s",
+				tx.Sha(), err.Error())
 			return nil, miningRuleError(ErrFetchTxStore, str)
 		}
 
