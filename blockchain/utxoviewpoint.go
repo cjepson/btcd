@@ -803,10 +803,11 @@ func (view *UtxoViewpoint) disconnectTransactionSlice(transactions []*dcrutil.Tx
 					stxo.index, stxo.isCoinBase, stxo.hasExpiry,
 					stxo.txType)
 				if txType == stake.TxTypeSStx {
-					stakeExtra := make([]byte,
-						serializeSizeForMinimalOutputs(tx))
-					putTxToMinimalOutputs(stakeExtra, tx)
-					entry.stakeExtra = stakeExtra
+					//stakeExtra := make([]byte,
+					//	serializeSizeForMinimalOutputs(tx))
+					// putTxToMinimalOutputs(stakeExtra, tx)
+					// entry.stakeExtra = stakeExtra
+					entry.stakeExtra = stxo.stakeExtra
 				}
 				view.entries[*originHash] = entry
 			}

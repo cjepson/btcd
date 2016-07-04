@@ -2633,7 +2633,7 @@ func (b *BlockChain) CheckConnectBlock(block *dcrutil.Block) error {
 			return err
 		}
 
-		fmt.Printf("DISCONNECT BLOCK %v\n", block.Sha())
+		// fmt.Printf("DISCONNECT BLOCK %v\n", block.Sha())
 		err = b.disconnectTransactions(view, block, parent, stxos)
 		if err != nil {
 			return err
@@ -2648,7 +2648,7 @@ func (b *BlockChain) CheckConnectBlock(block *dcrutil.Block) error {
 	// if there are no nodes to attach, we're done.
 	if attachNodes.Len() == 0 {
 		view.SetBestHash(&parentHash)
-		fmt.Printf("GOT UTXO VIEW\n%v\n", DebugUtxoViewpointData(view))
+		// fmt.Printf("GOT UTXO VIEW\n%v\n", DebugUtxoViewpointData(view))
 		return b.checkConnectBlock(newNode, block, view, nil)
 	}
 

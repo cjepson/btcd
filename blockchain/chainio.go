@@ -360,9 +360,11 @@ func decodeSpentTxOut(serialized []byte, stxo *spentTxOut, amount int64,
 		stxo.txVersion = int32(txVersion)
 
 		if stxo.txType == stake.TxTypeSStx {
+			//fmt.Printf("Current Serialized STXO %x\n", serialized[offset:])
 			sz := readDeserializeSizeOfMinimalOutputs(serialized[offset:])
-			stakeExtra := make([]byte, len(serialized[offset:sz]))
-			copy(stakeExtra, serialized[offset:sz])
+			stakeExtra := make([]byte, sz)
+			copy(stakeExtra, serialized[offset:offset+sz])
+			//fmt.Printf("Read Serialized STXO stakeExtra %x\n", stakeExtra)
 			stxo.stakeExtra = stakeExtra
 			offset += sz
 		}
