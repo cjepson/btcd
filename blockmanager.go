@@ -1845,6 +1845,7 @@ out:
 				}
 
 			case checkConnectBlockMsg:
+				fmt.Printf("%v\n", blockchain.DebugBlockString(msg.block))
 				err := b.chain.CheckConnectBlock(msg.block)
 				msg.reply <- err
 

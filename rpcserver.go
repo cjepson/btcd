@@ -3617,9 +3617,12 @@ func handleGetMiningInfo(s *rpcServer, cmd interface{}, closeChan <-chan struct{
 
 	best := s.chain.BestSnapshot()
 	nextStakeDiff, err := s.chain.CalcNextRequiredStakeDifficulty()
-	return nil, &dcrjson.RPCError{
-		Code:    dcrjson.ErrRPCInternal.Code,
-		Message: "failed to get next stake difficulty",
+	if err != nil {
+		return nil, &dcrjson.RPCError{
+			Code: dcrjson.ErrRPCInternal.Code,
+			Message: fmt.Sprintf("failed to get next stake difficulty: %s",
+				err.Error()),
+		}
 	}
 
 	result := dcrjson.GetMiningInfoResult{

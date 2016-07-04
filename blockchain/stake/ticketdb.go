@@ -1718,8 +1718,8 @@ func (tmdb *TicketDB) rescanTicketDB() error {
 		// curTmdbHeight-1, so sync to it.
 		if !failedToFindBlock {
 			log.Infof("Found a previously good height %v in the old "+
-				"stake database, attempting to sync to tip from it",
-				curTmdbHeight)
+				"stake database, attempting to sync to tip height %v "+
+				"from it", curTmdbHeight, height)
 
 			// Remove the top block.
 			_, _, _, err = tmdb.removeBlockToHeight(curTmdbHeight - 1)

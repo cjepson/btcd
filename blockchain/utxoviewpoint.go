@@ -441,7 +441,10 @@ func (b *BlockChain) connectTransactions(view *UtxoViewpoint, block *dcrutil.Blo
 
 	if parent != nil && block.Height() != 0 {
 		view.SetStakeViewpoint(ViewpointPrevValidInitial)
-		view.fetchInputUtxos(b.db, block, parent)
+		err := view.fetchInputUtxos(b.db, block, parent)
+		if err != nil {
+			return err
+		}
 		mBlock := block.MsgBlock()
 		votebits := mBlock.Header.VoteBits
 		regularTxTreeValid := dcrutil.IsFlagSet16(votebits, dcrutil.BlockValid)
@@ -458,8 +461,11 @@ func (b *BlockChain) connectTransactions(view *UtxoViewpoint, block *dcrutil.Blo
 
 	for i, stx := range block.STransactions() {
 		view.SetStakeViewpoint(thisNodeStakeViewpoint)
-		view.fetchInputUtxos(b.db, block, parent)
-		err := view.connectTransaction(stx, block.Height(), uint32(i), stxos)
+		err := view.fetchInputUtxos(b.db, block, parent)
+		if err != nil {
+			return err
+		}
+		err = view.connectTransaction(stx, block.Height(), uint32(i), stxos)
 		if err != nil {
 			return err
 		}

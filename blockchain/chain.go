@@ -656,19 +656,14 @@ func (b *BlockChain) findNode(nodeHash *chainhash.Hash) (*blockNode, error) {
 			// Look backwards in our blockchain and try to find it in the
 			// parents of blocks.
 			foundPrev := b.bestNode
-			notFound := false
+			notFound := true
 			for !foundPrev.hash.IsEqual(b.chainParams.GenesisHash) {
 				if distance >= searchDepth {
-					notFound = true
-					break
-				}
-
-				if foundPrev.hash.IsEqual(b.chainParams.GenesisHash) {
-					notFound = true
 					break
 				}
 
 				if foundPrev.hash.IsEqual(nodeHash) {
+					notFound = false
 					break
 				}
 
@@ -1110,7 +1105,8 @@ func (b *BlockChain) pushMainChainBlockCache(block *dcrutil.Block) {
 // it would be inefficient to repeat it.
 //
 // This function MUST be called with the chain state lock held (for writes).
-func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block, view *UtxoViewpoint, stxos []spentTxOut) error {
+func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block,
+	view *UtxoViewpoint, stxos []spentTxOut) error {
 	// Make sure it's extending the end of the best chain.
 	prevHash := &block.MsgBlock().Header.PrevBlock
 	if !prevHash.IsEqual(b.bestNode.hash) {

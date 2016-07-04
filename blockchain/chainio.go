@@ -95,6 +95,8 @@ func putTxToMinimalOutputs(target []byte, tx *dcrutil.Tx) int {
 // the amount of data read. The function will panic if it reads beyond the bounds
 // of the passed memory.
 func deserializeToMinimalOutputs(serialized []byte) ([]*stake.MinimalOutput, int) {
+	//fmt.Printf("GOT MIN OUT SER %x\n", serialized)
+
 	numOutputs, offset := deserializeVLQ(serialized)
 	minOuts := make([]*stake.MinimalOutput, int(numOutputs))
 	for i := 0; i < int(numOutputs); i++ {
@@ -117,6 +119,8 @@ func deserializeToMinimalOutputs(serialized []byte) ([]*stake.MinimalOutput, int
 			Version:  uint16(version),
 			PkScript: pkScript,
 		}
+		//fmt.Printf("OUTPUT %v: %v %v %x\n", i, amount, version, pkScript)
+		//fmt.Printf("REM %x\n", serialized[offset:])
 	}
 
 	return minOuts, offset
@@ -505,11 +509,17 @@ func dbFetchSpendJournalEntry(dbTx database.Tx, block *dcrutil.Block,
 	serialized := spendBucket.Get(block.Sha()[:])
 	blockTxns := append(parent.MsgBlock().Transactions[1:],
 		block.MsgBlock().STransactions...)
+
+	if len(blockTxns) > 0 && len(serialized) == 0 {
+		return nil, AssertError("missing spend journal data")
+	}
+
 	stxos, err := deserializeSpendJournalEntry(serialized, blockTxns, view)
 	if err != nil {
 		// Ensure any deserialization errors are returned as database
 		// corruption errors.
 		if isDeserializeErr(err) {
+			panic("")
 			return nil, database.Error{
 				ErrorCode: database.ErrCorruption,
 				Description: fmt.Sprintf("corrupt spend "+

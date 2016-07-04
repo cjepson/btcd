@@ -20,8 +20,7 @@ import (
 	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg"
 	"github.com/decred/dcrd/chaincfg/chainhash"
-	"github.com/decred/dcrd/database"
-	_ "github.com/decred/dcrd/database/ldb"
+	database "github.com/decred/dcrd/database2"
 	"github.com/decred/dcrd/wire"
 	"github.com/decred/dcrutil"
 )
@@ -63,7 +62,7 @@ func TestTicketDB(t *testing.T) {
 	testBCHeight := int64(168)
 
 	// Set up a DB
-	database, err := database.CreateDB("leveldb", "ticketdb_test")
+	database, err := database.Create("leveldb", "ticketdb_test")
 	if err != nil {
 		t.Errorf("Db create error: %v", err.Error())
 	}

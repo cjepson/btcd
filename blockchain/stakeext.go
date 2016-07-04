@@ -70,7 +70,10 @@ func (b *BlockChain) getWinningTicketsWithStore(node *blockNode) ([]chainhash.Ha
 		if err != nil {
 			return nil, 0, [6]byte{}, nil, err
 		}
-		view.fetchInputUtxos(b.db, block, parent)
+		err = view.fetchInputUtxos(b.db, block, parent)
+		if err != nil {
+			return nil, 0, [6]byte{}, nil, err
+		}
 	}
 
 	// Sort the entire list of tickets lexicographically by sorting

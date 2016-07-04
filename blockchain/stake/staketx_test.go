@@ -739,7 +739,7 @@ func TestGetSSGenBlockVotedOn(t *testing.T) {
 	ssgen.SetTree(dcrutil.TxTreeStake)
 	ssgen.SetIndex(0)
 
-	blocksha, height, err := stake.GetSSGenBlockVotedOn(ssgen)
+	blocksha, height, err := stake.SSGenBlockVotedOn(ssgen)
 
 	correctblocksha, _ := chainhash.NewHash(
 		[]byte{
@@ -871,7 +871,7 @@ func TestGetSSGenVoteBits(t *testing.T) {
 
 	correctvbs := uint16(0x8c94)
 
-	votebits := stake.GetSSGenVoteBits(ssgen)
+	votebits := stake.SSGenVoteBits(ssgen)
 
 	if correctvbs != votebits {
 		t.Errorf("Error thrown on TestGetSSGenVoteBits: Looking for "+
@@ -895,7 +895,7 @@ func TestGetSSRtxStakeOutputInfo(t *testing.T) {
 
 	correctAmt := int64(0x2122e300)
 
-	typs, pkhs, amts, err := stake.GetSSRtxStakeOutputInfo(ssrtx,
+	typs, pkhs, amts, err := stake.TxSSRtxStakeOutputInfo(ssrtx,
 		&chaincfg.SimNetParams)
 	if err != nil {
 		t.Errorf("Got unexpected error: %v", err.Error())
@@ -926,7 +926,7 @@ func TestGetSStxNullOutputAmounts(t *testing.T) {
 		int64(0x02300000)}
 	amtTicket := int64(0x9122e300)
 
-	_, _, err := stake.GetSStxNullOutputAmounts(
+	_, _, err := stake.SStxNullOutputAmounts(
 		[]int64{
 			int64(0x12000000),
 			int64(0x12300000),
@@ -942,7 +942,7 @@ func TestGetSStxNullOutputAmounts(t *testing.T) {
 	}
 
 	// too small amount to commit
-	_, _, err = stake.GetSStxNullOutputAmounts(
+	_, _, err = stake.SStxNullOutputAmounts(
 		commitAmts,
 		changeAmts,
 		int64(0x00000000))
@@ -956,7 +956,7 @@ func TestGetSStxNullOutputAmounts(t *testing.T) {
 		int64(0x02000000),
 		int64(0x12300001)}
 
-	_, _, err = stake.GetSStxNullOutputAmounts(
+	_, _, err = stake.SStxNullOutputAmounts(
 		commitAmts,
 		tooMuchChangeAmts,
 		int64(0x00000020))
@@ -965,7 +965,7 @@ func TestGetSStxNullOutputAmounts(t *testing.T) {
 		t.Errorf("TestGetSStxNullOutputAmounts unexpected error: %v", err)
 	}
 
-	fees, amts, err := stake.GetSStxNullOutputAmounts(commitAmts,
+	fees, amts, err := stake.SStxNullOutputAmounts(commitAmts,
 		changeAmts,
 		amtTicket)
 
@@ -1333,7 +1333,7 @@ func TestVerifyRealTxs(t *testing.T) {
 	ssrtxTx := dcrutil.NewTx(ssrtxMtx)
 
 	ssrtxTypes, ssrtxAddrs, ssrtxAmts, err :=
-		stake.GetSSRtxStakeOutputInfo(ssrtxTx, &chaincfg.TestNetParams)
+		stake.TxSSRtxStakeOutputInfo(ssrtxTx, &chaincfg.TestNetParams)
 	if err != nil {
 		t.Errorf("Unexpected GetSSRtxStakeOutputInfo error: %v", err.Error())
 	}
@@ -1368,7 +1368,7 @@ func TestVerifyRealTxs(t *testing.T) {
 	sstxTypes, sstxAddrs, sstxAmts, _, sstxRules, sstxLimits =
 		stake.TxSStxStakeOutputInfo(sstxTx)
 	ssrtxTypes, ssrtxAddrs, ssrtxAmts, err =
-		stake.GetSSRtxStakeOutputInfo(ssrtxTx, &chaincfg.TestNetParams)
+		stake.TxSSRtxStakeOutputInfo(ssrtxTx, &chaincfg.TestNetParams)
 	if err != nil {
 		t.Errorf("Unexpected GetSSRtxStakeOutputInfo error: %v", err.Error())
 	}
@@ -1394,7 +1394,7 @@ func TestVerifyRealTxs(t *testing.T) {
 	sstxTypes, sstxAddrs, sstxAmts, _, sstxRules, sstxLimits =
 		stake.TxSStxStakeOutputInfo(sstxTx)
 	ssrtxTypes, ssrtxAddrs, ssrtxAmts, err =
-		stake.GetSSRtxStakeOutputInfo(ssrtxTx, &chaincfg.TestNetParams)
+		stake.TxSSRtxStakeOutputInfo(ssrtxTx, &chaincfg.TestNetParams)
 	if err != nil {
 		t.Errorf("Unexpected GetSSRtxStakeOutputInfo error: %v", err.Error())
 	}

@@ -16,6 +16,7 @@ import (
 	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg"
 	"github.com/decred/dcrd/chaincfg/chainhash"
+	database "github.com/decred/dcrd/database2"
 	"github.com/decred/dcrd/txscript"
 	"github.com/decred/dcrd/wire"
 	"github.com/decred/dcrutil"
@@ -1274,7 +1275,7 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
 			// Ensure the input is available.
 			txInHash := &txIn.PreviousOutPoint.Hash
 			utxoEntry, exists := utxoView.entries[*txInHash]
-			if !exists {
+			if !exists || utxoEntry == nil {
 				str := fmt.Sprintf("unable to find input transaction "+
 					"%v for transaction %v", txInHash, txHash)
 				return 0, ruleError(ErrMissingTx, str)
@@ -1382,16 +1383,13 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
 		// We also need to make sure that the SSGen outputs that are P2PKH go
 		// to the addresses specified in the original SSTx. Check that too.
 		utxoEntrySstx, exists := utxoView.entries[sstxHash]
-		if !exists {
+		if !exists || utxoEntrySstx == nil {
 			errStr := fmt.Sprintf("Unable to find input sstx transaction "+
 				"%v for transaction %v", sstxHash, txHash)
 			return 0, ruleError(ErrMissingTx, errStr)
 		}
 
-		if utxoEntrySstx == nil {
-			fmt.Printf("VOTE HASH %v\n", tx.Sha())
-			fmt.Printf("VOTE UTXO VIEW\n %v\n", DebugUtxoViewpointData(utxoView))
-		}
+		//fmt.Printf("utxoEntrySstx %v, exists %v\n", utxoEntrySstx, exists)
 
 		// While we're here, double check to make sure that the input is from an
 		// SStx. By doing so, you also ensure the first output is OP_SSTX tagged.
@@ -1411,6 +1409,8 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
 			return 0, ruleError(ErrInvalidSSGenInput, errStr)
 		}
 
+		// fmt.Printf("EVAL TICKET %v\n", sstxHash)
+		// fmt.Printf("STAKE EXTRA %x\n", utxoEntrySstx.stakeExtra)
 		minOutsSStx := ConvertUtxosToMinimalOutputs(utxoEntrySstx)
 		if len(minOutsSStx) == 0 {
 			return 0, AssertError("missing stake extra data for ticket used " +
@@ -1530,7 +1530,7 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
 		// We also need to make sure that the SSGen outputs that are P2PKH go
 		// to the addresses specified in the original SSTx. Check that too.
 		utxoEntrySstx, exists := utxoView.entries[sstxHash]
-		if !exists {
+		if !exists || utxoEntrySstx == nil {
 			errStr := fmt.Sprintf("Unable to find input sstx transaction "+
 				"%v for transaction %v", sstxHash, txHash)
 			return 0, ruleError(ErrMissingTx, errStr)
@@ -1637,7 +1637,7 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
 
 		txInHash := &txIn.PreviousOutPoint.Hash
 		utxoEntry, exists := utxoView.entries[*txInHash]
-		if !exists {
+		if !exists || utxoEntry == nil {
 			str := fmt.Sprintf("unable to find input transaction "+
 				"%v for transaction %v", txInHash, txHash)
 			return 0, ruleError(ErrMissingTx, str)
@@ -2031,7 +2031,7 @@ func checkStakeBaseAmounts(height int64, params *chaincfg.Params,
 			// Ensure the input is available.
 			txInHash := &tx.MsgTx().TxIn[1].PreviousOutPoint.Hash
 			utxoEntry, exists := utxoView.entries[*txInHash]
-			if !exists {
+			if !exists || utxoEntry == nil {
 				str := fmt.Sprintf("couldn't find input tx %v for stakebase "+
 					"amounts check", txInHash)
 				return ruleError(ErrTicketUnavailable, str)
@@ -2075,7 +2075,7 @@ func getStakeBaseAmounts(txs []*dcrutil.Tx, utxoView *UtxoViewpoint) (int64, err
 			// Ensure the input is available.
 			txInHash := &tx.MsgTx().TxIn[1].PreviousOutPoint.Hash
 			utxoEntry, exists := utxoView.entries[*txInHash]
-			if !exists {
+			if !exists || utxoEntry == nil {
 				str := fmt.Sprintf("couldn't find input tx %v for stakebase "+
 					"amounts get",
 					txInHash)
@@ -2114,7 +2114,7 @@ func getStakeTreeFees(height int64, params *chaincfg.Params,
 
 			txInHash := &in.PreviousOutPoint.Hash
 			utxoEntry, exists := utxoView.entries[*txInHash]
-			if !exists {
+			if !exists || utxoEntry == nil {
 				str := fmt.Sprintf("couldn't find input tx %v for stake "+
 					"tree fee calculation", txInHash)
 				return 0, ruleError(ErrTicketUnavailable, str)
@@ -2329,7 +2329,7 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 	if !utxoView.BestHash().IsEqual(node.parentHash) {
 		return AssertError(fmt.Sprintf("inconsistent view when "+
 			"checking block connection: best hash is %v instead "+
-			"of expected %v", utxoView.BestHash(), node.hash))
+			"of expected %v", utxoView.BestHash(), node.parentHash))
 	}
 
 	/* TODO REMOVE AND CHECK INDIVIDUALLY
@@ -2476,6 +2476,8 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 		return err
 	}
 
+	// fmt.Printf("UTXOS\n%v\n", DebugUtxoViewpointData(utxoView))
+
 	err = b.checkTransactionsAndConnect(0, node,
 		block.STransactions(), utxoView, stxos, false)
 	if err != nil {
@@ -2576,13 +2578,6 @@ func (b *BlockChain) CheckConnectBlock(block *dcrutil.Block) error {
 	}
 
 	var voteBitsStake []uint16
-	for _, stx := range block.STransactions() {
-		if is, _ := stake.IsSSGen(stx); is {
-			vb := stake.SSGenVoteBits(stx)
-			voteBitsStake = append(voteBitsStake, vb)
-		}
-	}
-
 	newNode := newBlockNode(&block.MsgBlock().Header, block.Sha(),
 		block.Height(), voteBitsStake)
 	newNode.parent = prevNode
@@ -2592,7 +2587,94 @@ func (b *BlockChain) CheckConnectBlock(block *dcrutil.Block) error {
 		newNode.workSum.Add(prevNode.workSum, newNode.workSum)
 	}
 
+	// If we are extending the main (best) chain with a new block,
+	// just use the ticket database we already have.
+	if b.bestNode == nil || (prevNode != nil &&
+		prevNode.hash.IsEqual(b.bestNode.hash)) {
+		view := NewUtxoViewpoint()
+		view.SetBestHash(prevNode.hash)
+		return b.checkConnectBlock(newNode, block, view, nil)
+	}
+
+	// The requested node is either on a side chain or is a node on the main
+	// chain before the end of it.  In either case, we need to undo the
+	// transactions and spend information for the blocks which would be
+	// disconnected during a reorganize to the point of view of the
+	// node just before the requested node.
+	detachNodes, attachNodes := b.getReorganizeNodes(prevNode)
+	if err != nil {
+		return err
+	}
+
 	view := NewUtxoViewpoint()
-	view.SetBestHash(prevNode.hash)
+	view.SetBestHash(b.bestNode.hash)
+	view.SetStakeViewpoint(ViewpointPrevValidInitial)
+
+	for e := detachNodes.Front(); e != nil; e = e.Next() {
+		n := e.Value.(*blockNode)
+		block, err := b.getBlockFromHash(n.hash)
+		if err != nil {
+			return err
+		}
+
+		parent, err := b.getBlockFromHash(n.parentHash)
+		if err != nil {
+			return err
+		}
+
+		// Load all of the spent txos for the block from the spend
+		// journal.
+		var stxos []spentTxOut
+		err = b.db.View(func(dbTx database.Tx) error {
+			stxos, err = dbFetchSpendJournalEntry(dbTx, block, parent, view)
+			return err
+		})
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("DISCONNECT BLOCK %v\n", block.Sha())
+		err = b.disconnectTransactions(view, block, parent, stxos)
+		if err != nil {
+			return err
+		}
+	}
+
+	// The UTXO viewpoint is now accurate to either the node where the
+	// requested node forks off the main chain (in the case where the
+	// requested node is on a side chain), or the requested node itself if
+	// the requested node is an old node on the main chain.  Entries in the
+	// attachNodes list indicate the requested node is on a side chain, so
+	// if there are no nodes to attach, we're done.
+	if attachNodes.Len() == 0 {
+		view.SetBestHash(&parentHash)
+		fmt.Printf("GOT UTXO VIEW\n%v\n", DebugUtxoViewpointData(view))
+		return b.checkConnectBlock(newNode, block, view, nil)
+	}
+
+	// The requested node is on a side chain, so we need to apply the
+	// transactions and spend information from each of the nodes to attach.
+	for e := attachNodes.Front(); e != nil; e = e.Next() {
+		n := e.Value.(*blockNode)
+		block, exists := b.blockCache[*n.hash]
+		if !exists {
+			return fmt.Errorf("unable to find block %v in "+
+				"side chain cache for utxo view construction",
+				n.hash)
+		}
+
+		parent, err := b.getBlockFromHash(n.parentHash)
+		if err != nil {
+			return err
+		}
+
+		var stxos []spentTxOut
+		err = b.connectTransactions(view, block, parent, &stxos)
+		if err != nil {
+			return err
+		}
+	}
+
+	view.SetBestHash(&parentHash)
 	return b.checkConnectBlock(newNode, block, view, nil)
 }
