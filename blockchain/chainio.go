@@ -521,7 +521,6 @@ func dbFetchSpendJournalEntry(dbTx database.Tx, block *dcrutil.Block,
 		// Ensure any deserialization errors are returned as database
 		// corruption errors.
 		if isDeserializeErr(err) {
-			panic("")
 			return nil, database.Error{
 				ErrorCode: database.ErrCorruption,
 				Description: fmt.Sprintf("corrupt spend "+
