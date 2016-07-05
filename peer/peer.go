@@ -1229,6 +1229,9 @@ func (p *Peer) maybeAddDeadline(pendingResponses map[string]time.Time, msgCmd st
 	// sent asynchronously and as a result of a long backlock of messages,
 	// such as is typical in the case of initial block download, the
 	// response won't be received in time.
+	log.Debugf("Adding deadline for command %s for peer %s, expecting "+
+		"responses %s", msgCmd, p.addr, pendingResponses)
+
 	deadline := time.Now().Add(stallResponseTimeout)
 	switch msgCmd {
 	case wire.CmdVersion:
@@ -1255,6 +1258,9 @@ func (p *Peer) maybeAddDeadline(pendingResponses map[string]time.Time, msgCmd st
 		// headers.
 		deadline = time.Now().Add(stallResponseTimeout * 3)
 		pendingResponses[wire.CmdHeaders] = deadline
+
+	case wire.CmdGetMiningState:
+		pendingResponses[wire.CmdMiningState] = deadline
 	}
 }
 
@@ -1359,6 +1365,9 @@ out:
 			// don't arrive by their adjusted deadline.
 			for command, deadline := range pendingResponses {
 				if now.Before(deadline.Add(offset)) {
+					log.Debugf("Stall ticker rolling over for peer %s on "+
+						"cmd %s (deadline for data: %s)", p, command,
+						deadline.String())
 					continue
 				}
 

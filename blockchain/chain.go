@@ -1457,7 +1457,6 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 	// then they are needed again when doing the actual database updates.
 	// Rather than doing two loads, cache the loaded data into these slices.
 	detachBlocks := make([]*dcrutil.Block, 0, detachNodes.Len())
-	detachParents := make([]*dcrutil.Block, 0, detachNodes.Len())
 	detachSpentTxOuts := make([][]spentTxOut, 0, detachNodes.Len())
 
 	// Disconnect all of the blocks back to the point of the fork.  This
@@ -1496,7 +1495,6 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 
 		// Store the loaded block and spend journal entry for later.
 		detachBlocks = append(detachBlocks, block)
-		detachParents = append(detachBlocks, parent)
 		detachSpentTxOuts = append(detachSpentTxOuts, stxos)
 
 		// fmt.Printf("DISCONNECT BLOCK %v, %v\n", block.Sha(), block.Height())
@@ -1575,11 +1573,14 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 	for i, e := 0, detachNodes.Front(); e != nil; i, e = i+1, e.Next() {
 		n := e.Value.(*blockNode)
 		block := detachBlocks[i]
-		parent := detachParents[i]
+		parent, err := b.getBlockFromHash(n.parentHash)
+		if err != nil {
+			return err
+		}
 
 		// Load all of the utxos referenced by the block that aren't
 		// already in the view.
-		err := view.fetchInputUtxos(b.db, block, parent)
+		err = view.fetchInputUtxos(b.db, block, parent)
 		if err != nil {
 			return err
 		}
