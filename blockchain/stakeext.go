@@ -241,9 +241,13 @@ func (b *BlockChain) getWinningTicketsInclStore(node *blockNode,
 
 // GetWinningTickets takes a node block hash and returns the next tickets
 // eligible for spending as SSGen.
-// This function is NOT safe for concurrent access.
+//
+// This function is safe for concurrent access.
 func (b *BlockChain) GetWinningTickets(nodeHash chainhash.Hash) ([]chainhash.Hash,
 	int, [6]byte, error) {
+	b.chainLock.Lock()
+	defer b.chainLock.Unlock()
+
 	var node *blockNode
 	if n, exists := b.index[nodeHash]; exists {
 		node = n
@@ -265,6 +269,7 @@ func (b *BlockChain) GetWinningTickets(nodeHash chainhash.Hash) ([]chainhash.Has
 }
 
 // GetMissedTickets returns a list of currently missed tickets.
+//
 // This function is NOT safe for concurrent access.
 func (b *BlockChain) GetMissedTickets() []chainhash.Hash {
 	missedTickets := b.tmdb.GetTicketHashesForMissed()
