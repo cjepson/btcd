@@ -136,7 +136,7 @@ func (b *BlockChain) connectTickets(tixStore TicketStore, node *blockNode,
 		return nil
 	}
 
-	parentBlock, err := b.GetBlockFromHash(node.parentHash)
+	parentBlock, err := b.getBlockFromHash(node.parentHash)
 	if err != nil {
 		return err
 	}

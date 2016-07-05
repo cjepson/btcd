@@ -125,11 +125,12 @@ func (b *BlockChain) processOrphans(hash *chainhash.Hash, flags BehaviorFlags) e
 // It returns a first bool specifying whether or not the block is on on a fork
 // or on a side chain. True means it's on the main chain.
 //
-//
 // This function is safe for concurrent access.
 // valid when the error is nil.
 func (b *BlockChain) ProcessBlock(block *dcrutil.Block,
 	timeSource MedianTimeSource, flags BehaviorFlags) (bool, bool, error) {
+	b.chainLock.Lock()
+	defer b.chainLock.Unlock()
 
 	fastAdd := flags&BFFastAdd == BFFastAdd
 	dryRun := flags&BFDryRun == BFDryRun

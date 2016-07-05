@@ -1252,7 +1252,9 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block,
 	// Notify the caller that the block was connected to the main chain.
 	// The caller would typically want to react with actions such as
 	// updating wallets.
+	b.chainLock.Unlock()
 	b.sendNotification(NTBlockConnected, blockAndParent)
+	b.chainLock.Lock()
 
 	b.pushMainChainBlockCache(block)
 
@@ -1358,9 +1360,9 @@ func (b *BlockChain) disconnectBlock(node *blockNode, block *dcrutil.Block,
 
 	// Put block in the side chain cache.
 	node.inMainChain = false
-	// b.blockCacheLock.Lock()
+	b.blockCacheLock.Lock()
 	b.blockCache[*node.hash] = block
-	// b.blockCacheLock.Unlock()
+	b.blockCacheLock.Unlock()
 
 	// This node's parent is now the end of the best chain.
 	b.bestNode = node.parent
@@ -1386,7 +1388,9 @@ func (b *BlockChain) disconnectBlock(node *blockNode, block *dcrutil.Block,
 	// Notify the caller that the block was disconnected from the main
 	// chain.  The caller would typically want to react with actions such as
 	// updating wallets.
+	b.chainLock.Unlock()
 	b.sendNotification(NTBlockDisconnected, blockAndParent)
+	b.chainLock.Lock()
 
 	b.dropMainChainBlockCache(block)
 
@@ -1433,8 +1437,8 @@ func countSpentOutputs(block *dcrutil.Block, parent *dcrutil.Block) int {
 // This function MUST be called with the chain state lock held (for writes).
 func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 	flags BehaviorFlags) error {
-	oldHash := b.bestNode.hash
-	oldHeight := b.bestNode.height
+	formerBestHash := b.bestNode.hash
+	formerBestHeight := b.bestNode.height
 
 	// Ensure all of the needed side chain blocks are in the cache.
 	for e := attachNodes.Front(); e != nil; e = e.Next() {
@@ -1461,7 +1465,7 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 	// database and using that information to unspend all of the spent txos
 	// and remove the utxos created by the blocks.
 	view := NewUtxoViewpoint()
-	view.SetBestHash(b.bestNode.hash)
+	view.SetBestHash(formerBestHash)
 	view.SetStakeViewpoint(ViewpointPrevValidInitial)
 	i := 0
 	for e := detachNodes.Front(); e != nil; e = e.Next() {
@@ -1523,6 +1527,7 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 		n := e.Value.(*blockNode)
 		b.blockCacheLock.RLock()
 		block := b.blockCache[*n.hash]
+		b.blockCacheLock.RUnlock()
 
 		// Notice the spent txout details are not requested here and
 		// thus will not be generated.  This is done because the state
@@ -1548,12 +1553,14 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 
 	// Send a notification that a blockchain reorganization is in progress.
 	reorgData := &ReorganizationNtfnsData{
-		*oldHash,
-		oldHeight,
+		*formerBestHash,
+		formerBestHeight,
 		*newHash,
 		newHeight,
 	}
+	b.chainLock.Unlock()
 	b.sendNotification(NTReorganization, reorgData)
+	b.chainLock.Lock()
 
 	// Reset the view for the actual connection code below.  This is
 	// required because the view was previously modified when checking if
@@ -1561,7 +1568,7 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 	// view to be valid from the viewpoint of each block being connected or
 	// disconnected.
 	view = NewUtxoViewpoint()
-	view.SetBestHash(b.bestNode.hash)
+	view.SetBestHash(formerBestHash)
 	view.SetStakeViewpoint(ViewpointPrevValidInitial)
 
 	// Disconnect blocks from the main chain.
@@ -1599,6 +1606,7 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 		n := e.Value.(*blockNode)
 		b.blockCacheLock.RLock()
 		block := b.blockCache[*n.hash]
+		b.blockCacheLock.RUnlock()
 
 		parent, err := b.getBlockFromHash(n.parentHash)
 		if err != nil {
@@ -1622,9 +1630,7 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 		if err != nil {
 			return err
 		}
-		//	b.blockCacheLock.Lock()
 		delete(b.blockCache, *n.hash)
-		//	b.blockCacheLock.Unlock()
 	}
 
 	// Log the point where the chain forked.
@@ -1639,8 +1645,8 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 	// Log the old and new best chain heads.
 	lastAttachNode := attachNodes.Back().Value.(*blockNode)
 	log.Infof("REORGANIZE: Old best chain head was %v, height %v",
-		oldHash,
-		oldHeight)
+		formerBestHash,
+		formerBestHeight)
 	log.Infof("REORGANIZE: New best chain head is %v, height %v",
 		lastAttachNode.hash,
 		lastAttachNode.height)
@@ -1652,12 +1658,10 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 // block hash requested, so long as it matches up with the current organization
 // of the best chain.
 func (b *BlockChain) forceHeadReorganization(formerBest chainhash.Hash,
-	newBest chainhash.Hash,
-	timeSource MedianTimeSource) error {
+	newBest chainhash.Hash, timeSource MedianTimeSource) error {
 	if formerBest.IsEqual(&newBest) {
 		return fmt.Errorf("can't reorganize to the same block")
 	}
-
 	formerBestNode := b.bestNode
 
 	// We can't reorganize the chain unless our head block matches up with
