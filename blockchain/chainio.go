@@ -323,8 +323,6 @@ func decodeSpentTxOut(serialized []byte, stxo *spentTxOut, amount int64,
 	if decodeFlagsFullySpent(byte(flags)) {
 		isCoinBase, hasExpiry, txType, _ := decodeFlags(byte(flags))
 
-		stxo.height = height
-		stxo.index = index
 		stxo.isCoinBase = isCoinBase
 		stxo.hasExpiry = hasExpiry
 		stxo.txType = txType
@@ -346,13 +344,15 @@ func decodeSpentTxOut(serialized []byte, stxo *spentTxOut, amount int64,
 	stxo.amount = amount
 	stxo.pkScript = compScript
 	stxo.compressed = true
+	stxo.height = height
+	stxo.index = index
 
 	// Deserialize the containing transaction if the flags indicate that
 	// the transaction has been fully spent.
 	if decodeFlagsFullySpent(byte(flags)) {
 		txVersion, bytesRead := deserializeVLQ(serialized[offset:])
 		offset += bytesRead
-		if offset > len(serialized) {
+		if offset == 0 || offset > len(serialized) {
 			return offset, errDeserialize("unexpected end of data " +
 				"after version")
 		}
@@ -362,6 +362,11 @@ func decodeSpentTxOut(serialized []byte, stxo *spentTxOut, amount int64,
 		if stxo.txType == stake.TxTypeSStx {
 			//fmt.Printf("Current Serialized STXO %x\n", serialized[offset:])
 			sz := readDeserializeSizeOfMinimalOutputs(serialized[offset:])
+			if sz == 0 || sz > len(serialized[offset:]) {
+				return offset, errDeserialize("corrupt data for ticket " +
+					"fully spent stxo stakeextra")
+			}
+
 			stakeExtra := make([]byte, sz)
 			copy(stakeExtra, serialized[offset:offset+sz])
 			//fmt.Printf("Read Serialized STXO stakeExtra %x\n", stakeExtra)

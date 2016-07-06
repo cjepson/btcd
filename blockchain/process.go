@@ -126,7 +126,6 @@ func (b *BlockChain) processOrphans(hash *chainhash.Hash, flags BehaviorFlags) e
 // or on a side chain. True means it's on the main chain.
 //
 // This function is safe for concurrent access.
-// valid when the error is nil.
 func (b *BlockChain) ProcessBlock(block *dcrutil.Block,
 	timeSource MedianTimeSource, flags BehaviorFlags) (bool, bool, error) {
 	b.chainLock.Lock()

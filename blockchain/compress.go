@@ -5,7 +5,7 @@
 package blockchain
 
 import (
-	//	"fmt"
+	"fmt"
 
 	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg/chainec"
@@ -147,35 +147,37 @@ func deserializeVLQ(serialized []byte) (uint64, int) {
 // NOTE: This section specifically does not use iota since these values are
 // serialized and must be stable for long-term storage.
 const (
-	// numSpecialScripts is the number of special scripts recognized by the
-	// domain-specific script compression algorithm.
-	numSpecialScripts = 0
-
 	// cstPayToPubKeyHash identifies a compressed pay-to-pubkey-hash script.
-	cstPayToPubKeyHash = 1
+	cstPayToPubKeyHash = 0
 
 	// cstPayToScriptHash identifies a compressed pay-to-script-hash script.
-	cstPayToScriptHash = 2
+	cstPayToScriptHash = 1
 
-	// cstPayToPubKeyComp2 identifies a compressed pay-to-pubkey script to
-	// a compressed pubkey.  Bit 0 specifies which y-coordinate to use
-	// to reconstruct the full uncompressed pubkey.
-	cstPayToPubKeyComp2 = 3
+	// cstPayToPubKeyComp1 identifies a compressed pay-to-pubkey script to
+	// a compressed pubkey whose y coordinate is not odd.
+	cstPayToPubKeyCompEven = 2
 
 	// cstPayToPubKeyComp3 identifies a compressed pay-to-pubkey script to
-	// a compressed pubkey.  Bit 0 specifies which y-coordinate to use
-	// to reconstruct the full uncompressed pubkey.
-	cstPayToPubKeyComp3 = 4
+	// a compressed pubkey whose y coordinate is odd.
+	cstPayToPubKeyCompOdd = 3
 
-	// cstPayToPubKeyUncomp4 identifies a compressed pay-to-pubkey script to
-	// an uncompressed pubkey.  Bit 0 specifies which y-coordinate to use
-	// to reconstruct the full uncompressed pubkey.
-	cstPayToPubKeyUncomp4 = 5
+	// cstPayToPubKeyUncompEven identifies a compressed pay-to-pubkey script to
+	// an uncompressed pubkey whose y coordinate is not odd when compressed.
+	cstPayToPubKeyUncompEven = 4
 
-	// cstPayToPubKeyUncomp5 identifies a compressed pay-to-pubkey script to
-	// an uncompressed pubkey.  Bit 0 specifies which y-coordinate to use
-	// to reconstruct the full uncompressed pubkey.
-	cstPayToPubKeyUncomp5 = 6
+	// cstPayToPubKeyUncompOdd identifies a compressed pay-to-pubkey script to
+	// an uncompressed pubkey whose y coordinate is odd when compressed.
+	cstPayToPubKeyUncompOdd = 5
+
+	// numSpecialScripts is the number of special scripts possibly recognized
+	// by the domain-specific script compression algorithm. It is one more
+	// than half the number required to overflow a single byte in VLQ format
+	// (127). All scripts prefixed 64 and higher for their size are considered
+	// uncompressed scripts that are stored uncompressed. Because only 5
+	// special script types are currently stored by Decred, there is a large
+	// amount of room for future upgrades to the compression algorithm with
+	// scripts that are common, such as those for the staking system.
+	numSpecialScripts = 64
 )
 
 // isPubKeyHash returns whether or not the passed public key script is a
@@ -289,8 +291,8 @@ func decodeCompressedScriptSize(serialized []byte, compressionVersion uint32) in
 	case cstPayToScriptHash:
 		return 21
 
-	case cstPayToPubKeyComp2, cstPayToPubKeyComp3, cstPayToPubKeyUncomp4,
-		cstPayToPubKeyUncomp5:
+	case cstPayToPubKeyCompEven, cstPayToPubKeyCompOdd,
+		cstPayToPubKeyUncompEven, cstPayToPubKeyUncompOdd:
 		return 33
 	}
 
@@ -306,6 +308,11 @@ func decodeCompressedScriptSize(serialized []byte, compressionVersion uint32) in
 // it will panic.
 func putCompressedScript(target []byte, scriptVersion uint16, pkScript []byte,
 	compressionVersion uint32) int {
+	if len(target) == 0 {
+		target[0] = 0x00
+		return 1
+	}
+
 	// Pay-to-pubkey-hash script.
 	if valid, hash := isPubKeyHash(pkScript); valid {
 		target[0] = cstPayToPubKeyHash
@@ -325,13 +332,21 @@ func putCompressedScript(target []byte, scriptVersion uint16, pkScript []byte,
 		pubKeyFormat := serializedPubKey[0]
 		switch pubKeyFormat {
 		case 0x02, 0x03:
-			target[0] = pubKeyFormat
+			if pubKeyFormat == 0x02 {
+				target[0] = cstPayToPubKeyCompEven
+			}
+			if pubKeyFormat == 0x03 {
+				target[0] = cstPayToPubKeyCompOdd
+			}
 			copy(target[1:33], serializedPubKey[1:33])
 			return 33
 		case 0x04:
 			// Encode the oddness of the serialized pubkey into the
 			// compressed script type.
-			target[0] = pubKeyFormat | (serializedPubKey[64] & 0x01)
+			target[0] = cstPayToPubKeyUncompEven
+			if (serializedPubKey[64] & 0x01) == 0x01 {
+				target[0] = cstPayToPubKeyUncompOdd
+			}
 			copy(target[1:33], serializedPubKey[1:33])
 			return 33
 		}
@@ -355,11 +370,7 @@ func putCompressedScript(target []byte, scriptVersion uint16, pkScript []byte,
 // will panic.  This is acceptable since it is only an internal function.
 func decompressScript(compressedPkScript []byte,
 	compressionVersion uint32) []byte {
-	// In practice this function will not be called with a zero-length or
-	// nil script since the nil script encoding includes the length, however
-	// the code below assumes the length exists, so just return nil now if
-	// the function ever ends up being called with a nil script in the
-	// future.
+	// Empty scripts, specified by 0x00, are considered nil.
 	if len(compressedPkScript) == 0 {
 		return nil
 	}
@@ -391,23 +402,31 @@ func decompressScript(compressedPkScript []byte,
 
 	// Pay-to-compressed-pubkey script.  The resulting script is:
 	// <OP_DATA_33><33 byte compressed pubkey><OP_CHECKSIG>
-	case cstPayToPubKeyComp2, cstPayToPubKeyComp3:
+	case cstPayToPubKeyCompEven, cstPayToPubKeyCompOdd:
 		pkScript := make([]byte, 35)
 		pkScript[0] = txscript.OP_DATA_33
-		pkScript[1] = byte(encodedScriptSize)
+		oddness := byte(0x02)
+		if encodedScriptSize == cstPayToPubKeyCompOdd {
+			oddness = 0x03
+		}
+		pkScript[1] = oddness
 		copy(pkScript[2:], compressedPkScript[bytesRead:bytesRead+32])
 		pkScript[34] = txscript.OP_CHECKSIG
 		return pkScript
 
 	// Pay-to-uncompressed-pubkey script.  The resulting script is:
 	// <OP_DATA_65><65 byte uncompressed pubkey><OP_CHECKSIG>
-	case cstPayToPubKeyUncomp4, cstPayToPubKeyUncomp5:
+	case cstPayToPubKeyUncompEven, cstPayToPubKeyUncompOdd:
 		// Change the leading byte to the appropriate compressed pubkey
 		// identifier (0x02 or 0x03) so it can be decoded as a
 		// compressed pubkey.  This really should never fail since the
 		// encoding ensures it is valid before compressing to this type.
 		compressedKey := make([]byte, 33)
-		compressedKey[0] = byte(encodedScriptSize - 2)
+		oddness := byte(0x02)
+		if encodedScriptSize == cstPayToPubKeyUncompOdd {
+			oddness = 0x03
+		}
+		compressedKey[0] = oddness
 		copy(compressedKey[1:], compressedPkScript[1:])
 		key, err := chainec.Secp256k1.ParsePubKey(compressedKey)
 		if err != nil {
@@ -643,9 +662,13 @@ func decodeCompressedTxOut(serialized []byte, compressionVersion uint32,
 	// left in the slice for it.
 	scriptSize := decodeCompressedScriptSize(serialized[offset:],
 		compressionVersion)
+	if scriptSize < 0 {
+		return 0, 0, nil, offset, errDeserialize("negative script size")
+	}
 	if len(serialized[offset:]) < scriptSize {
-		return 0, 0, nil, offset, errDeserialize("unexpected end of " +
-			"data after script size")
+		return 0, 0, nil, offset, errDeserialize(fmt.Sprintf("unexpected end of "+
+			"data after script size (got %v, need %v)", len(serialized[offset:]),
+			scriptSize))
 	}
 
 	// Make a copy of the compressed script so the original serialized data

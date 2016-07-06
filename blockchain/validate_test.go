@@ -92,26 +92,6 @@ func TestBlockValidationRules(t *testing.T) {
 		t.Errorf("error decoding test blockchain: %v", err.Error())
 	}
 
-	/* DEBUG remove eventually cj
-	for i := 1; i <= 168; i++ {
-		bl, err := dcrutil.NewBlockFromBytes(blockChain[int64(i)])
-		if err != nil {
-			t.Errorf("NewBlockFromBytes error: %v", err.Error())
-		}
-		bl.SetHeight(int64(i))
-
-		fmt.Printf("%v\n", blockchain.DebugBlockHeaderString(simNetParams,
-			bl))
-		fmt.Printf("%v\n", blockchain.DebugBlockString(bl))
-		for _, tx := range bl.Transactions() {
-			fmt.Printf("%v\n", blockchain.DebugMsgTxString(tx.MsgTx()))
-		}
-		for _, stx := range bl.STransactions() {
-			fmt.Printf("%v\n", blockchain.DebugMsgTxString(stx.MsgTx()))
-		}
-	}
-	*/
-
 	// Insert blocks 1 to 142 and perform various test. Block 1 has
 	// special properties, so make sure those validate correctly first.
 	block1Bytes := blockChain[int64(1)]
