@@ -11,7 +11,7 @@ import (
 
 	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg/chainhash"
-	//	"github.com/decred/dcrutil"
+	database "github.com/decred/dcrd/database2"
 )
 
 // GetNextWinningTickets returns the next tickets eligible for spending as SSGen
@@ -275,4 +275,15 @@ func (b *BlockChain) GetMissedTickets() []chainhash.Hash {
 	missedTickets := b.tmdb.GetTicketHashesForMissed()
 
 	return missedTickets
+}
+
+// DB passes the pointer to the database. It is only to be used by testing.
+func (b *BlockChain) DB() database.DB {
+	return b.db
+}
+
+// TMDB passes the pointer to the ticket database. It is only to be used by
+// testing.
+func (b *BlockChain) TMDB() *stake.TicketDB {
+	return b.tmdb
 }

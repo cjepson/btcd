@@ -227,75 +227,27 @@ func IsStakeBase(tx *dcrutil.Tx) bool {
 	return true
 }
 
-// TxSStxStakeOutputInfo takes an SStx as input and scans through its outputs,
-// returning the pubkeyhashs and amounts for any NullDataTy's (future
-// commitments to stake generation rewards).
-func TxSStxStakeOutputInfo(tx *dcrutil.Tx) ([]bool, [][]byte, []int64, []int64,
-	[][]bool, [][]uint16) {
-	msgTx := tx.MsgTx()
-
-	isP2SH := make([]bool, len(msgTx.TxIn))
-	addresses := make([][]byte, len(msgTx.TxIn))
-	amounts := make([]int64, len(msgTx.TxIn))
-	changeAmounts := make([]int64, len(msgTx.TxIn))
-	allSpendRules := make([][]bool, len(msgTx.TxIn))
-	allSpendLimits := make([][]uint16, len(msgTx.TxIn))
-
-	// Cycle through the inputs and pull the proportional amounts
-	// and commit to PKHs/SHs.
-	for idx, out := range msgTx.TxOut {
-		// We only care about the outputs where we get proportional
-		// amounts and the PKHs/SHs to send rewards to, which is all
-		// the odd numbered output indexes.
-		if (idx > 0) && (idx%2 != 0) {
-			// The MSB (sign), not used ever normally, encodes whether
-			// or not it is a P2PKH or P2SH for the input.
-			amtEncoded := make([]byte, 8, 8)
-			copy(amtEncoded, out.PkScript[22:30])
-			isP2SH[idx/2] = !(amtEncoded[7]&(1<<7) == 0) // MSB set?
-			amtEncoded[7] &= ^uint8(1 << 7)              // Clear bit
-
-			addresses[idx/2] = out.PkScript[2:22]
-			amounts[idx/2] = int64(binary.LittleEndian.Uint64(amtEncoded))
-
-			// Get flags and restrictions for the outputs to be
-			// make in either a vote or revocation.
-			spendRules := make([]bool, 2, 2)
-			spendLimits := make([]uint16, 2, 2)
-
-			// This bitflag is true/false.
-			feeLimitUint16 := binary.LittleEndian.Uint16(out.PkScript[30:32])
-			spendRules[0] = (feeLimitUint16 & SStxVoteFractionFlag) ==
-				SStxVoteFractionFlag
-			spendRules[1] = (feeLimitUint16 & SStxRevFractionFlag) ==
-				SStxRevFractionFlag
-			allSpendRules[idx/2] = spendRules
-
-			// This is the fraction to use out of 64.
-			spendLimits[0] = feeLimitUint16 & SStxVoteReturnFractionMask
-			spendLimits[1] = feeLimitUint16 & SStxRevReturnFractionMask
-			spendLimits[1] >>= 8
-			allSpendLimits[idx/2] = spendLimits
-		}
-
-		// Here we only care about the change amounts, so scan
-		// the change outputs (even indices) and save their
-		// amounts.
-		if (idx > 0) && (idx%2 == 0) {
-			changeAmounts[(idx/2)-1] = out.Value
-		}
-	}
-
-	return isP2SH, addresses, amounts, changeAmounts, allSpendRules,
-		allSpendLimits
-}
-
 // MinimalOutput is a struct encoding a minimally sized output for use in parsing
 // stake related information.
 type MinimalOutput struct {
 	PkScript []byte
 	Value    int64
 	Version  uint16
+}
+
+// ConvertToMinimalOutputs converts a transaction to its minimal outputs
+// derivative.
+func ConvertToMinimalOutputs(tx *dcrutil.Tx) []*MinimalOutput {
+	minOuts := make([]*MinimalOutput, len(tx.MsgTx().TxOut))
+	for i, txOut := range tx.MsgTx().TxOut {
+		minOuts[i] = &MinimalOutput{
+			PkScript: txOut.PkScript,
+			Value:    txOut.Value,
+			Version:  txOut.Version,
+		}
+	}
+
+	return minOuts
 }
 
 // SStxStakeOutputInfo takes an SStx as input and scans through its outputs,
@@ -358,6 +310,14 @@ func SStxStakeOutputInfo(outs []*MinimalOutput) ([]bool, [][]byte, []int64,
 
 	return isP2SH, addresses, amounts, changeAmounts, allSpendRules,
 		allSpendLimits
+}
+
+// TxSStxStakeOutputInfo takes an SStx as input and scans through its outputs,
+// returning the pubkeyhashs and amounts for any NullDataTy's (future
+// commitments to stake generation rewards).
+func TxSStxStakeOutputInfo(tx *dcrutil.Tx) ([]bool, [][]byte, []int64, []int64,
+	[][]bool, [][]uint16) {
+	return SStxStakeOutputInfo(ConvertToMinimalOutputs(tx))
 }
 
 // AddrFromSStxPkScrCommitment extracts a P2SH or P2PKH address from a
@@ -455,54 +415,7 @@ func TxSSGenStakeOutputInfo(tx *dcrutil.Tx, params *chaincfg.Params) ([]bool,
 	return isP2SH, addresses, amounts, nil
 }
 
-// SSGenStakeOutputInfo takes an SSGen tx as input and scans through its
-// outputs, returning the amount of the output and the PKH or SH that it was
-// sent to.
-func SSGenStakeOutputInfo(outs []*MinimalOutput, params *chaincfg.Params) ([]bool,
-	[][]byte, []int64, error) {
-	numOutputsInSSGen := len(outs)
-
-	isP2SH := make([]bool, numOutputsInSSGen-2)
-	addresses := make([][]byte, numOutputsInSSGen-2)
-	amounts := make([]int64, numOutputsInSSGen-2)
-
-	// Cycle through the inputs and generate
-	for idx, out := range outs {
-		// We only care about the outputs where we get proportional
-		// amounts and the PKHs they were sent to.
-		if (idx > 1) && (idx < numOutputsInSSGen) {
-			// Get the PKH or SH it's going to, and what type of
-			// script it is.
-			class, addr, _, err :=
-				txscript.ExtractPkScriptAddrs(out.Version, out.PkScript, params)
-			if err != nil {
-				return nil, nil, nil, err
-			}
-			if class != txscript.StakeGenTy {
-				return nil, nil, nil, fmt.Errorf("ssgen output included non "+
-					"ssgen tagged output in idx %v", idx)
-			}
-			subClass, err := txscript.GetStakeOutSubclass(out.PkScript)
-			if !(subClass == txscript.PubKeyHashTy ||
-				subClass == txscript.ScriptHashTy) {
-				return nil, nil, nil, fmt.Errorf("bad script type")
-			}
-			isP2SH[idx-2] = false
-			if subClass == txscript.ScriptHashTy {
-				isP2SH[idx-2] = true
-			}
-
-			// Get the amount that was sent.
-			amt := out.Value
-			addresses[idx-2] = addr[0].ScriptAddress()
-			amounts[idx-2] = amt
-		}
-	}
-
-	return isP2SH, addresses, amounts, nil
-}
-
-// GetSSGenBlockVotedOn takes an SSGen tx and returns the block voted on in the
+// SSGenBlockVotedOn takes an SSGen tx and returns the block voted on in the
 // first OP_RETURN by hash and height.
 func SSGenBlockVotedOn(tx *dcrutil.Tx) (chainhash.Hash, uint32, error) {
 	msgTx := tx.MsgTx()
@@ -519,7 +432,7 @@ func SSGenBlockVotedOn(tx *dcrutil.Tx) (chainhash.Hash, uint32, error) {
 	return *blockSha, height, nil
 }
 
-// GetSSGenVoteBits takes an SSGen tx as input and scans through its
+// SSGenVoteBits takes an SSGen tx as input and scans through its
 // outputs, returning the VoteBits of the index 1 output.
 func SSGenVoteBits(tx *dcrutil.Tx) uint16 {
 	msgTx := tx.MsgTx()
