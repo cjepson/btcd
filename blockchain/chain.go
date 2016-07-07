@@ -179,6 +179,7 @@ func newBestState(node *blockNode, blockSize, numTxns, totalTxns uint64) *BestSt
 	}
 }
 
+// BlockChain provides functions for working with the Decred block chain.
 // It includes functionality such as rejecting duplicate blocks, ensuring blocks
 // follow all rules, orphan handling, checkpoint handling, and best chain
 // selection with reorganization.
@@ -1413,7 +1414,7 @@ func countSpentOutputs(block *dcrutil.Block, parent *dcrutil.Block) int {
 	for _, stx := range block.STransactions() {
 		txType := stake.DetermineTxType(stx)
 		if txType == stake.TxTypeSSGen || txType == stake.TxTypeSSRtx {
-			numSpent += 1
+			numSpent++
 			continue
 		}
 		numSpent += len(stx.MsgTx().TxIn)
@@ -1755,7 +1756,7 @@ func (b *BlockChain) connectBestChain(node *blockNode, block *dcrutil.Block,
 		view := NewUtxoViewpoint()
 		view.SetBestHash(node.parentHash)
 		view.SetStakeViewpoint(ViewpointPrevValidInitial)
-		stxos := make([]spentTxOut, 0)
+		var stxos []spentTxOut
 		if !fastAdd {
 			err := b.checkConnectBlock(node, block, view, &stxos)
 			if err != nil {

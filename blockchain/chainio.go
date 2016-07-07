@@ -150,7 +150,7 @@ func readDeserializeSizeOfMinimalOutputs(serialized []byte) int {
 	return offset
 }
 
-// convertUtxosToMinimalOutputs converts the contents of a UTX to a series of
+// ConvertUtxosToMinimalOutputs converts the contents of a UTX to a series of
 // minimal outputs. It does this so that these can be passed to stake subpackage
 // functions, where they will be evaluated for correctness.
 func ConvertUtxosToMinimalOutputs(entry *UtxoEntry) []*stake.MinimalOutput {

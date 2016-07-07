@@ -1,4 +1,4 @@
-// The dbnamespace package contains constants that define the database namespaces
+// Package dbnamespace contains constants that define the database namespaces
 // for the purpose of the blockchain, so that external callers may easily access
 // this data.
 package dbnamespace
@@ -8,7 +8,7 @@ import (
 )
 
 var (
-	// byteOrder is the preferred byte order used for serializing numeric
+	// ByteOrder is the preferred byte order used for serializing numeric
 	// fields for storage in the database.
 	ByteOrder = binary.LittleEndian
 

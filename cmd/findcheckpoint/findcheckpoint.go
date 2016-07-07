@@ -12,9 +12,9 @@ import (
 
 	"github.com/decred/dcrd/blockchain"
 	"github.com/decred/dcrd/chaincfg"
-	database "github.com/decred/dcrd/database2"
 	"github.com/decred/dcrd/chaincfg/chainhash"
 	_ "github.com/decred/dcrd/database/ldb"
+	database "github.com/decred/dcrd/database2"
 )
 
 const blockDbNamePrefix = "blocks"

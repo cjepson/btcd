@@ -532,14 +532,12 @@ func SStxNullOutputAmounts(amounts []int64,
 	return fees, contribAmounts, nil
 }
 
-// StakeRewards takes a list of SStx adjusted output amounts, the amount used
+// CalculateRewards takes a list of SStx adjusted output amounts, the amount used
 // to purchase that ticket, and the reward for an SSGen tx and subsequently
 // generates what the outputs should be in the SSGen tx. If used for calculating
 // the outputs for an SSRtx, pass 0 for subsidy.
-func StakeRewards(amounts []int64,
-	amountTicket int64,
+func CalculateRewards(amounts []int64, amountTicket int64,
 	subsidy int64) []int64 {
-
 	outputsAmounts := make([]int64, len(amounts))
 
 	// SSGen handling

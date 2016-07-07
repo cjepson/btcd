@@ -10,12 +10,11 @@ import (
 	"os"
 	"path/filepath"
 
-	database "github.com/decred/dcrd/database2"
-	_ "github.com/decred/dcrd/database2/ffldb"
 	flags "github.com/btcsuite/go-flags"
 	"github.com/decred/dcrd/chaincfg"
-	"github.com/decred/dcrd/database"
 	_ "github.com/decred/dcrd/database/ldb"
+	database "github.com/decred/dcrd/database2"
+	_ "github.com/decred/dcrd/database2/ffldb"
 	"github.com/decred/dcrd/wire"
 	"github.com/decred/dcrutil"
 )

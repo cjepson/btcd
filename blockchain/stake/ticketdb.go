@@ -285,7 +285,8 @@ func deserializeBestChainState(serializedData []byte) (bestChainState, error) {
 	return state, nil
 }
 
-// NewestSha
+// NewestSha returns the newest hash and height as recorded in the database
+// of the blockchain.
 func (tmdb *TicketDB) NewestSha() (*chainhash.Hash, int64, error) {
 	var state bestChainState
 	err := tmdb.database.View(func(dbTx database.Tx) error {
@@ -310,7 +311,8 @@ func (tmdb *TicketDB) NewestSha() (*chainhash.Hash, int64, error) {
 	return &state.hash, int64(state.height), err
 }
 
-// FetchBlockShaByHeight
+// FetchBlockShaByHeight queries the blockchain's database to find a block's hash
+// for some height.
 func (tmdb *TicketDB) FetchBlockShaByHeight(height int64) (*chainhash.Hash, error) {
 	var hash chainhash.Hash
 	err := tmdb.database.View(func(dbTx database.Tx) error {
@@ -331,7 +333,8 @@ func (tmdb *TicketDB) FetchBlockShaByHeight(height int64) (*chainhash.Hash, erro
 	return &hash, err
 }
 
-// FetchBlockBySha
+// FetchBlockBySha fetches a block from a given hash using the blockchain
+// database.
 func (tmdb *TicketDB) FetchBlockBySha(hash *chainhash.Hash) (*dcrutil.Block, error) {
 	var block *dcrutil.Block
 	err := tmdb.database.View(func(dbTx database.Tx) error {

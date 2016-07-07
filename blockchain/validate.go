@@ -1449,7 +1449,7 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
 
 		// Get what the stake payouts should be after appending the reward
 		// to each output.
-		ssgenCalcAmts := stake.StakeRewards(sstxAmts,
+		ssgenCalcAmts := stake.CalculateRewards(sstxAmts,
 			utxoEntrySstx.AmountByIndex(0),
 			stakeVoteSubsidy)
 
@@ -1570,7 +1570,7 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
 
 		// Get what the stake payouts should be after appending the reward
 		// to each output.
-		ssrtxCalcAmts := stake.StakeRewards(sstxAmts,
+		ssrtxCalcAmts := stake.CalculateRewards(sstxAmts,
 			utxoEntrySstx.AmountByIndex(0),
 			int64(0)) // SSRtx has no subsidy
 
@@ -1687,8 +1687,7 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
 					"transaction %v from height %v at "+
 					"height %v before required maturity "+
 					"of %v blocks", txHash, txInHash, originHeight,
-					originHeight, txHeight,
-					coinbaseMaturity)
+					txHeight, coinbaseMaturity)
 				return 0, ruleError(ErrImmatureSpend, str)
 			}
 		}

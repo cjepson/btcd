@@ -1000,7 +1000,7 @@ func TestGetStakeRewards(t *testing.T) {
 	amountTicket := int64(42000000)
 	subsidy := int64(400000)
 
-	outAmts := stake.StakeRewards(amounts, amountTicket, subsidy)
+	outAmts := stake.CalculateRewards(amounts, amountTicket, subsidy)
 
 	// SSRtx example with 0 subsidy
 	expectedAmts := []int64{int64(21200000),
@@ -1338,7 +1338,7 @@ func TestVerifyRealTxs(t *testing.T) {
 		t.Errorf("Unexpected GetSSRtxStakeOutputInfo error: %v", err.Error())
 	}
 
-	ssrtxCalcAmts := stake.StakeRewards(sstxAmts, sstxMtx.TxOut[0].Value,
+	ssrtxCalcAmts := stake.CalculateRewards(sstxAmts, sstxMtx.TxOut[0].Value,
 		int64(0))
 
 	// Here an error is thrown because the second output spends too much.
@@ -1372,7 +1372,7 @@ func TestVerifyRealTxs(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unexpected GetSSRtxStakeOutputInfo error: %v", err.Error())
 	}
-	ssrtxCalcAmts = stake.StakeRewards(sstxAmts, sstxMtx.TxOut[0].Value,
+	ssrtxCalcAmts = stake.CalculateRewards(sstxAmts, sstxMtx.TxOut[0].Value,
 		int64(0))
 	err = stake.VerifyStakingPkhsAndAmounts(sstxTypes,
 		sstxAddrs,
@@ -1398,7 +1398,7 @@ func TestVerifyRealTxs(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unexpected GetSSRtxStakeOutputInfo error: %v", err.Error())
 	}
-	ssrtxCalcAmts = stake.StakeRewards(sstxAmts, sstxMtx.TxOut[0].Value,
+	ssrtxCalcAmts = stake.CalculateRewards(sstxAmts, sstxMtx.TxOut[0].Value,
 		int64(0))
 	err = stake.VerifyStakingPkhsAndAmounts(sstxTypes,
 		sstxAddrs,
@@ -1429,7 +1429,7 @@ func TestVerifyRealTxs(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unexpected GetSSRtxStakeOutputInfo error: %v", err.Error())
 	}
-	ssrtxCalcAmts = stake.StakeRewards(sstxAmts, sstxMtx.TxOut[0].Value,
+	ssrtxCalcAmts = stake.CalculateRewards(sstxAmts, sstxMtx.TxOut[0].Value,
 		int64(0))
 	err = stake.VerifyStakingPkhsAndAmounts(sstxTypes,
 		sstxAddrs,

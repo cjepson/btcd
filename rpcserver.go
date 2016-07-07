@@ -998,7 +998,7 @@ func handleCreateRawSSGenTx(s *rpcServer,
 		activeNetParams.Params)
 
 	// Calculate the output values from this data.
-	ssgenCalcAmts := stake.StakeRewards(sstxAmts,
+	ssgenCalcAmts := stake.CalculateRewards(sstxAmts,
 		minimalOutputs[0].Value,
 		stakeVoteSubsidy)
 
@@ -1224,7 +1224,7 @@ func handleCreateRawSSRtx(s *rpcServer,
 	// 3. Add all the OP_SSRTX tagged outputs.
 
 	// Calculate the output values from this data.
-	ssrtxCalcAmts := stake.StakeRewards(sstxAmts,
+	ssrtxCalcAmts := stake.CalculateRewards(sstxAmts,
 		minimalOutputs[0].Value,
 		0) // No subsidy for a revocation
 

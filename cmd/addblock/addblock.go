@@ -10,11 +10,10 @@ import (
 	"path/filepath"
 	"runtime"
 
-	database "github.com/decred/dcrd/database2"
 	"github.com/btcsuite/btclog"
 	"github.com/decred/dcrd/blockchain"
-	"github.com/decred/dcrd/database"
 	_ "github.com/decred/dcrd/database/ldb"
+	database "github.com/decred/dcrd/database2"
 	"github.com/decred/dcrd/limits"
 )
 

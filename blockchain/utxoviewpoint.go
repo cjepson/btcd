@@ -14,15 +14,15 @@ import (
 	"github.com/decred/dcrutil"
 )
 
-// stakeViewpoint is the viewpoint of the blockchain depending on stake
+// StakeViewpoint is the viewpoint of the blockchain depending on stake
 // validation. There are five potential viewpoints we need to worry about.
-type stakeViewpoint int8
+type StakeViewpoint int8
 
 const (
 	// ViewpointPrevValidInitial is the viewpoint from the perspective of the
 	// everything up the the previous block's TxTreeRegular, used to validate
 	// that tx tree regular.
-	ViewpointPrevValidInitial = stakeViewpoint(iota)
+	ViewpointPrevValidInitial = StakeViewpoint(iota)
 
 	// ViewpointPrevValidStake is the viewpoint from the perspective of the
 	// everything up the the previous block's TxTreeRegular plus the
@@ -108,7 +108,7 @@ func (entry *UtxoEntry) TxVersion() int32 {
 	return entry.txVersion
 }
 
-// Expiry returns the transaction expiry for the transaction that the utxo
+// HasExpiry returns the transaction expiry for the transaction that the utxo
 // entry represents.
 func (entry *UtxoEntry) HasExpiry() bool {
 	return entry.hasExpiry
@@ -126,13 +126,13 @@ func (entry *UtxoEntry) BlockHeight() int64 {
 	return int64(entry.height)
 }
 
-// BlockHeight returns the height of the block containing the transaction the
+// BlockIndex returns the height of the block containing the transaction the
 // utxo entry represents.
 func (entry *UtxoEntry) BlockIndex() uint32 {
 	return entry.index
 }
 
-// outputsLen returns the transaction type of the transaction the utxo entry
+// TransactionType returns the transaction type of the transaction the utxo entry
 // represents.
 func (entry *UtxoEntry) TransactionType() stake.TxType {
 	return entry.txType
@@ -255,7 +255,7 @@ func newUtxoEntry(txVersion int32, height uint32, index uint32, isCoinBase bool,
 type UtxoViewpoint struct {
 	entries   map[chainhash.Hash]*UtxoEntry
 	bestHash  chainhash.Hash
-	stakeView stakeViewpoint
+	stakeView StakeViewpoint
 }
 
 // BestHash returns the hash of the best block in the chain the view currently
@@ -270,13 +270,13 @@ func (view *UtxoViewpoint) SetBestHash(hash *chainhash.Hash) {
 	view.bestHash = *hash
 }
 
-// BestHash returns the stake viewpoint of the current UTXO state.
-func (view *UtxoViewpoint) StakeViewpoint() stakeViewpoint {
+// StakeViewpoint returns the stake viewpoint of the current UTXO state.
+func (view *UtxoViewpoint) StakeViewpoint() StakeViewpoint {
 	return view.stakeView
 }
 
 // SetStakeViewpoint sets the stake viewpoint of the current UTXO state.
-func (view *UtxoViewpoint) SetStakeViewpoint(sv stakeViewpoint) {
+func (view *UtxoViewpoint) SetStakeViewpoint(sv StakeViewpoint) {
 	view.stakeView = sv
 }
 
@@ -516,18 +516,13 @@ func countSpentOutputsPerTree(block *dcrutil.Block, parent *dcrutil.Block) (int,
 // time because of index tracking.
 func (b *BlockChain) disconnectTransactions(view *UtxoViewpoint,
 	block *dcrutil.Block, parent *dcrutil.Block, stxos []spentTxOut) error {
-	// fmt.Printf("disconnect block %v, %v\n", block.Sha(), block.Height())
-
 	// Sanity check the correct number of stxos are provided.
 	if len(stxos) != countSpentOutputs(block, parent) {
-		panic(fmt.Sprintf("%v, %v, %v, %v", block.Sha(), block.Height(), len(stxos), countSpentOutputs(block, parent)))
 		return AssertError(fmt.Sprintf("disconnectTransactions "+
 			"called with bad spent transaction out information "+
 			"(len stxos %v, count is %v)", len(stxos),
 			countSpentOutputs(block, parent)))
 	}
-
-	// fmt.Printf("GOT THESE STXOS FOR %v\n%v", block.Height(), DebugStxosData(stxos))
 
 	// Loop backwards through all transactions so everything is unspent in
 	// reverse order.  This is necessary since transactions later in a block
