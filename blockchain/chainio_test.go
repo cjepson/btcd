@@ -578,7 +578,7 @@ func TestUtxoSerialization(t *testing.T) {
 					},
 				},
 			},
-			serialized: hexToBytes("01df3982a731010132000596b538e853519c726a2c91e61ec11600ae1390813a627c66fb8be7947be63c52"),
+			serialized: hexToBytes("01df3982a731010132000496b538e853519c726a2c91e61ec11600ae1390813a627c66fb8be7947be63c52"),
 		},
 		{
 			name: "Only output 0, coinbase, odd uncomp pubkey",
@@ -599,170 +599,252 @@ func TestUtxoSerialization(t *testing.T) {
 					},
 				},
 			},
-			serialized: hexToBytes("01df3982a731010132000696b538e853519c726a2c91e61ec11600ae1390813a627c66fb8be7947be63c52"),
+			serialized: hexToBytes("01df3982a731010132000596b538e853519c726a2c91e61ec11600ae1390813a627c66fb8be7947be63c52"),
 		},
-		// From tx in main blockchain:
-		// 8131ffb0a2c945ecaf9b9063e59558784f9c3a74741ce6ae2a18d0571dac15bb
 		{
 			name: "Only output 1, not coinbase",
 			entry: &UtxoEntry{
 				txVersion:  1,
 				isCoinBase: false,
-				height:     100001,
+				hasExpiry:  false,
+				txType:     0,
+				height:     55555,
+				index:      1,
+				stakeExtra: nil,
 				sparseOutputs: map[uint32]*utxoOutput{
 					1: {
-						amount:   1000000,
-						pkScript: hexToBytes("76a914ee8bd501094a7d5ca318da2506de35e1cb025ddc88ac"),
+						amount:        1000000,
+						scriptVersion: 0,
+						pkScript:      hexToBytes("76a914ee8bd501094a7d5ca318da2506de35e1cb025ddc88ac"),
+						compressed:    false,
 					},
 				},
 			},
-			serialized: hexToBytes("01858c21040700ee8bd501094a7d5ca318da2506de35e1cb025ddc"),
+			serialized: hexToBytes("0182b103010002070000ee8bd501094a7d5ca318da2506de35e1cb025ddc"),
 		},
-		// Adapted from tx in main blockchain:
-		// df3f3f442d9699857f7f49de4ff0b5d0f3448bec31cdc7b5bf6d25f2abd637d5
 		{
-			name: "Only output 2, coinbase",
+			name: "Ticket with one output",
+			entry: &UtxoEntry{
+				txVersion:  1,
+				isCoinBase: false,
+				hasExpiry:  false,
+				txType:     1,
+				height:     55555,
+				index:      1,
+				stakeExtra: hexToBytes("030f001aba76a9140cdf9941c0c221243cb8672cd1ad2c4c0933850588ac0000206a1e1a221182c26bbae681e4d96d452794e1951e70a208520000000000000054b5f466001abd76a9146c4f8b15918566534d134be7d7004b7f481bf36988ac"),
+				sparseOutputs: map[uint32]*utxoOutput{
+					1: {
+						amount:        1000000,
+						scriptVersion: 0,
+						pkScript:      hexToBytes("76a914ee8bd501094a7d5ca318da2506de35e1cb025ddc88ac"),
+						compressed:    false,
+					},
+				},
+			},
+			serialized: hexToBytes("0182b103010402070000ee8bd501094a7d5ca318da2506de35e1cb025ddc030f001aba76a9140cdf9941c0c221243cb8672cd1ad2c4c0933850588ac0000206a1e1a221182c26bbae681e4d96d452794e1951e70a208520000000000000054b5f466001abd76a9146c4f8b15918566534d134be7d7004b7f481bf36988ac"),
+		},
+		{
+			name: "Only output 2, coinbase, non-zero script version",
 			entry: &UtxoEntry{
 				txVersion:  1,
 				isCoinBase: true,
-				height:     99004,
+				hasExpiry:  false,
+				txType:     0,
+				height:     12345,
+				index:      1,
 				sparseOutputs: map[uint32]*utxoOutput{
 					2: {
-						amount:   100937281,
-						pkScript: hexToBytes("76a914da33f77cee27c2a975ed5124d7e4f7f97513510188ac"),
+						amount:        100937281,
+						scriptVersion: 0xffff,
+						pkScript:      hexToBytes("76a914da33f77cee27c2a975ed5124d7e4f7f97513510188ac"),
+						compressed:    false,
 					},
 				},
 			},
-			serialized: hexToBytes("0185843c010182b095bf4100da33f77cee27c2a975ed5124d7e4f7f975135101"),
+			serialized: hexToBytes("01df390101000182b095bf4182fe7f00da33f77cee27c2a975ed5124d7e4f7f975135101"),
 		},
-		// Adapted from tx in main blockchain:
-		// 4a16969aa4764dd7507fc1de7f0baa4850a246de90c45e59a3207f9a26b5036f
 		{
 			name: "outputs 0 and 2 not coinbase",
 			entry: &UtxoEntry{
 				txVersion:  1,
 				isCoinBase: false,
-				height:     113931,
+				hasExpiry:  false,
+				txType:     0,
+				height:     99999,
+				index:      3,
 				sparseOutputs: map[uint32]*utxoOutput{
 					0: {
-						amount:   20000000,
-						pkScript: hexToBytes("76a914e2ccd6ec7c6e2e581349c77e067385fa8236bf8a88ac"),
+						amount:        20000000,
+						scriptVersion: 0,
+						pkScript:      hexToBytes("76a914e2ccd6ec7c6e2e581349c77e067385fa8236bf8a88ac"),
+						compressed:    false,
 					},
 					2: {
-						amount:   15000000,
-						pkScript: hexToBytes("76a914b8025be1b3efc63b0ad48e7f9f10e87544528d5888ac"),
+						amount:        15000000,
+						scriptVersion: 0,
+						pkScript:      hexToBytes("76a914b8025be1b3efc63b0ad48e7f9f10e87544528d5888ac"),
+						compressed:    false,
 					},
 				},
 			},
-			serialized: hexToBytes("0185f90b0a011200e2ccd6ec7c6e2e581349c77e067385fa8236bf8a800900b8025be1b3efc63b0ad48e7f9f10e87544528d58"),
+			serialized: hexToBytes("01858c1f03000501120000e2ccd6ec7c6e2e581349c77e067385fa8236bf8a80090000b8025be1b3efc63b0ad48e7f9f10e87544528d58"),
 		},
-		// Adapted from tx in main blockchain:
-		// 4a16969aa4764dd7507fc1de7f0baa4850a246de90c45e59a3207f9a26b5036f
+		{
+			name: "outputs 0 and 2 not coinbase, has expiry",
+			entry: &UtxoEntry{
+				txVersion:  1,
+				isCoinBase: false,
+				hasExpiry:  true,
+				txType:     0,
+				height:     99999,
+				index:      3,
+				sparseOutputs: map[uint32]*utxoOutput{
+					0: {
+						amount:        20000000,
+						scriptVersion: 0,
+						pkScript:      hexToBytes("76a914e2ccd6ec7c6e2e581349c77e067385fa8236bf8a88ac"),
+						compressed:    false,
+					},
+					2: {
+						amount:        15000000,
+						scriptVersion: 0,
+						pkScript:      hexToBytes("76a914b8025be1b3efc63b0ad48e7f9f10e87544528d5888ac"),
+						compressed:    false,
+					},
+				},
+			},
+			serialized: hexToBytes("01858c1f03020501120000e2ccd6ec7c6e2e581349c77e067385fa8236bf8a80090000b8025be1b3efc63b0ad48e7f9f10e87544528d58"),
+		},
 		{
 			name: "outputs 0 and 2, not coinbase, 1 marked spent",
 			entry: &UtxoEntry{
 				txVersion:  1,
 				isCoinBase: false,
-				height:     113931,
+				hasExpiry:  false,
+				txType:     0,
+				height:     12345,
+				index:      1,
 				sparseOutputs: map[uint32]*utxoOutput{
 					0: {
-						amount:   20000000,
-						pkScript: hexToBytes("76a914e2ccd6ec7c6e2e581349c77e067385fa8236bf8a88ac"),
+						amount:        20000000,
+						scriptVersion: 0,
+						pkScript:      hexToBytes("76a914e2ccd6ec7c6e2e581349c77e067385fa8236bf8a88ac"),
+						compressed:    false,
 					},
 					1: { // This won't be serialized.
-						spent:    true,
-						amount:   1000000,
-						pkScript: hexToBytes("76a914e43031c3e46f20bf1ccee9553ce815de5a48467588ac"),
+						spent:         true,
+						amount:        1000000,
+						scriptVersion: 0,
+						pkScript:      hexToBytes("76a914e43031c3e46f20bf1ccee9553ce815de5a48467588ac"),
+						compressed:    false,
 					},
 					2: {
-						amount:   15000000,
-						pkScript: hexToBytes("76a914b8025be1b3efc63b0ad48e7f9f10e87544528d5888ac"),
+						amount:        15000000,
+						scriptVersion: 0,
+						pkScript:      hexToBytes("76a914b8025be1b3efc63b0ad48e7f9f10e87544528d5888ac"),
+						compressed:    false,
 					},
 				},
 			},
-			serialized: hexToBytes("0185f90b0a011200e2ccd6ec7c6e2e581349c77e067385fa8236bf8a800900b8025be1b3efc63b0ad48e7f9f10e87544528d58"),
+			serialized: hexToBytes("01df3901000501120000e2ccd6ec7c6e2e581349c77e067385fa8236bf8a80090000b8025be1b3efc63b0ad48e7f9f10e87544528d58"),
 		},
-		// Adapted from tx in main blockchain:
-		// 4a16969aa4764dd7507fc1de7f0baa4850a246de90c45e59a3207f9a26b5036f
 		{
 			name: "outputs 0 and 2, not coinbase, output 2 compressed",
 			entry: &UtxoEntry{
 				txVersion:  1,
 				isCoinBase: false,
-				height:     113931,
+				hasExpiry:  false,
+				txType:     0,
+				height:     12345,
+				index:      1,
 				sparseOutputs: map[uint32]*utxoOutput{
 					0: {
-						amount:   20000000,
-						pkScript: hexToBytes("76a914e2ccd6ec7c6e2e581349c77e067385fa8236bf8a88ac"),
+						amount:        20000000,
+						scriptVersion: 0,
+						pkScript:      hexToBytes("76a914e2ccd6ec7c6e2e581349c77e067385fa8236bf8a88ac"),
+						compressed:    false,
 					},
 					2: {
 						// Uncompressed Amount: 15000000
 						// Uncompressed PkScript: 76a914b8025be1b3efc63b0ad48e7f9f10e87544528d5888ac
-						amount:   137,
-						pkScript: hexToBytes("00b8025be1b3efc63b0ad48e7f9f10e87544528d58"),
+						amount: 137,
+
+						pkScript:   hexToBytes("00b8025be1b3efc63b0ad48e7f9f10e87544528d58"),
+						compressed: true,
 					},
 				},
 			},
-			serialized: hexToBytes("0185f90b0a011200e2ccd6ec7c6e2e581349c77e067385fa8236bf8a800900b8025be1b3efc63b0ad48e7f9f10e87544528d58"),
+			serialized: hexToBytes("01df3901000501120000e2ccd6ec7c6e2e581349c77e067385fa8236bf8a884f0000b8025be1b3efc63b0ad48e7f9f10e87544528d58"),
 		},
-		// Adapted from tx in main blockchain:
-		// 4a16969aa4764dd7507fc1de7f0baa4850a246de90c45e59a3207f9a26b5036f
 		{
 			name: "outputs 0 and 2, not coinbase, output 2 compressed, packed indexes reversed",
 			entry: &UtxoEntry{
 				txVersion:  1,
 				isCoinBase: false,
-				height:     113931,
+				hasExpiry:  false,
+				txType:     0,
+				height:     33333,
+				index:      21,
 				sparseOutputs: map[uint32]*utxoOutput{
 					0: {
-						amount:   20000000,
-						pkScript: hexToBytes("76a914e2ccd6ec7c6e2e581349c77e067385fa8236bf8a88ac"),
+						amount:        20000000,
+						scriptVersion: 0,
+						pkScript:      hexToBytes("76a914e2ccd6ec7c6e2e581349c77e067385fa8236bf8a88ac"),
+						compressed:    false,
 					},
 					2: {
 						// Uncompressed Amount: 15000000
 						// Uncompressed PkScript: 76a914b8025be1b3efc63b0ad48e7f9f10e87544528d5888ac
-						amount:   137,
-						pkScript: hexToBytes("00b8025be1b3efc63b0ad48e7f9f10e87544528d58"),
+						amount:        137,
+						scriptVersion: 0,
+						pkScript:      hexToBytes("00b8025be1b3efc63b0ad48e7f9f10e87544528d58"),
+						compressed:    true,
 					},
 				},
 			},
-			serialized: hexToBytes("0185f90b0a011200e2ccd6ec7c6e2e581349c77e067385fa8236bf8a800900b8025be1b3efc63b0ad48e7f9f10e87544528d58"),
+			serialized: hexToBytes("0181833515000501120000e2ccd6ec7c6e2e581349c77e067385fa8236bf8a884f0000b8025be1b3efc63b0ad48e7f9f10e87544528d58"),
 		},
-		// From tx in main blockchain:
-		// 0e3e2357e806b6cdb1f70b54c3a3a17b6714ee1f0e68bebb44a74b1efd512098
 		{
 			name: "Only output 0, coinbase, fully spent",
 			entry: &UtxoEntry{
 				txVersion:  1,
-				isCoinBase: true,
-				height:     1,
+				isCoinBase: false,
+				hasExpiry:  false,
+				txType:     0,
+				height:     33333,
+				index:      231,
 				sparseOutputs: map[uint32]*utxoOutput{
 					0: {
-						spent:    true,
-						amount:   5000000000,
-						pkScript: hexToBytes("410496b538e853519c726a2c91e61ec11600ae1390813a627c66fb8be7947be63c52da7589379515d4e0a604f8141781e62294721166bf621e73a82cbf2342c858eeac"),
+						spent:         true,
+						amount:        5000000000,
+						scriptVersion: 0,
+						pkScript:      hexToBytes("410496b538e853519c726a2c91e61ec11600ae1390813a627c66fb8be7947be63c52da7589379515d4e0a604f8141781e62294721166bf621e73a82cbf2342c858eeac"),
+						compressed:    false,
 					},
 				},
 			},
 			serialized: nil,
 		},
-		// Adapted from tx in main blockchain:
-		// 1b02d1c8cfef60a189017b9a420c682cf4a0028175f2f563209e4ff61c8c3620
 		{
 			name: "Only output 22, not coinbase",
 			entry: &UtxoEntry{
 				txVersion:  1,
 				isCoinBase: false,
-				height:     338156,
+				hasExpiry:  false,
+				txType:     0,
+				height:     3221,
+				index:      211,
 				sparseOutputs: map[uint32]*utxoOutput{
 					22: {
-						spent:    false,
-						amount:   366875659,
-						pkScript: hexToBytes("a9141dd46a006572d820e448e12d2bbb38640bc718e687"),
+						spent:         false,
+						amount:        366875659,
+						scriptVersion: 0,
+						pkScript:      hexToBytes("a9141dd46a006572d820e448e12d2bbb38640bc718e687"),
+						compressed:    false,
 					},
 				},
 			},
-			serialized: hexToBytes("0193d06c100000108ba5b9e763011dd46a006572d820e448e12d2bbb38640bc718e6"),
+			serialized: hexToBytes("019815805300080000108ba5b9e76300011dd46a006572d820e448e12d2bbb38640bc718e6"),
 		},
 	}
 

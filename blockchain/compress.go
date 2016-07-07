@@ -153,11 +153,11 @@ const (
 	// cstPayToScriptHash identifies a compressed pay-to-script-hash script.
 	cstPayToScriptHash = 1
 
-	// cstPayToPubKeyComp1 identifies a compressed pay-to-pubkey script to
+	// cstPayToPubKeyCompEven identifies a compressed pay-to-pubkey script to
 	// a compressed pubkey whose y coordinate is not odd.
 	cstPayToPubKeyCompEven = 2
 
-	// cstPayToPubKeyComp3 identifies a compressed pay-to-pubkey script to
+	// cstPayToPubKeyCompOdd identifies a compressed pay-to-pubkey script to
 	// a compressed pubkey whose y coordinate is odd.
 	cstPayToPubKeyCompOdd = 3
 
