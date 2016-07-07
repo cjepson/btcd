@@ -176,7 +176,6 @@ func TestBlockValidationRules(t *testing.T) {
 	// Add the rest of the blocks up to the stake early test block.
 	stakeEarlyTest := 142
 	for i := 1; i < stakeEarlyTest; i++ {
-		// fmt.Printf("Try to connect block %v\n", i)
 		bl, err := dcrutil.NewBlockFromBytes(blockChain[int64(i)])
 		if err != nil {
 			t.Errorf("NewBlockFromBytes error: %v", err.Error())

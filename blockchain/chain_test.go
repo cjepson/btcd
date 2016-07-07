@@ -5,18 +5,15 @@
 
 package blockchain_test
 
-/*
 import (
 	"bytes"
 	"compress/bzip2"
 	"encoding/gob"
-	//	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/decred/dcrd/blockchain"
-	//	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrutil"
 )
 
@@ -61,7 +58,6 @@ func TestBlockchainFunctions(t *testing.T) {
 	// Insert blocks 1 to 168 and perform various tests.
 	timeSource := blockchain.NewMedianTime()
 	for i := 1; i <= 168; i++ {
-		// fmt.Printf("Try to connect block %v\n", i)
 		bl, err := dcrutil.NewBlockFromBytes(blockChain[int64(i)])
 		if err != nil {
 			t.Errorf("NewBlockFromBytes error: %v", err.Error())
@@ -95,4 +91,3 @@ func TestBlockchainFunctions(t *testing.T) {
 			"TicketsWithAddress; want %v, got %v", expectedLen, len(hs))
 	}
 }
-*/

@@ -951,7 +951,6 @@ func (b *BlockChain) CheckBlockStakeSanity(tixStore TicketStore,
 		}
 
 		// Check the ticket pool size.
-		// fmt.Printf("pool size ticket store %v\n", tixStore)
 		_, calcPoolSize, _, err := b.getWinningTicketsInclStore(node, tixStore)
 		if err != nil {
 			log.Tracef("failed to retrieve poolsize for stake "+
@@ -1321,7 +1320,6 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
 
 		err = stake.VerifySStxAmounts(sstxOutAmts, sstxOutAmtsCalc)
 		if err != nil {
-			//fmt.Printf("msgTx.TxOut[0].Value %v\n", msgTx.TxOut[0].Value)
 			errStr := fmt.Sprintf("SStx output commitment amounts were not the "+
 				"same as calculated amounts: %v", err)
 			return 0, ruleError(ErrSStxCommitment, errStr)
@@ -1389,15 +1387,11 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
 			return 0, ruleError(ErrMissingTx, errStr)
 		}
 
-		//fmt.Printf("utxoEntrySstx %v, exists %v\n", utxoEntrySstx, exists)
-
 		// While we're here, double check to make sure that the input is from an
 		// SStx. By doing so, you also ensure the first output is OP_SSTX tagged.
 		if utxoEntrySstx.TransactionType() != stake.TxTypeSStx {
 			errStr := fmt.Sprintf("Input transaction %v for SSGen was not "+
 				"an SStx tx (given input: %v)", txHash, sstxHash)
-			//fmt.Printf("%v", errStr)
-			//panic(DebugUtxoEntryData(sstxHash, utxoEntrySstx))
 			return 0, ruleError(ErrInvalidSSGenInput, errStr)
 		}
 
@@ -1409,25 +1403,13 @@ func CheckTransactionInputs(tx *dcrutil.Tx, txHeight int64,
 			return 0, ruleError(ErrInvalidSSGenInput, errStr)
 		}
 
-		// fmt.Printf("EVAL TICKET %v\n", sstxHash)
-		// fmt.Printf("STAKE EXTRA %x\n", utxoEntrySstx.stakeExtra)
 		minOutsSStx := ConvertUtxosToMinimalOutputs(utxoEntrySstx)
 		if len(minOutsSStx) == 0 {
 			return 0, AssertError("missing stake extra data for ticket used " +
 				"as input for vote")
 		}
-		//fmt.Printf("minOutsSStx \n")
-		//for i := range minOutsSStx {
-		//	fmt.Printf("%v, %v, %x\n", minOutsSStx[i].Value, minOutsSStx[i].Version, minOutsSStx[i].PkScript)
-		//}
 		sstxPayTypes, sstxPkhs, sstxAmts, _, sstxRules, sstxLimits :=
 			stake.SStxStakeOutputInfo(minOutsSStx)
-			/*
-				fmt.Printf("len minouts %v\n", len(minOutsSStx))
-				for i := range minOutsSStx {
-					fmt.Printf("amt %v scrver %v scr %x\n", minOutsSStx[i].Value, minOutsSStx[i].Version, minOutsSStx[i].PkScript)
-				}
-			*/
 
 		ssgenPayTypes, ssgenPkhs, ssgenAmts, err :=
 			stake.TxSSGenStakeOutputInfo(tx, chainParams)
@@ -1949,7 +1931,6 @@ func CountP2SHSigOps(tx *dcrutil.Tx, isCoinBaseTx bool, isStakeBaseTx bool,
 				"%v referenced from transaction %s:%d during "+
 				"CountP2SHSigOps: output spent",
 				txIn.PreviousOutPoint, tx.Sha(), txInIndex)
-			// fmt.Printf("UTXO VIEW RETURNED FOR TX %v IN CHECKP2SH SIGOPS:\n %v", tx.Sha(), DebugUtxoViewpointData(utxoView))
 			return 0, ruleError(ErrMissingTx, str)
 		}
 
@@ -2306,7 +2287,6 @@ func (b *BlockChain) checkTransactionsAndConnect(inputFees dcrutil.Amount,
 // This function MUST be called with the chain state lock held (for writes).
 func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 	utxoView *UtxoViewpoint, stxos *[]spentTxOut) error {
-	//fmt.Printf("connect block %v, height %v, poolsize %v\n", node.hash, node.height, node.header.PoolSize)
 	// If the side chain blocks end up in the database, a call to
 	// CheckBlockSanity should be done here in case a previous version
 	// allowed a block that is no longer valid.  However, since the
@@ -2475,8 +2455,6 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 		return err
 	}
 
-	// fmt.Printf("UTXOS\n%v\n", DebugUtxoViewpointData(utxoView))
-
 	err = b.checkTransactionsAndConnect(0, node,
 		block.STransactions(), utxoView, stxos, false)
 	if err != nil {
@@ -2632,7 +2610,6 @@ func (b *BlockChain) CheckConnectBlock(block *dcrutil.Block) error {
 			return err
 		}
 
-		// fmt.Printf("DISCONNECT BLOCK %v\n", block.Sha())
 		err = b.disconnectTransactions(view, block, parent, stxos)
 		if err != nil {
 			return err
@@ -2647,7 +2624,6 @@ func (b *BlockChain) CheckConnectBlock(block *dcrutil.Block) error {
 	// if there are no nodes to attach, we're done.
 	if attachNodes.Len() == 0 {
 		view.SetBestHash(&parentHash)
-		// fmt.Printf("GOT UTXO VIEW\n%v\n", DebugUtxoViewpointData(view))
 		return b.checkConnectBlock(newNode, block, view, nil)
 	}
 

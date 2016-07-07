@@ -16,7 +16,8 @@ import (
 
 // DebugBlockHeaderString dumps a verbose message containing information about
 // the block header of a block.
-func DebugBlockHeaderString(chainParams *chaincfg.Params, block *dcrutil.Block) string {
+func DebugBlockHeaderString(chainParams *chaincfg.Params,
+	block *dcrutil.Block) string {
 	bh := block.MsgBlock().Header
 
 	var buffer bytes.Buffer
@@ -308,7 +309,8 @@ func DebugTicketDataString(td *stake.TicketData) string {
 
 // DebugTicketDBLiveString prints out the number of tickets in each
 // bucket of the ticket database as a string.
-func DebugTicketDBLiveString(tmdb *stake.TicketDB, chainParams *chaincfg.Params) (string, error) {
+func DebugTicketDBLiveString(tmdb *stake.TicketDB,
+	chainParams *chaincfg.Params) (string, error) {
 	var buffer bytes.Buffer
 	buffer.WriteString("\n")
 
@@ -333,7 +335,8 @@ func DebugTicketDBLiveString(tmdb *stake.TicketDB, chainParams *chaincfg.Params)
 // DebugTicketDBLiveBucketString returns a string containing the ticket hashes
 // found in a specific bucket of the live ticket database. If the verbose flag
 // is called, it dumps the contents of the ticket data as well.
-func DebugTicketDBLiveBucketString(tmdb *stake.TicketDB, bucket uint8, verbose bool) (string, error) {
+func DebugTicketDBLiveBucketString(tmdb *stake.TicketDB, bucket uint8,
+	verbose bool) (string, error) {
 	var buffer bytes.Buffer
 
 	str := fmt.Sprintf("Contents of live ticket bucket %v:\n", bucket)
@@ -360,7 +363,8 @@ func DebugTicketDBLiveBucketString(tmdb *stake.TicketDB, bucket uint8, verbose b
 // DebugTicketDBSpentBucketString prints the contents of the spent tickets
 // database bucket indicated to a string that is returned. If the verbose
 // flag is indicated, the contents of each ticket are printed as well.
-func DebugTicketDBSpentBucketString(tmdb *stake.TicketDB, height int64, verbose bool) (string, error) {
+func DebugTicketDBSpentBucketString(tmdb *stake.TicketDB, height int64,
+	verbose bool) (string, error) {
 	var buffer bytes.Buffer
 
 	str := fmt.Sprintf("Contents of spent ticket bucket height %v:\n", height)
@@ -393,7 +397,8 @@ func DebugTicketDBSpentBucketString(tmdb *stake.TicketDB, height int64, verbose 
 // DebugTicketDBMissedString prints out the contents of the missed ticket
 // database to a string. If verbose is indicated, the ticket data itself
 // is printed along with the ticket hashes.
-func DebugTicketDBMissedString(tmdb *stake.TicketDB, verbose bool) (string, error) {
+func DebugTicketDBMissedString(tmdb *stake.TicketDB, verbose bool) (string,
+	error) {
 	var buffer bytes.Buffer
 
 	str := fmt.Sprintf("Contents of missed ticket database:\n")
@@ -604,7 +609,8 @@ func DebugStxosData(stxs []spentTxOut) string {
 // and (3) missed tickets.
 // Do NOT use on mainnet or in production. For debug use only! Make sure
 // the blockchain is frozen when you call this function.
-func TicketDbThumbprint(tmdb *stake.TicketDB, chainParams *chaincfg.Params) ([]*chainhash.Hash, error) {
+func TicketDbThumbprint(tmdb *stake.TicketDB,
+	chainParams *chaincfg.Params) ([]*chainhash.Hash, error) {
 	// Container for the three master hashes to go into.
 	dbThumbprints := make([]*chainhash.Hash, 3, 3)
 
@@ -690,85 +696,3 @@ func TicketDbThumbprint(tmdb *stake.TicketDB, chainParams *chaincfg.Params) ([]*
 
 	return dbThumbprints, nil
 }
-
-// findWhereDoubleSpent determines where a tx was previously doublespent.
-// VERY INTENSIVE BLOCKCHAIN SCANNING, USE TO DEBUG SIMULATED BLOCKCHAINS
-// ONLY.
-/*
-func (b *BlockChain) findWhereDoubleSpent(block *dcrutil.Block) error {
-	height := int64(1)
-	heightEnd := block.Height()
-
-	hashes, err := db(height, heightEnd)
-	if err != nil {
-		return err
-	}
-
-	var allTxs []*dcrutil.Tx
-	txs := block.Transactions()[1:]
-	stxs := block.STransactions()
-	allTxs = append(txs, stxs...)
-
-	for _, hash := range hashes {
-		curBlock, err := b.getBlockFromHash(&hash)
-		if err != nil {
-			return err
-		}
-		log.Errorf("Cur block %v", curBlock.Height())
-
-		for _, localTx := range allTxs {
-			for _, localTxIn := range localTx.MsgTx().TxIn {
-				for _, tx := range curBlock.Transactions()[1:] {
-					for _, txIn := range tx.MsgTx().TxIn {
-						if txIn.PreviousOutPoint == localTxIn.PreviousOutPoint {
-							log.Errorf("Double spend of {hash: %v, idx: %v,"+
-								" tree: %b}, previously found in tx %v "+
-								"of block %v txtree regular",
-								txIn.PreviousOutPoint.Hash,
-								txIn.PreviousOutPoint.Index,
-								txIn.PreviousOutPoint.Tree,
-								tx.Sha(),
-								hash)
-						}
-					}
-				}
-
-				for _, tx := range curBlock.STransactions() {
-					for _, txIn := range tx.MsgTx().TxIn {
-						if txIn.PreviousOutPoint == localTxIn.PreviousOutPoint {
-							log.Errorf("Double spend of {hash: %v, idx: %v,"+
-								" tree: %b}, previously found in tx %v "+
-								"of block %v txtree stake\n",
-								txIn.PreviousOutPoint.Hash,
-								txIn.PreviousOutPoint.Index,
-								txIn.PreviousOutPoint.Tree,
-								tx.Sha(),
-								hash)
-						}
-					}
-				}
-			}
-		}
-	}
-
-	for _, localTx := range stxs {
-		for _, localTxIn := range localTx.MsgTx().TxIn {
-			for _, tx := range txs {
-				for _, txIn := range tx.MsgTx().TxIn {
-					if txIn.PreviousOutPoint == localTxIn.PreviousOutPoint {
-						log.Errorf("Double spend of {hash: %v, idx: %v,"+
-							" tree: %b}, previously found in tx %v "+
-							"of cur block stake txtree\n",
-							txIn.PreviousOutPoint.Hash,
-							txIn.PreviousOutPoint.Index,
-							txIn.PreviousOutPoint.Tree,
-							tx.Sha())
-					}
-				}
-			}
-		}
-	}
-
-	return nil
-}
-*/

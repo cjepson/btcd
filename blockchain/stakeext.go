@@ -207,11 +207,6 @@ func (b *BlockChain) getWinningTicketsInclStore(node *blockNode,
 		sort.Sort(tempTdSlice)
 		sortedSlice = append(sortedSlice, tempTdSlice...)
 	}
-	//fmt.Printf("SORTED SLICE OF TICKETS FOR BLOCK %v\n", node.height)
-	//for i := range sortedSlice {
-	//	fmt.Printf("%v,", sortedSlice[i].SStxHash)
-	//}
-	//fmt.Printf("\n")
 
 	// Use the parent block's header to seed a PRNG that picks the
 	// lottery winners.

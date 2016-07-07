@@ -95,8 +95,6 @@ func putTxToMinimalOutputs(target []byte, tx *dcrutil.Tx) int {
 // the amount of data read. The function will panic if it reads beyond the bounds
 // of the passed memory.
 func deserializeToMinimalOutputs(serialized []byte) ([]*stake.MinimalOutput, int) {
-	//fmt.Printf("GOT MIN OUT SER %x\n", serialized)
-
 	numOutputs, offset := deserializeVLQ(serialized)
 	minOuts := make([]*stake.MinimalOutput, int(numOutputs))
 	for i := 0; i < int(numOutputs); i++ {
@@ -119,8 +117,6 @@ func deserializeToMinimalOutputs(serialized []byte) ([]*stake.MinimalOutput, int
 			Version:  uint16(version),
 			PkScript: pkScript,
 		}
-		//fmt.Printf("OUTPUT %v: %v %v %x\n", i, amount, version, pkScript)
-		//fmt.Printf("REM %x\n", serialized[offset:])
 	}
 
 	return minOuts, offset
@@ -276,7 +272,6 @@ func putSpentTxOut(target []byte, stxo *spentTxOut) int {
 	offset := putVLQ(target, uint64(flags))
 
 	// false below indicates that the txOut does not specify an amount.
-	//fmt.Printf("stxo pkscript %x\n", stxo.pkScript)
 	offset += putCompressedTxOut(target[offset:], 0, stxo.scriptVersion,
 		stxo.pkScript, currentCompressionVersion, stxo.compressed, false)
 
@@ -360,7 +355,6 @@ func decodeSpentTxOut(serialized []byte, stxo *spentTxOut, amount int64,
 		stxo.txVersion = int32(txVersion)
 
 		if stxo.txType == stake.TxTypeSStx {
-			//fmt.Printf("Current Serialized STXO %x\n", serialized[offset:])
 			sz := readDeserializeSizeOfMinimalOutputs(serialized[offset:])
 			if sz == 0 || sz > len(serialized[offset:]) {
 				return offset, errDeserialize("corrupt data for ticket " +
@@ -369,7 +363,6 @@ func decodeSpentTxOut(serialized []byte, stxo *spentTxOut, amount int64,
 
 			stakeExtra := make([]byte, sz)
 			copy(stakeExtra, serialized[offset:offset+sz])
-			//fmt.Printf("Read Serialized STXO stakeExtra %x\n", stakeExtra)
 			stxo.stakeExtra = stakeExtra
 			offset += sz
 		}
@@ -430,8 +423,6 @@ func deserializeSpendJournalEntry(serialized []byte, txns []*wire.MsgTx,
 				continue
 			}
 
-			// fmt.Printf("current tx %v, current txidx %v\n", txIdx, txInIdx)
-
 			txIn := tx.TxIn[txInIdx]
 			stxo := &stxos[stxoIdx]
 			stxoIdx--
@@ -453,7 +444,6 @@ func deserializeSpendJournalEntry(serialized []byte, txns []*wire.MsgTx,
 			// to detect this case and pull the tx version from the
 			// entry that contains the version information as just
 			// described.
-			// fmt.Printf("Current ser data chunk %x\n", serialized[offset:])
 			n, err := decodeSpentTxOut(serialized[offset:], stxo, txIn.ValueIn,
 				txIn.BlockHeight, txIn.BlockIndex)
 			offset += n
@@ -470,9 +460,9 @@ func deserializeSpendJournalEntry(serialized []byte, txns []*wire.MsgTx,
 
 // serializeSpendJournalEntry serializes all of the passed spent txouts into a
 // single byte slice according to the format described in detail above.
-func serializeSpendJournalEntry(stxos []spentTxOut) []byte {
+func serializeSpendJournalEntry(stxos []spentTxOut) ([]byte, error) {
 	if len(stxos) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	// Calculate the size needed to serialize the entire journal entry.
@@ -493,15 +483,14 @@ func serializeSpendJournalEntry(stxos []spentTxOut) []byte {
 		oldOffset := offset
 		offset += putSpentTxOut(serialized[offset:], &stxos[i])
 
-		//fmt.Printf("wrote to ser entry %x\n", serialized)
-
 		if offset-oldOffset != sizes[i] {
-			panic(fmt.Sprintf("bad write; expect sz %v, got sz %v (wrote %x)",
-				sizes[i], offset-oldOffset, serialized[oldOffset:offset]))
+			return nil, AssertError(fmt.Sprintf("bad write; expect sz %v, "+
+				"got sz %v (wrote %x)", sizes[i], offset-oldOffset,
+				serialized[oldOffset:offset]))
 		}
 	}
 
-	return serialized
+	return serialized, nil
 }
 
 // dbFetchSpendJournalEntry fetches the spend journal entry for the passed
@@ -544,9 +533,13 @@ func dbFetchSpendJournalEntry(dbTx database.Tx, block *dcrutil.Block,
 // spend journal entry for the given block hash using the provided slice of
 // spent txouts.   The spent txouts slice must contain an entry for every txout
 // the transactions in the block spend in the order they are spent.
-func dbPutSpendJournalEntry(dbTx database.Tx, blockHash *chainhash.Hash, stxos []spentTxOut) error {
+func dbPutSpendJournalEntry(dbTx database.Tx, blockHash *chainhash.Hash,
+	stxos []spentTxOut) error {
 	spendBucket := dbTx.Metadata().Bucket(dbnamespace.SpendJournalBucketName)
-	serialized := serializeSpendJournalEntry(stxos)
+	serialized, err := serializeSpendJournalEntry(stxos)
+	if err != nil {
+		return err
+	}
 	return spendBucket.Put(blockHash[:], serialized)
 }
 
@@ -617,7 +610,8 @@ func dbRemoveSpendJournalEntry(dbTx database.Tx, blockHash *chainhash.Hash) erro
 // utxoEntryHeaderCode returns the calculated header code to be used when
 // serializing the provided utxo entry and the number of bytes needed to encode
 // the unspentness bitmap.
-func utxoEntryHeaderCode(entry *UtxoEntry, highestOutputIndex uint32) (uint64, int, error) {
+func utxoEntryHeaderCode(entry *UtxoEntry, highestOutputIndex uint32) (uint64, int,
+	error) {
 	// The first two outputs are encoded separately, so offset the index
 	// accordingly to calculate the correct number of bytes needed to encode
 	// up to the highest unspent output index.
@@ -993,7 +987,8 @@ func dbPutBlockIndex(dbTx database.Tx, hash *chainhash.Hash, height int64) error
 // dbRemoveBlockIndex uses an existing database transaction remove block index
 // entries from the hash to height and height to hash mappings for the provided
 // values.
-func dbRemoveBlockIndex(dbTx database.Tx, hash *chainhash.Hash, height int64) error {
+func dbRemoveBlockIndex(dbTx database.Tx, hash *chainhash.Hash,
+	height int64) error {
 	// Remove the block hash to height mapping.
 	meta := dbTx.Metadata()
 	hashIndex := meta.Bucket(dbnamespace.HashIndexBucketName)
@@ -1132,7 +1127,8 @@ func deserializeBestChainState(serializedData []byte) (bestChainState, error) {
 
 // dbPutBestState uses an existing database transaction to update the best chain
 // state with the given parameters.
-func dbPutBestState(dbTx database.Tx, snapshot *BestState, workSum *big.Int) error {
+func dbPutBestState(dbTx database.Tx, snapshot *BestState,
+	workSum *big.Int) error {
 	// Serialize the current best chain state.
 	serializedData := serializeBestChainState(bestChainState{
 		hash:      *snapshot.Hash,
@@ -1291,7 +1287,8 @@ func (b *BlockChain) initChainState() error {
 
 // dbFetchHeaderByHash uses an existing database transaction to retrieve the
 // block header for the provided hash.
-func dbFetchHeaderByHash(dbTx database.Tx, hash *chainhash.Hash) (*wire.BlockHeader, error) {
+func dbFetchHeaderByHash(dbTx database.Tx,
+	hash *chainhash.Hash) (*wire.BlockHeader, error) {
 	headerBytes, err := dbTx.FetchBlockHeader(hash)
 	if err != nil {
 		return nil, err
@@ -1308,7 +1305,8 @@ func dbFetchHeaderByHash(dbTx database.Tx, hash *chainhash.Hash) (*wire.BlockHea
 
 // dbFetchHeaderByHeight uses an existing database transaction to retrieve the
 // block header for the provided height.
-func dbFetchHeaderByHeight(dbTx database.Tx, height int64) (*wire.BlockHeader, error) {
+func dbFetchHeaderByHeight(dbTx database.Tx, height int64) (*wire.BlockHeader,
+	error) {
 	hash, err := dbFetchHashByHeight(dbTx, height)
 	if err != nil {
 		return nil, err
@@ -1318,7 +1316,8 @@ func dbFetchHeaderByHeight(dbTx database.Tx, height int64) (*wire.BlockHeader, e
 }
 
 // DBFetchHeaderByHeight is the exported version of dbFetchHeaderByHeight.
-func DBFetchHeaderByHeight(dbTx database.Tx, height int64) (*wire.BlockHeader, error) {
+func DBFetchHeaderByHeight(dbTx database.Tx, height int64) (*wire.BlockHeader,
+	error) {
 	return dbFetchHeaderByHeight(dbTx, height)
 }
 
@@ -1341,7 +1340,8 @@ func (b *BlockChain) HeaderByHeight(height int64) (*wire.BlockHeader, error) {
 // dbFetchBlockByHash uses an existing database transaction to retrieve the raw
 // block for the provided hash, deserialize it, retrieve the appropriate height
 // from the index, and return a dcrutil.Block with the height set.
-func dbFetchBlockByHash(dbTx database.Tx, hash *chainhash.Hash) (*dcrutil.Block, error) {
+func dbFetchBlockByHash(dbTx database.Tx, hash *chainhash.Hash) (*dcrutil.Block,
+	error) {
 	// First find the height associated with the provided hash in the index.
 	blockHeight, err := dbFetchHeightByHash(dbTx, hash)
 	if err != nil {
@@ -1433,7 +1433,8 @@ func (b *BlockChain) BlockHeightByHash(hash *chainhash.Hash) (int64, error) {
 // main chain.
 //
 // This function is safe for concurrent access.
-func (b *BlockChain) BlockHashByHeight(blockHeight int64) (*chainhash.Hash, error) {
+func (b *BlockChain) BlockHashByHeight(blockHeight int64) (*chainhash.Hash,
+	error) {
 	var hash *chainhash.Hash
 	err := b.db.View(func(dbTx database.Tx) error {
 		var err error
@@ -1469,7 +1470,8 @@ func (b *BlockChain) BlockByHash(hash *chainhash.Hash) (*dcrutil.Block, error) {
 // height.  The end height will be limited to the current main chain height.
 //
 // This function is safe for concurrent access.
-func (b *BlockChain) HeightRange(startHeight, endHeight int64) ([]chainhash.Hash, error) {
+func (b *BlockChain) HeightRange(startHeight, endHeight int64) ([]chainhash.Hash,
+	error) {
 	// Ensure requested heights are sane.
 	if startHeight < 0 {
 		return nil, fmt.Errorf("start height of fetch range must not "+

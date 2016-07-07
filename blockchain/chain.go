@@ -572,30 +572,14 @@ func (b *BlockChain) GetGeneration(hash chainhash.Hash) ([]chainhash.Hash, error
 //
 // This function MUST be called with the chain state lock held (for writes).
 // The database transaction may be read-only.
-func (b *BlockChain) loadBlockNode(dbTx database.Tx, hash *chainhash.Hash) (*blockNode, error) {
+func (b *BlockChain) loadBlockNode(dbTx database.Tx,
+	hash *chainhash.Hash) (*blockNode, error) {
 	blockHeader, err := dbFetchHeaderByHash(dbTx, hash)
 	if err != nil {
 		return nil, err
 	}
 
-	/* Needed?
-	blockHeight, err := dbFetchHeightByHash(dbTx, hash)
-	if err != nil {
-		return nil, err
-	}
-	*/
-
 	var voteBitsStake []uint16
-	/* TODO cj fetch this from database meta data??
-	Create the new block node for the block and set the work.
-
-	for _, stx := range block.STransactions() {
-		if is, _ := stake.IsSSGen(stx); is {
-			vb := stake.GetSSGenVoteBits(stx)
-			voteBitsStake = append(voteBitsStake, vb)
-		}
-	}
-	*/
 	node := newBlockNode(blockHeader, hash,
 		int64(blockHeader.Height), voteBitsStake)
 	node.inMainChain = true
@@ -940,7 +924,8 @@ func (b *BlockChain) GetCurrentBlockHeader() *wire.BlockHeader {
 // starting with startNode are at least the minimum passed version.
 //
 // This function MUST be called with the chain state lock held (for writes).
-func (b *BlockChain) isMajorityVersion(minVer int32, startNode *blockNode, numRequired int32) bool {
+func (b *BlockChain) isMajorityVersion(minVer int32, startNode *blockNode,
+	numRequired int32) bool {
 	numFound := int32(0)
 	iterNode := startNode
 	for i := int32(0); i < b.chainParams.CurrentBlockVersion &&
@@ -1121,7 +1106,6 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block,
 		return err
 	}
 	if len(stxos) != countSpentOutputs(block, parent) {
-		// fmt.Printf("count %v, len stxos %v\n", countSpentOutputs(block, parent), len(stxos))
 		return AssertError("connectBlock called with inconsistent " +
 			"spent transaction out information")
 	}
@@ -1183,8 +1167,6 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block,
 		// Update the utxo set using the state of the utxo view.  This
 		// entails removing all of the utxos spent and adding the new
 		// ones created by the block.
-		// fmt.Printf("INSERT BLOCK HEIGHT %v INTO DB\n", block.Height())
-		// fmt.Printf("inserting utxo view %v", DebugUtxoViewpointData(view))
 		err = dbPutUtxoView(dbTx, view)
 		if err != nil {
 			return err
@@ -1202,7 +1184,6 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block,
 
 			return err
 		}
-		// fmt.Printf("Inserted STXs for height %v: %v", block.Height(), DebugStxosData(stxos))
 
 		// Insert the block into the database if it's not already there.
 		hasBlock, err := dbTx.HasBlock(block.Sha())
@@ -1487,7 +1468,6 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 		var stxos []spentTxOut
 		err = b.db.View(func(dbTx database.Tx) error {
 			stxos, err = dbFetchSpendJournalEntry(dbTx, block, parent, view)
-			// fmt.Printf("STXOS %v\n", stxos)
 			return err
 		})
 		if err != nil {
@@ -1497,9 +1477,6 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 		// Store the loaded block and spend journal entry for later.
 		detachBlocks = append(detachBlocks, block)
 		detachSpentTxOuts = append(detachSpentTxOuts, stxos)
-
-		// fmt.Printf("DISCONNECT BLOCK %v, %v\n", block.Sha(), block.Height())
-		// fmt.Printf("DISCONNECT PARENT %v, %v\n", parent.Sha(), parent.Height())
 
 		err = b.disconnectTransactions(view, block, parent, stxos)
 		if err != nil {
@@ -1532,7 +1509,6 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 		// thus will not be generated.  This is done because the state
 		// is not being immediately written to the database, so it is
 		// not needed.
-		//fmt.Printf("CHECK CONNECT BLOCK %v, %v\n", block.Sha(), block.Height())
 		err := b.checkConnectBlock(n, block, view, nil)
 		if err != nil {
 			return err
@@ -1594,8 +1570,6 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 			return err
 		}
 
-		//fmt.Printf("REAL DISCONNECT BLOCK %v, %v\n", block.Sha(), block.Height())
-
 		// Update the database and chain state.
 		err = b.disconnectBlock(n, block, view)
 		if err != nil {
@@ -1624,8 +1598,6 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 		if err != nil {
 			return err
 		}
-
-		// fmt.Printf("CONNECT BLOCK %v, %v\n", block.Sha(), block.Height())
 
 		// Update the database and chain state.
 		err = b.connectBlock(n, block, view, stxos)

@@ -474,12 +474,8 @@ func (b *BlockChain) connectTickets(tixStore TicketStore, node *blockNode,
 // This function should only ever have to disconnect transactions from the main
 // chain, so most of the calls are directly the the tmdb which contains all this
 // data in an organized bucket.
-func (b *BlockChain) disconnectTickets(tixStore TicketStore,
-	node *blockNode,
+func (b *BlockChain) disconnectTickets(tixStore TicketStore, node *blockNode,
 	block *dcrutil.Block) error {
-
-	// fmt.Printf("DISCONNECT TICKETS FOR BLOCK %v, %v, len(tixStore) %v\n", block.Height(), block.Sha(), len(tixStore))
-
 	tM := int64(b.chainParams.TicketMaturity)
 	height := node.height
 
@@ -501,8 +497,6 @@ func (b *BlockChain) disconnectTickets(tixStore TicketStore,
 	if errBlock != nil {
 		return errBlock
 	}
-
-	// fmt.Printf("matureBlock %v, matureBlockHeight %v\n", matureBlock.Sha(), matureBlock.Height())
 
 	// Store pointers to empty ticket data in the ticket store and mark them as
 	// non-existing.
@@ -553,8 +547,6 @@ func (b *BlockChain) disconnectTickets(tixStore TicketStore,
 	if errDump != nil {
 		return errDump
 	}
-
-	// fmt.Printf("spent tickets %v\n", spentTickets)
 
 	// Move all of these tickets into the ticket store as available tickets.
 	for hash, td := range spentTickets {
@@ -630,7 +622,6 @@ func (b *BlockChain) fetchTicketStore(node *blockNode) (TicketStore, error) {
 		var stxos []spentTxOut
 		err = b.db.View(func(dbTx database.Tx) error {
 			stxos, err = dbFetchSpendJournalEntry(dbTx, block, parent, view)
-			// fmt.Printf("STXOS %v\n", stxos)
 			return err
 		})
 		if err != nil {
@@ -645,8 +636,6 @@ func (b *BlockChain) fetchTicketStore(node *blockNode) (TicketStore, error) {
 			return nil, err
 		}
 	}
-
-	// fmt.Printf("TICKETSTORE %v\n", tixStore)
 
 	// The ticket store is now accurate to either the node where the
 	// requested node forks off the main chain (in the case where the

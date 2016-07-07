@@ -78,7 +78,6 @@ func (o *utxoOutput) maybeDecompress(compressionVersion uint32) {
 		return
 	}
 
-	//fmt.Printf("Script %x, compressed %v\n", o.pkScript, o.compressed)
 	o.pkScript = decompressScript(o.pkScript, compressionVersion)
 	o.compressed = false
 }
@@ -477,36 +476,6 @@ func (b *BlockChain) connectTransactions(view *UtxoViewpoint, block *dcrutil.Blo
 	return nil
 }
 
-/*
-// countSpentOutputs returns the number of utxos the passed block spends for the
-// parent block regular transactions as the stake transcations of the current
-// block.
-func countSpentOutputsPerTree(block *dcrutil.Block, parent *dcrutil.Block) (int,
-	int) {
-	// We need to skip the regular tx tree if it's not valid.
-	// We also exclude the coinbase transaction since it can't
-	// spend anything.
-	regularTxTreeValid := dcrutil.IsFlagSet16(block.MsgBlock().Header.VoteBits,
-		dcrutil.BlockValid)
-	var numSpentRegParent, numSpentStakeBlock int
-	if regularTxTreeValid {
-		for _, tx := range parent.Transactions()[1:] {
-			numSpentRegParent += len(tx.MsgTx().TxIn)
-		}
-	}
-	for _, stx := range block.STransactions() {
-		txType := stake.DetermineTxType(stx)
-		if txType == stake.TxTypeSSGen || txType == stake.TxTypeSSRtx {
-			numSpentStakeBlock += 1
-			continue
-		}
-		numSpentStakeBlock += len(stx.MsgTx().TxIn)
-	}
-
-	return numSpentRegParent, numSpentStakeBlock
-}
-*/
-
 // disconnectTransactions updates the view by removing all of the transactions
 // created by the passed block, restoring all utxos the transactions spent by
 // using the provided spent txo information, and setting the best hash for the
@@ -588,8 +557,7 @@ func (b *BlockChain) disconnectTransactions(view *UtxoViewpoint,
 			entry := view.LookupEntry(originHash)
 			if entry == nil {
 				if !stxo.txFullySpent {
-					// fmt.Printf("currentview %v", DebugUtxoViewpointData(view))
-					panic(fmt.Sprintf("tried to revive utx %v from "+
+					return AssertError(fmt.Sprintf("tried to revive utx %v from "+
 						"non-fully spent stx entry", originHash))
 				}
 
@@ -597,8 +565,6 @@ func (b *BlockChain) disconnectTransactions(view *UtxoViewpoint,
 					stxo.index, stxo.isCoinBase, stxo.hasExpiry,
 					stxo.txType)
 				if stxo.txType == stake.TxTypeSStx {
-					//stakeExtra := make([]byte, serializeSizeForMinimalOutputs(tx))
-					//putTxToMinimalOutputs(stakeExtra, tx)
 					entry.stakeExtra = stxo.stakeExtra
 				}
 				view.entries[*originHash] = entry
@@ -684,16 +650,14 @@ func (b *BlockChain) disconnectTransactions(view *UtxoViewpoint,
 					entry := view.entries[*originHash]
 					if entry == nil {
 						if !stxo.txFullySpent {
-							// fmt.Printf("currentview %v", DebugUtxoViewpointData(view))
-							panic(fmt.Sprintf("tried to revive utx %v from "+
-								"non-fully spent stx entry", originHash))
+							return AssertError(fmt.Sprintf("tried to "+
+								"revive utx %v from non-fully spent stx entry",
+								originHash))
 						}
 						entry = newUtxoEntry(tx.MsgTx().Version,
 							stxo.height, stxo.index, stxo.isCoinBase,
 							stxo.hasExpiry, stxo.txType)
 						if stxo.txType == stake.TxTypeSStx {
-							//stakeExtra := make([]byte, serializeSizeForMinimalOutputs(tx))
-							//putTxToMinimalOutputs(stakeExtra, tx)
 							entry.stakeExtra = stxo.stakeExtra
 						}
 						view.entries[*originHash] = entry
@@ -846,7 +810,6 @@ func (view *UtxoViewpoint) Entries() map[chainhash.Hash]*UtxoEntry {
 func (view *UtxoViewpoint) commit() {
 	for txHash, entry := range view.entries {
 		if entry == nil || (entry.modified && entry.IsFullySpent()) {
-			// fmt.Printf("commit is deleting hash %v\n", txHash)
 			delete(view.entries, txHash)
 			continue
 		}
@@ -889,8 +852,6 @@ func (view *UtxoViewpoint) fetchUtxosMain(db database.DB,
 				return err
 			}
 
-			// fmt.Printf("Entry for hash %v: %v\n", hashCopy, entry)
-
 			view.entries[hash] = entry
 		}
 
@@ -906,7 +867,8 @@ func (view *UtxoViewpoint) fetchUtxosMain(db database.DB,
 // fetchUtxos loads utxo details about provided set of transaction hashes into
 // the view from the database as needed unless they already exist in the view in
 // which case they are ignored.
-func (view *UtxoViewpoint) fetchUtxos(db database.DB, txSet map[chainhash.Hash]struct{}) error {
+func (view *UtxoViewpoint) fetchUtxos(db database.DB,
+	txSet map[chainhash.Hash]struct{}) error {
 	// Nothing to do if there are no requested hashes.
 	if len(txSet) == 0 {
 		return nil
@@ -1182,7 +1144,6 @@ func (b *BlockChain) FetchUtxoView(tx *dcrutil.Tx, treeValid bool) (*UtxoViewpoi
 
 	err := view.fetchUtxosMain(b.db, txNeededSet)
 
-	// fmt.Printf("UTXO VIEW RETURNED FOR TX %v IN INITIAL LOOKUP:\n %v", tx.Sha(), DebugUtxoViewpointData(view))
 	return view, err
 }
 

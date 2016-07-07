@@ -985,8 +985,6 @@ func (mp *txMemPool) fetchInputUtxos(tx *dcrutil.Tx) (*blockchain.UtxoViewpoint,
 				wire.NullBlockIndex)
 		}
 	}
-	// DEBUG
-	// fmt.Printf("UTXO VIEW RETURNED FOR TX %v IN MEMPOOL:\n %v", tx.Sha(), blockchain.DebugUtxoViewpointData(utxoView))
 
 	return utxoView, nil
 }
