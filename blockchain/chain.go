@@ -1088,7 +1088,7 @@ func (b *BlockChain) pushMainChainBlockCache(block *dcrutil.Block) {
 
 // dbMaybeStoreBlock stores the provided block in the database if it's not
 // already there.
-func dbMaybeStoreBlock(dbTx database.Tx, block *btcutil.Block) error {
+func dbMaybeStoreBlock(dbTx database.Tx, block *dcrutil.Block) error {
 	hasBlock, err := dbTx.HasBlock(block.Sha())
 	if err != nil {
 		return err
@@ -1099,7 +1099,6 @@ func dbMaybeStoreBlock(dbTx database.Tx, block *btcutil.Block) error {
 
 	return dbTx.StoreBlock(block)
 }
-
 
 // connectBlock handles connecting the passed node/block to the end of the main
 // (best) chain.
@@ -1225,7 +1224,7 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block,
 		// optional indexes with the block being connected so they can
 		// update themselves accordingly.
 		if b.indexManager != nil {
-			err := b.indexManager.ConnectBlock(dbTx, block, view)
+			err := b.indexManager.ConnectBlock(dbTx, block, parent, view)
 			if err != nil {
 				return err
 			}
@@ -1380,7 +1379,7 @@ func (b *BlockChain) disconnectBlock(node *blockNode, block *dcrutil.Block,
 		// optional indexes with the block being disconnected so they
 		// can update themselves accordingly.
 		if b.indexManager != nil {
-			err := b.indexManager.DisconnectBlock(dbTx, block, view)
+			err := b.indexManager.DisconnectBlock(dbTx, block, parent, view)
 			if err != nil {
 				return err
 			}
@@ -1999,11 +1998,11 @@ type IndexManager interface {
 
 	// ConnectBlock is invoked when a new block has been connected to the
 	// main chain.
-	ConnectBlock(database.Tx, *btcutil.Block, *UtxoViewpoint) error
+	ConnectBlock(database.Tx, *dcrutil.Block, *dcrutil.Block, *UtxoViewpoint) error
 
 	// DisconnectBlock is invoked when a block has been disconnected from
 	// the main chain.
-	DisconnectBlock(database.Tx, *btcutil.Block, *UtxoViewpoint) error
+	DisconnectBlock(database.Tx, *dcrutil.Block, *dcrutil.Block, *UtxoViewpoint) error
 }
 
 // Config is a descriptor which specifies the blockchain instance configuration.
@@ -2077,7 +2076,7 @@ func New(config *Config) (*BlockChain, error) {
 		chainParams:             params,
 		notifications:           config.Notifications,
 		sigCache:                config.SigCache,
-		indexManager:        config.IndexManager,
+		indexManager:            config.IndexManager,
 		root:                    nil,
 		bestNode:                nil,
 		index:                   make(map[chainhash.Hash]*blockNode),

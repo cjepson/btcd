@@ -9,12 +9,13 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/btcsuite/btcd/blockchain"
-	"github.com/btcsuite/btcd/chaincfg"
-	database "github.com/btcsuite/btcd/database2"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
+	"github.com/decred/dcrd/blockchain"
+	"github.com/decred/dcrd/chaincfg"
+	"github.com/decred/dcrd/chaincfg/chainhash"
+	database "github.com/decred/dcrd/database2"
+	"github.com/decred/dcrd/txscript"
+	"github.com/decred/dcrd/wire"
+	"github.com/decred/dcrutil"
 )
 
 const (
@@ -125,7 +126,7 @@ var (
 
 // fetchBlockHashFunc defines a callback function to use in order to convert a
 // serialized block ID to an associated block hash.
-type fetchBlockHashFunc func(serializedID []byte) (*wire.ShaHash, error)
+type fetchBlockHashFunc func(serializedID []byte) (*chainhash.Hash, error)
 
 // serializeAddrIndexEntry serializes the provided block id and transaction
 // location according to the format described in detail above.
@@ -514,21 +515,21 @@ func dbRemoveAddrIndexEntries(bucket internalBucket, addrKey [addrKeySize]byte, 
 
 // addrToKey converts known address types to an addrindex key.  An error is
 // returned for unsupported types.
-func addrToKey(addr btcutil.Address) ([addrKeySize]byte, error) {
+func addrToKey(addr dcrutil.Address) ([addrKeySize]byte, error) {
 	switch addr := addr.(type) {
-	case *btcutil.AddressPubKeyHash:
+	case *dcrutil.AddressPubKeyHash:
 		var result [addrKeySize]byte
 		result[0] = addrKeyTypePubKeyHash
 		copy(result[1:], addr.Hash160()[:])
 		return result, nil
 
-	case *btcutil.AddressScriptHash:
+	case *dcrutil.AddressScriptHash:
 		var result [addrKeySize]byte
 		result[0] = addrKeyTypeScriptHash
 		copy(result[1:], addr.Hash160()[:])
 		return result, nil
 
-	case *btcutil.AddressPubKey:
+	case *dcrutil.AddressSecpPubKey:
 		var result [addrKeySize]byte
 		result[0] = addrKeyTypePubKeyHash
 		copy(result[1:], addr.AddressPubKeyHash().Hash160()[:])
@@ -568,8 +569,8 @@ type AddrIndex struct {
 	// This allows fairly efficient updates when transactions are removed
 	// once they are included into a block.
 	unconfirmedLock sync.RWMutex
-	txnsByAddr      map[[addrKeySize]byte]map[wire.ShaHash]*btcutil.Tx
-	addrsByTx       map[wire.ShaHash]map[[addrKeySize]byte]struct{}
+	txnsByAddr      map[[addrKeySize]byte]map[chainhash.Hash]*dcrutil.Tx
+	addrsByTx       map[chainhash.Hash]map[[addrKeySize]byte]struct{}
 }
 
 // Ensure the AddrIndex type implements the Indexer interface.
@@ -628,10 +629,10 @@ type writeIndexData map[[addrKeySize]byte][]int
 // indexPkScript extracts all standard addresses from the passed public key
 // script and maps each of them to the associated transaction using the passed
 // map.
-func (idx *AddrIndex) indexPkScript(data writeIndexData, pkScript []byte, txIdx int) {
+func (idx *AddrIndex) indexPkScript(data writeIndexData, scriptVersion uint16, pkScript []byte, txIdx int) {
 	// Nothing to index if the script is non-standard or otherwise doesn't
 	// contain any addresses.
-	_, addrs, _, err := txscript.ExtractPkScriptAddrs(pkScript,
+	_, addrs, _, err := txscript.ExtractPkScriptAddrs(scriptVersion, pkScript,
 		idx.chainParams)
 	if err != nil || len(addrs) == 0 {
 		return
@@ -661,7 +662,7 @@ func (idx *AddrIndex) indexPkScript(data writeIndexData, pkScript []byte, txIdx 
 // indexBlock extract all of the standard addresses from all of the transactions
 // in the passed block and maps each of them to the assocaited transaction using
 // the passed map.
-func (idx *AddrIndex) indexBlock(data writeIndexData, block *btcutil.Block, view *blockchain.UtxoViewpoint) {
+func (idx *AddrIndex) indexBlock(data writeIndexData, block *dcrutil.Block, view *blockchain.UtxoViewpoint) {
 	for txIdx, tx := range block.Transactions() {
 		// Coinbases do not reference any inputs.  Since the block is
 		// required to have already gone through full validation, it has
@@ -678,13 +679,14 @@ func (idx *AddrIndex) indexBlock(data writeIndexData, block *btcutil.Block, view
 					continue
 				}
 
+				version := entry.ScriptVersionByIndex(origin.Index)
 				pkScript := entry.PkScriptByIndex(origin.Index)
-				idx.indexPkScript(data, pkScript, txIdx)
+				idx.indexPkScript(data, version, pkScript, txIdx)
 			}
 		}
 
 		for _, txOut := range tx.MsgTx().TxOut {
-			idx.indexPkScript(data, txOut.PkScript, txIdx)
+			idx.indexPkScript(data, txOut.Version, txOut.PkScript, txIdx)
 		}
 	}
 }
@@ -694,10 +696,10 @@ func (idx *AddrIndex) indexBlock(data writeIndexData, block *btcutil.Block, view
 // the transactions in the block involve.
 //
 // This is part of the Indexer interface.
-func (idx *AddrIndex) ConnectBlock(dbTx database.Tx, block *btcutil.Block, view *blockchain.UtxoViewpoint) error {
+func (idx *AddrIndex) ConnectBlock(dbTx database.Tx, block *dcrutil.Block, view *blockchain.UtxoViewpoint) error {
 	// The offset and length of the transactions within the serialized
 	// block.
-	txLocs, err := block.TxLoc()
+	txLocs, stxLocs, err := block.TxLoc()
 	if err != nil {
 		return err
 	}
@@ -732,7 +734,7 @@ func (idx *AddrIndex) ConnectBlock(dbTx database.Tx, block *btcutil.Block, view 
 // each transaction in the block involve.
 //
 // This is part of the Indexer interface.
-func (idx *AddrIndex) DisconnectBlock(dbTx database.Tx, block *btcutil.Block, view *blockchain.UtxoViewpoint) error {
+func (idx *AddrIndex) DisconnectBlock(dbTx database.Tx, block *dcrutil.Block, view *blockchain.UtxoViewpoint) error {
 	// Build all of the address to transaction mappings in a local map.
 	addrsToTxns := make(writeIndexData)
 	idx.indexBlock(addrsToTxns, block, view)
@@ -760,7 +762,7 @@ func (idx *AddrIndex) DisconnectBlock(dbTx database.Tx, block *btcutil.Block, vi
 // that involve a given address.
 //
 // This function is safe for concurrent access.
-func (idx *AddrIndex) TxRegionsForAddress(dbTx database.Tx, addr btcutil.Address, numToSkip, numRequested uint32, reverse bool) ([]database.BlockRegion, uint32, error) {
+func (idx *AddrIndex) TxRegionsForAddress(dbTx database.Tx, addr dcrutil.Address, numToSkip, numRequested uint32, reverse bool) ([]database.BlockRegion, uint32, error) {
 	addrKey, err := addrToKey(addr)
 	if err != nil {
 		return nil, 0, err
@@ -771,7 +773,7 @@ func (idx *AddrIndex) TxRegionsForAddress(dbTx database.Tx, addr btcutil.Address
 	err = idx.db.View(func(dbTx database.Tx) error {
 		// Create closure to lookup the block hash given the ID using
 		// the database transaction.
-		fetchBlockHash := func(id []byte) (*wire.ShaHash, error) {
+		fetchBlockHash := func(id []byte) (*chainhash.Hash, error) {
 			// Deserialize and populate the result.
 			return dbFetchBlockHashBySerializedID(dbTx, id)
 		}
@@ -792,11 +794,11 @@ func (idx *AddrIndex) TxRegionsForAddress(dbTx database.Tx, addr btcutil.Address
 // script to the transaction.
 //
 // This function is safe for concurrent access.
-func (idx *AddrIndex) indexUnconfirmedAddresses(pkScript []byte, tx *btcutil.Tx) {
+func (idx *AddrIndex) indexUnconfirmedAddresses(scriptVersion uint16, pkScript []byte, tx *dcrutil.Tx) {
 	// The error is ignored here since the only reason it can fail is if the
 	// script fails to parse and it was already validated before being
 	// admitted to the mempool.
-	_, addresses, _, _ := txscript.ExtractPkScriptAddrs(pkScript,
+	_, addresses, _, _ := txscript.ExtractPkScriptAddrs(scriptVersion, pkScript,
 		idx.chainParams)
 	for _, addr := range addresses {
 		// Ignore unsupported address types.
@@ -809,7 +811,7 @@ func (idx *AddrIndex) indexUnconfirmedAddresses(pkScript []byte, tx *btcutil.Tx)
 		idx.unconfirmedLock.Lock()
 		addrIndexEntry := idx.txnsByAddr[addrKey]
 		if addrIndexEntry == nil {
-			addrIndexEntry = make(map[wire.ShaHash]*btcutil.Tx)
+			addrIndexEntry = make(map[chainhash.Hash]*dcrutil.Tx)
 			idx.txnsByAddr[addrKey] = addrIndexEntry
 		}
 		addrIndexEntry[*tx.Sha()] = tx
@@ -834,7 +836,7 @@ func (idx *AddrIndex) indexUnconfirmedAddresses(pkScript []byte, tx *btcutil.Tx)
 // addresses not being indexed.
 //
 // This function is safe for concurrent access.
-func (idx *AddrIndex) AddUnconfirmedTx(tx *btcutil.Tx, utxoView *blockchain.UtxoViewpoint) {
+func (idx *AddrIndex) AddUnconfirmedTx(tx *dcrutil.Tx, utxoView *blockchain.UtxoViewpoint) {
 	// Index addresses of all referenced previous transaction outputs.
 	//
 	// The existence checks are elided since this is only called after the
@@ -848,13 +850,14 @@ func (idx *AddrIndex) AddUnconfirmedTx(tx *btcutil.Tx, utxoView *blockchain.Utxo
 			// call out all inputs must be available.
 			continue
 		}
+		version := entry.ScriptVersionByIndex(txIn.PreviousOutPoint.Index)
 		pkScript := entry.PkScriptByIndex(txIn.PreviousOutPoint.Index)
-		idx.indexUnconfirmedAddresses(pkScript, tx)
+		idx.indexUnconfirmedAddresses(version, pkScript, tx)
 	}
 
 	// Index addresses of all created outputs.
 	for _, txOut := range tx.MsgTx().TxOut {
-		idx.indexUnconfirmedAddresses(txOut.PkScript, tx)
+		idx.indexUnconfirmedAddresses(txOut.Version, txOut.PkScript, tx)
 	}
 }
 
@@ -862,7 +865,7 @@ func (idx *AddrIndex) AddUnconfirmedTx(tx *btcutil.Tx, utxoView *blockchain.Utxo
 // (memory-only) address index.
 //
 // This function is safe for concurrent access.
-func (idx *AddrIndex) RemoveUnconfirmedTx(hash *wire.ShaHash) {
+func (idx *AddrIndex) RemoveUnconfirmedTx(hash *chainhash.Hash) {
 	idx.unconfirmedLock.Lock()
 	defer idx.unconfirmedLock.Unlock()
 
@@ -885,7 +888,7 @@ func (idx *AddrIndex) RemoveUnconfirmedTx(hash *wire.ShaHash) {
 // Unsupported address types are ignored and will result in no results.
 //
 // This function is safe for concurrent access.
-func (idx *AddrIndex) UnconfirmedTxnsForAddress(addr btcutil.Address) []*btcutil.Tx {
+func (idx *AddrIndex) UnconfirmedTxnsForAddress(addr dcrutil.Address) []*dcrutil.Tx {
 	// Ignore unsupported address types.
 	addrKey, err := addrToKey(addr)
 	if err != nil {
@@ -899,7 +902,7 @@ func (idx *AddrIndex) UnconfirmedTxnsForAddress(addr btcutil.Address) []*btcutil
 	// Return a new slice with the results if there are any.  This ensures
 	// safe concurrency.
 	if txns, exists := idx.txnsByAddr[addrKey]; exists {
-		addressTxns := make([]*btcutil.Tx, 0, len(txns))
+		addressTxns := make([]*dcrutil.Tx, 0, len(txns))
 		for _, tx := range txns {
 			addressTxns = append(addressTxns, tx)
 		}
@@ -920,8 +923,8 @@ func NewAddrIndex(db database.DB, chainParams *chaincfg.Params) *AddrIndex {
 	return &AddrIndex{
 		db:          db,
 		chainParams: chainParams,
-		txnsByAddr:  make(map[[addrKeySize]byte]map[wire.ShaHash]*btcutil.Tx),
-		addrsByTx:   make(map[wire.ShaHash]map[[addrKeySize]byte]struct{}),
+		txnsByAddr:  make(map[[addrKeySize]byte]map[chainhash.Hash]*dcrutil.Tx),
+		addrsByTx:   make(map[chainhash.Hash]map[[addrKeySize]byte]struct{}),
 	}
 }
 
