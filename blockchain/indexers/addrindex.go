@@ -10,7 +10,9 @@ import (
 	"sync"
 
 	"github.com/decred/dcrd/blockchain"
+	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg"
+	"github.com/decred/dcrd/chaincfg/chainec"
 	"github.com/decred/dcrd/chaincfg/chainhash"
 	database "github.com/decred/dcrd/database2"
 	"github.com/decred/dcrd/txscript"
@@ -45,11 +47,25 @@ const (
 	// address index.
 	addrKeyTypePubKeyHash = 0
 
+	// addrKeyTypePubKeyHashEdwards is the address type in an address key
+	// which represents both a pay-to-pubkey-hash and a pay-to-pubkey-alt
+	// address using Schnorr signatures over the Ed25519 curve.  This is
+	// done because both are identical for the purposes of the address
+	// index.
+	addrKeyTypePubKeyHashEdwards = 1
+
+	// addrKeyTypePubKeyHashSchnorr is the address type in an address key
+	// which represents both a pay-to-pubkey-hash and a pay-to-pubkey-alt
+	// address using Schnorr signatures over the secp256k1 curve.  This is
+	// done because both are identical for the purposes of the address
+	// index.
+	addrKeyTypePubKeyHashSchnorr = 2
+
 	// addrKeyTypeScriptHash is the address type in an address key which
 	// represents a pay-to-script-hash address.  This is necessary because
 	// the hash of a pubkey address might be the same as that of a script
 	// hash.
-	addrKeyTypeScriptHash = 1
+	addrKeyTypeScriptHash = 3
 
 	// Size of a transaction entry.  It consists of 4 bytes block id + 4
 	// bytes offset + 4 bytes length.
@@ -515,13 +531,26 @@ func dbRemoveAddrIndexEntries(bucket internalBucket, addrKey [addrKeySize]byte, 
 
 // addrToKey converts known address types to an addrindex key.  An error is
 // returned for unsupported types.
-func addrToKey(addr dcrutil.Address) ([addrKeySize]byte, error) {
+func addrToKey(addr dcrutil.Address, params *chaincfg.Params) ([addrKeySize]byte, error) {
 	switch addr := addr.(type) {
 	case *dcrutil.AddressPubKeyHash:
-		var result [addrKeySize]byte
-		result[0] = addrKeyTypePubKeyHash
-		copy(result[1:], addr.Hash160()[:])
-		return result, nil
+		switch addr.DSA(params) {
+		case chainec.ECTypeSecp256k1:
+			var result [addrKeySize]byte
+			result[0] = addrKeyTypePubKeyHash
+			copy(result[1:], addr.Hash160()[:])
+			return result, nil
+		case chainec.ECTypeEdwards:
+			var result [addrKeySize]byte
+			result[0] = addrKeyTypePubKeyHashEdwards
+			copy(result[1:], addr.Hash160()[:])
+			return result, nil
+		case chainec.ECTypeSecSchnorr:
+			var result [addrKeySize]byte
+			result[0] = addrKeyTypePubKeyHashSchnorr
+			copy(result[1:], addr.Hash160()[:])
+			return result, nil
+		}
 
 	case *dcrutil.AddressScriptHash:
 		var result [addrKeySize]byte
@@ -532,6 +561,18 @@ func addrToKey(addr dcrutil.Address) ([addrKeySize]byte, error) {
 	case *dcrutil.AddressSecpPubKey:
 		var result [addrKeySize]byte
 		result[0] = addrKeyTypePubKeyHash
+		copy(result[1:], addr.AddressPubKeyHash().Hash160()[:])
+		return result, nil
+
+	case *dcrutil.AddressEdwardsPubKey:
+		var result [addrKeySize]byte
+		result[0] = addrKeyTypePubKeyHashEdwards
+		copy(result[1:], addr.AddressPubKeyHash().Hash160()[:])
+		return result, nil
+
+	case *dcrutil.AddressSecSchnorrPubKey:
+		var result [addrKeySize]byte
+		result[0] = addrKeyTypePubKeyHashSchnorr
 		copy(result[1:], addr.AddressPubKeyHash().Hash160()[:])
 		return result, nil
 	}
@@ -629,17 +670,30 @@ type writeIndexData map[[addrKeySize]byte][]int
 // indexPkScript extracts all standard addresses from the passed public key
 // script and maps each of them to the associated transaction using the passed
 // map.
-func (idx *AddrIndex) indexPkScript(data writeIndexData, scriptVersion uint16, pkScript []byte, txIdx int) {
+func (idx *AddrIndex) indexPkScript(data writeIndexData, scriptVersion uint16, pkScript []byte, txIdx int, isSStx bool) {
 	// Nothing to index if the script is non-standard or otherwise doesn't
 	// contain any addresses.
-	_, addrs, _, err := txscript.ExtractPkScriptAddrs(scriptVersion, pkScript,
+	class, addrs, _, err := txscript.ExtractPkScriptAddrs(scriptVersion, pkScript,
 		idx.chainParams)
-	if err != nil || len(addrs) == 0 {
+	if err != nil {
+		return
+	}
+
+	if isSStx && class == txscript.NullDataTy {
+		addr, err := stake.AddrFromSStxPkScrCommitment(pkScript, idx.chainParams)
+		if err != nil {
+			return
+		}
+
+		addrs = append(addrs, addr)
+	}
+
+	if len(addrs) == 0 {
 		return
 	}
 
 	for _, addr := range addrs {
-		addrKey, err := addrToKey(addr)
+		addrKey, err := addrToKey(addr, idx.chainParams)
 		if err != nil {
 			// Ignore unsupported address types.
 			continue
@@ -662,31 +716,67 @@ func (idx *AddrIndex) indexPkScript(data writeIndexData, scriptVersion uint16, p
 // indexBlock extract all of the standard addresses from all of the transactions
 // in the passed block and maps each of them to the assocaited transaction using
 // the passed map.
-func (idx *AddrIndex) indexBlock(data writeIndexData, block *dcrutil.Block, view *blockchain.UtxoViewpoint) {
-	for txIdx, tx := range block.Transactions() {
-		// Coinbases do not reference any inputs.  Since the block is
-		// required to have already gone through full validation, it has
-		// already been proven on the first transaction in the block is
-		// a coinbase.
-		if txIdx != 0 {
-			for _, txIn := range tx.MsgTx().TxIn {
-				// The view should always have the input since
-				// the index contract requires it, however, be
-				// safe and simply ignore any missing entries.
-				origin := &txIn.PreviousOutPoint
-				entry := view.LookupEntry(&origin.Hash)
-				if entry == nil {
-					continue
-				}
+func (idx *AddrIndex) indexBlock(data writeIndexData, block, parent *dcrutil.Block, view *blockchain.UtxoViewpoint) {
+	regularTxTreeValid := dcrutil.IsFlagSet16(block.MsgBlock().Header.VoteBits,
+		dcrutil.BlockValid)
+	if regularTxTreeValid {
+		for txIdx, tx := range parent.Transactions() {
+			// Coinbases do not reference any inputs.  Since the block is
+			// required to have already gone through full validation, it has
+			// already been proven on the first transaction in the block is
+			// a coinbase.
+			if txIdx != 0 {
+				for _, txIn := range tx.MsgTx().TxIn {
+					// The view should always have the input since
+					// the index contract requires it, however, be
+					// safe and simply ignore any missing entries.
+					origin := &txIn.PreviousOutPoint
+					entry := view.LookupEntry(&origin.Hash)
+					if entry == nil {
+						continue
+					}
 
-				version := entry.ScriptVersionByIndex(origin.Index)
-				pkScript := entry.PkScriptByIndex(origin.Index)
-				idx.indexPkScript(data, version, pkScript, txIdx)
+					version := entry.ScriptVersionByIndex(origin.Index)
+					pkScript := entry.PkScriptByIndex(origin.Index)
+					idx.indexPkScript(data, version, pkScript, txIdx, false)
+				}
+			}
+
+			for _, txOut := range tx.MsgTx().TxOut {
+				idx.indexPkScript(data, txOut.Version, txOut.PkScript, txIdx,
+					false)
 			}
 		}
+	}
 
+	stakeStartIdx := len(block.STransactions())
+	for txIdx, tx := range block.STransactions() {
+		isSSGen, _ := stake.IsSSGen(tx)
+		for i, txIn := range tx.MsgTx().TxIn {
+			// Skip stakebases.
+			if isSSGen && i == 0 {
+				continue
+			}
+
+			// The view should always have the input since
+			// the index contract requires it, however, be
+			// safe and simply ignore any missing entries.
+			origin := &txIn.PreviousOutPoint
+			entry := view.LookupEntry(&origin.Hash)
+			if entry == nil {
+				continue
+			}
+
+			version := entry.ScriptVersionByIndex(origin.Index)
+			pkScript := entry.PkScriptByIndex(origin.Index)
+			idx.indexPkScript(data, version, pkScript, txIdx+stakeStartIdx,
+				entry.TransactionType() == stake.TxTypeSStx)
+		}
+
+		isSStx, _ := stake.IsSStx(tx)
 		for _, txOut := range tx.MsgTx().TxOut {
-			idx.indexPkScript(data, txOut.Version, txOut.PkScript, txIdx)
+			idx.indexPkScript(data, txOut.Version, txOut.PkScript, txIdx,
+				isSStx)
 		}
 	}
 }
@@ -696,10 +786,23 @@ func (idx *AddrIndex) indexBlock(data writeIndexData, block *dcrutil.Block, view
 // the transactions in the block involve.
 //
 // This is part of the Indexer interface.
-func (idx *AddrIndex) ConnectBlock(dbTx database.Tx, block *dcrutil.Block, view *blockchain.UtxoViewpoint) error {
+func (idx *AddrIndex) ConnectBlock(dbTx database.Tx, block, parent *dcrutil.Block, view *blockchain.UtxoViewpoint) error {
 	// The offset and length of the transactions within the serialized
-	// block.
-	txLocs, stxLocs, err := block.TxLoc()
+	// block for the regular transactions of the previous block, if
+	// applicable.
+	regularTxTreeValid := dcrutil.IsFlagSet16(block.MsgBlock().Header.VoteBits,
+		dcrutil.BlockValid)
+	var parentTxLocs []wire.TxLoc
+	if regularTxTreeValid {
+		parentTxLocs, _, err := block.TxLoc()
+		if err != nil {
+			return err
+		}
+	}
+
+	// The offset and length of the transactions within the serialized
+	// block for the added stake transactions.
+	_, blockStxLocs, err := block.TxLoc()
 	if err != nil {
 		return err
 	}
@@ -712,14 +815,15 @@ func (idx *AddrIndex) ConnectBlock(dbTx database.Tx, block *dcrutil.Block, view 
 
 	// Build all of the address to transaction mappings in a local map.
 	addrsToTxns := make(writeIndexData)
-	idx.indexBlock(addrsToTxns, block, view)
+	idx.indexBlock(addrsToTxns, block, parent, view)
 
 	// Add all of the index entries for each address.
+	allTxLocs := append(parentTxLocs, blockStxLocs...)
 	addrIdxBucket := dbTx.Metadata().Bucket(addrIndexKey)
 	for addrKey, txIdxs := range addrsToTxns {
 		for _, txIdx := range txIdxs {
 			err := dbPutAddrIndexEntry(addrIdxBucket, addrKey,
-				blockID, txLocs[txIdx])
+				blockID, allTxLocs[txIdx])
 			if err != nil {
 				return err
 			}
@@ -734,10 +838,10 @@ func (idx *AddrIndex) ConnectBlock(dbTx database.Tx, block *dcrutil.Block, view 
 // each transaction in the block involve.
 //
 // This is part of the Indexer interface.
-func (idx *AddrIndex) DisconnectBlock(dbTx database.Tx, block *dcrutil.Block, view *blockchain.UtxoViewpoint) error {
+func (idx *AddrIndex) DisconnectBlock(dbTx database.Tx, block, parent *dcrutil.Block, view *blockchain.UtxoViewpoint) error {
 	// Build all of the address to transaction mappings in a local map.
 	addrsToTxns := make(writeIndexData)
-	idx.indexBlock(addrsToTxns, block, view)
+	idx.indexBlock(addrsToTxns, block, parent, view)
 
 	// Remove all of the index entries for each address.
 	bucket := dbTx.Metadata().Bucket(addrIndexKey)
@@ -763,7 +867,7 @@ func (idx *AddrIndex) DisconnectBlock(dbTx database.Tx, block *dcrutil.Block, vi
 //
 // This function is safe for concurrent access.
 func (idx *AddrIndex) TxRegionsForAddress(dbTx database.Tx, addr dcrutil.Address, numToSkip, numRequested uint32, reverse bool) ([]database.BlockRegion, uint32, error) {
-	addrKey, err := addrToKey(addr)
+	addrKey, err := addrToKey(addr, idx.chainParams)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -802,7 +906,7 @@ func (idx *AddrIndex) indexUnconfirmedAddresses(scriptVersion uint16, pkScript [
 		idx.chainParams)
 	for _, addr := range addresses {
 		// Ignore unsupported address types.
-		addrKey, err := addrToKey(addr)
+		addrKey, err := addrToKey(addr, idx.chainParams)
 		if err != nil {
 			continue
 		}
@@ -890,7 +994,7 @@ func (idx *AddrIndex) RemoveUnconfirmedTx(hash *chainhash.Hash) {
 // This function is safe for concurrent access.
 func (idx *AddrIndex) UnconfirmedTxnsForAddress(addr dcrutil.Address) []*dcrutil.Tx {
 	// Ignore unsupported address types.
-	addrKey, err := addrToKey(addr)
+	addrKey, err := addrToKey(addr, idx.chainParams)
 	if err != nil {
 		return nil
 	}
