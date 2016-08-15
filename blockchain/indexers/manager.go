@@ -20,6 +20,12 @@ const (
 	// in the index to in order for it to be set to an 'uninitialized'
 	// state.
 	uninitializedAddrIndexHeight = 0xFFFFFFFF
+
+	// Syncing width is the number of blocks to sync in a single database
+	// transaction when newly initializing the address index.
+	// TODO Make this a variable that is easily modified by the end user
+	// to increase/decrease cache size.
+	syncingWidth = 250
 )
 
 var (
@@ -402,64 +408,72 @@ func (m *Manager) Init(chain *blockchain.BlockChain) error {
 		bestHeight)
 
 	var cachedParent *dcrutil.Block
-	err = m.db.Update(func(dbTx database.Tx) error {
-		for height := lowestHeight + 1; height <= bestHeight; height++ {
-			// Get the parent of the block, unless it's already cached.
-			var parent *dcrutil.Block
-			if cachedParent == nil && height > 0 {
-				parent, err := blockchain.DBFetchBlockByHeight(dbTx, height-1)
-				if err != nil {
-					return err
-				}
-			} else {
-				parent = cachedParent
-			}
-
-			// Load the block for the height since it is required to index
-			// it.
-			block, err := blockchain.DBFetchBlockByHeight(dbTx, height)
-			if err != nil {
-				return err
-			}
-			cachedParent = block
-
-			// Connect the block for all indexes that need it.
-			var view *blockchain.UtxoViewpoint
-			for i, indexer := range m.enabledIndexes {
-				// Skip indexes that don't need to be updated with this
-				// block.
-				if indexerHeights[i] >= uint32(height) {
-					continue
-				}
-
-				// When the index requires all of the referenced
-				// txouts and they haven't been loaded yet, they
-				// need to be retrieved from the transaction
-				// index.
-				if view == nil && indexNeedsInputs(indexer) {
-					var err error
-					view, err = makeUtxoView(dbTx, block)
+	height := lowestHeight + 1
+	for height <= bestHeight {
+		err = m.db.Update(func(dbTx database.Tx) error {
+			for ; height <= bestHeight; height++ {
+				// Get the parent of the block, unless it's already cached.
+				var parent *dcrutil.Block
+				if cachedParent == nil && height > 0 {
+					parent, err := blockchain.DBFetchBlockByHeight(dbTx, height-1)
 					if err != nil {
 						return err
 					}
+				} else {
+					parent = cachedParent
 				}
-				errLocal := dbIndexConnectBlock(dbTx, indexer, block,
-					view)
-				if errLocal != nil {
+
+				// Load the block for the height since it is required to index
+				// it.
+				block, err := blockchain.DBFetchBlockByHeight(dbTx, height)
+				if err != nil {
 					return err
 				}
+				cachedParent = block
 
-				indexerHeights[i] = uint32(height)
+				// Connect the block for all indexes that need it.
+				var view *blockchain.UtxoViewpoint
+				for i, indexer := range m.enabledIndexes {
+					// Skip indexes that don't need to be updated with this
+					// block.
+					if indexerHeights[i] >= uint32(height) {
+						continue
+					}
+
+					// When the index requires all of the referenced
+					// txouts and they haven't been loaded yet, they
+					// need to be retrieved from the transaction
+					// index.
+					if view == nil && indexNeedsInputs(indexer) {
+						var err error
+						view, err = makeUtxoView(dbTx, block)
+						if err != nil {
+							return err
+						}
+					}
+					errLocal := dbIndexConnectBlock(dbTx, indexer, block,
+						view)
+					if errLocal != nil {
+						return err
+					}
+
+					indexerHeights[i] = uint32(height)
+				}
+
+				// Log indexing progress and break when we've synced
+				// the entire cache width.
+				if height%syncingWidth == 0 {
+					progressLogger.LogBlockHeight(block)
+					break
+				}
 			}
 
-			// Log indexing progress.
-			progressLogger.LogBlockHeight(block)
+			return nil
+		})
+		if err != nil {
+			return err
 		}
 
-		return nil
-	})
-	if err != nil {
-		return err
 	}
 
 	log.Infof("Indexes caught up to height %d", bestHeight)
