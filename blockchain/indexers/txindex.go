@@ -224,13 +224,37 @@ func dbFetchTxIndexEntry(dbTx database.Tx, txHash *chainhash.Hash) (*database.Bl
 
 // dbAddTxIndexEntries uses an existing database transaction to add a
 // transaction index entry for every transaction in the passed block.
-func dbAddTxIndexEntries(dbTx database.Tx, block *dcrutil.Block, blockID uint32) error {
+func dbAddTxIndexEntries(dbTx database.Tx, block, parent *dcrutil.Block, blockID uint32) error {
 	// The offset and length of the transactions within the serialized
-	// block.
-	txLocs, stxLocs, err := block.TxLoc()
+	// block, for the regular transactions of the parent (if added)
+	// and the stake transactions of the current block.
+	regularTxTreeValid := dcrutil.IsFlagSet16(block.MsgBlock().Header.VoteBits,
+		dcrutil.BlockValid)
+	var parentRegularTxs []*dcrutil.Tx
+	var parentTxLocs []wire.TxLoc
+	var parentBlockID uint32
+	if regularTxTreeValid {
+		var err error
+		parentRegularTxs = parent.Transactions()
+
+		parentTxLocs, _, err = parent.TxLoc()
+		if err != nil {
+			return err
+		}
+
+		parentBlockID, err = dbFetchBlockIDByHash(dbTx, parent.Sha())
+		if err != nil {
+			return err
+		}
+	}
+	_, blockStxLocs, err := block.TxLoc()
 	if err != nil {
 		return err
 	}
+
+	allTxs := append(parentRegularTxs, block.STransactions()...)
+	allTxsLocs := append(parentTxLocs, blockStxLocs...)
+	stakeTxStartIdx := len(parentRegularTxs)
 
 	// As an optimization, allocate a single slice big enough to hold all
 	// of the serialized transaction index entries for the block and
@@ -239,8 +263,15 @@ func dbAddTxIndexEntries(dbTx database.Tx, block *dcrutil.Block, blockID uint32)
 	// cuts down on the number of required allocations.
 	offset := 0
 	serializedValues := make([]byte, len(block.Transactions())*txEntrySize)
-	for i, tx := range block.Transactions() {
-		putTxIndexEntry(serializedValues[offset:], blockID, txLocs[i])
+	blockIDToUse := parentBlockID
+	for i, tx := range allTxs {
+		// Switch to using the newest block ID for the stake transactions,
+		// since these are not from the parent.
+		if i == stakeTxStartIdx {
+			blockIDToUse = blockID
+		}
+
+		putTxIndexEntry(serializedValues[offset:], blockIDToUse, allTxsLocs[i])
 		endOffset := offset + txEntrySize
 		err := dbPutTxIndexEntry(dbTx, tx.Sha(),
 			serializedValues[offset:endOffset:endOffset])
@@ -268,8 +299,18 @@ func dbRemoveTxIndexEntry(dbTx database.Tx, txHash *chainhash.Hash) error {
 
 // dbRemoveTxIndexEntries uses an existing database transaction to remove the
 // latest transaction entry for every transaction in the passed block.
-func dbRemoveTxIndexEntries(dbTx database.Tx, block *dcrutil.Block) error {
-	for _, tx := range block.Transactions() {
+func dbRemoveTxIndexEntries(dbTx database.Tx, block, parent *dcrutil.Block) error {
+	regularTxTreeValid := dcrutil.IsFlagSet16(block.MsgBlock().Header.VoteBits,
+		dcrutil.BlockValid)
+	if regularTxTreeValid {
+		for _, tx := range parent.Transactions() {
+			err := dbRemoveTxIndexEntry(dbTx, tx.Sha())
+			if err != nil {
+				return err
+			}
+		}
+	}
+	for _, tx := range block.STransactions() {
 		err := dbRemoveTxIndexEntry(dbTx, tx.Sha())
 		if err != nil {
 			return err
@@ -388,11 +429,11 @@ func (idx *TxIndex) Create(dbTx database.Tx) error {
 // for every transaction in the passed block.
 //
 // This is part of the Indexer interface.
-func (idx *TxIndex) ConnectBlock(dbTx database.Tx, block *dcrutil.Block, view *blockchain.UtxoViewpoint) error {
+func (idx *TxIndex) ConnectBlock(dbTx database.Tx, block, parent *dcrutil.Block, view *blockchain.UtxoViewpoint) error {
 	// Increment the internal block ID to use for the block being connected
 	// and add all of the transactions in the block to the index.
 	newBlockID := idx.curBlockID + 1
-	if err := dbAddTxIndexEntries(dbTx, block, newBlockID); err != nil {
+	if err := dbAddTxIndexEntries(dbTx, block, parent, newBlockID); err != nil {
 		return err
 	}
 
@@ -411,9 +452,9 @@ func (idx *TxIndex) ConnectBlock(dbTx database.Tx, block *dcrutil.Block, view *b
 // hash-to-transaction mapping for every transaction in the block.
 //
 // This is part of the Indexer interface.
-func (idx *TxIndex) DisconnectBlock(dbTx database.Tx, block *dcrutil.Block, view *blockchain.UtxoViewpoint) error {
+func (idx *TxIndex) DisconnectBlock(dbTx database.Tx, block, parent *dcrutil.Block, view *blockchain.UtxoViewpoint) error {
 	// Remove all of the transactions in the block from the index.
-	if err := dbRemoveTxIndexEntries(dbTx, block); err != nil {
+	if err := dbRemoveTxIndexEntries(dbTx, block, parent); err != nil {
 		return err
 	}
 

@@ -794,7 +794,8 @@ func (idx *AddrIndex) ConnectBlock(dbTx database.Tx, block, parent *dcrutil.Bloc
 		dcrutil.BlockValid)
 	var parentTxLocs []wire.TxLoc
 	if regularTxTreeValid {
-		parentTxLocs, _, err := block.TxLoc()
+		var err error
+		parentTxLocs, _, err = parent.TxLoc()
 		if err != nil {
 			return err
 		}

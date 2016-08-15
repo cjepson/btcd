@@ -16,8 +16,8 @@ import (
 	"runtime/pprof"
 	"time"
 
-	"github.com/decred/dcrd/limits"
 	"github.com/decred/dcrd/blockchain/indexers"
+	"github.com/decred/dcrd/limits"
 )
 
 var (
@@ -145,7 +145,7 @@ func dcrdMain(serverChan chan<- *server) error {
 	// drops the address index since it relies on it.
 	if cfg.DropAddrIndex {
 		if err := indexers.DropAddrIndex(db); err != nil {
-			btcdLog.Errorf("%v", err)
+			dcrdLog.Errorf("%v", err)
 			return err
 		}
 
@@ -153,7 +153,7 @@ func dcrdMain(serverChan chan<- *server) error {
 	}
 	if cfg.DropTxIndex {
 		if err := indexers.DropTxIndex(db); err != nil {
-			btcdLog.Errorf("%v", err)
+			dcrdLog.Errorf("%v", err)
 			return err
 		}
 

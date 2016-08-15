@@ -167,20 +167,20 @@ type commandHandler func(*rpcServer, interface{}, <-chan struct{}) (interface{},
 var rpcHandlers map[string]commandHandler
 var rpcHandlersBeforeInit = map[string]commandHandler{
 	"addnode":               handleAddNode,
-	"createrawsstx":        handleCreateRawSStx,
-	"createrawssgentx":     handleCreateRawSSGenTx,
-	"createrawssrtx":       handleCreateRawSSRtx,
+	"createrawsstx":         handleCreateRawSStx,
+	"createrawssgentx":      handleCreateRawSSGenTx,
+	"createrawssrtx":        handleCreateRawSSRtx,
 	"createrawtransaction":  handleCreateRawTransaction,
 	"debuglevel":            handleDebugLevel,
 	"decoderawtransaction":  handleDecodeRawTransaction,
 	"decodescript":          handleDecodeScript,
-	"estimatefee":          handleEstimateFee,
-	"estimatestakediff":    handleEstimateStakeDiff,
-	"existsaddress":        handleExistsAddress,
-	"existsaddresses":      handleExistsAddresses,
-	"existsliveticket":     handleExistsLiveTicket,
-	"existslivetickets":    handleExistsLiveTickets,
-	"existsmempooltxs":     handleExistsMempoolTxs,
+	"estimatefee":           handleEstimateFee,
+	"estimatestakediff":     handleEstimateStakeDiff,
+	"existsaddress":         handleExistsAddress,
+	"existsaddresses":       handleExistsAddresses,
+	"existsliveticket":      handleExistsLiveTicket,
+	"existslivetickets":     handleExistsLiveTickets,
+	"existsmempooltxs":      handleExistsMempoolTxs,
 	"generate":              handleGenerate,
 	"getaddednodeinfo":      handleGetAddedNodeInfo,
 	"getbestblock":          handleGetBestBlock,
@@ -190,7 +190,7 @@ var rpcHandlersBeforeInit = map[string]commandHandler{
 	"getblockhash":          handleGetBlockHash,
 	"getblockheader":        handleGetBlockHeader,
 	"getblocktemplate":      handleGetBlockTemplate,
-	"getcoinsupply":        handleGetCoinSupply,
+	"getcoinsupply":         handleGetCoinSupply,
 	"getconnectioncount":    handleGetConnectionCount,
 	"getcurrentnet":         handleGetCurrentNet,
 	"getdifficulty":         handleGetDifficulty,
@@ -204,26 +204,26 @@ var rpcHandlersBeforeInit = map[string]commandHandler{
 	"getpeerinfo":           handleGetPeerInfo,
 	"getrawmempool":         handleGetRawMempool,
 	"getrawtransaction":     handleGetRawTransaction,
-	"getstakedifficulty":   handleGetStakeDifficulty,
-	"getticketpoolvalue":   handleGetTicketPoolValue,
+	"getstakedifficulty":    handleGetStakeDifficulty,
+	"getticketpoolvalue":    handleGetTicketPoolValue,
 	"gettxout":              handleGetTxOut,
 	"getwork":               handleGetWork,
 	"help":                  handleHelp,
-	"livetickets":          handleLiveTickets,
-	"missedtickets":        handleMissedTickets,
+	"livetickets":           handleLiveTickets,
+	"missedtickets":         handleMissedTickets,
 	"node":                  handleNode,
 	"ping":                  handlePing,
 	"searchrawtransactions": handleSearchRawTransactions,
-	"rebroadcastmissed":    handleRebroadcastMissed,
-	"rebroadcastwinners":   handleRebroadcastWinners,
+	"rebroadcastmissed":     handleRebroadcastMissed,
+	"rebroadcastwinners":    handleRebroadcastWinners,
 	"sendrawtransaction":    handleSendRawTransaction,
 	"setgenerate":           handleSetGenerate,
 	"stop":                  handleStop,
 	"submitblock":           handleSubmitBlock,
-	"ticketfeeinfo":        handleTicketFeeInfo,
-	"ticketsforaddress":    handleTicketsForAddress,
-	"ticketvwap":           handleTicketVWAP,
-	"txfeeinfo":            handleTxFeeInfo,
+	"ticketfeeinfo":         handleTicketFeeInfo,
+	"ticketsforaddress":     handleTicketsForAddress,
+	"ticketvwap":            handleTicketVWAP,
+	"txfeeinfo":             handleTxFeeInfo,
 	"validateaddress":       handleValidateAddress,
 	"verifychain":           handleVerifyChain,
 	"verifymessage":         handleVerifyMessage,
@@ -370,8 +370,8 @@ func rpcDecodeHexError(gotHex string) *dcrjson.RPCError {
 // rpcNoTxInfoError is a convenience function for returning a nicely formatted
 // RPC error which indiactes there is no information available for the provided
 // transaction hash.
-func rpcNoTxInfoError(txHash *wire.ShaHash) *btcjson.RPCError {
-	return btcjson.NewRPCError(btcjson.ErrRPCNoTxInfo,
+func rpcNoTxInfoError(txHash *chainhash.Hash) *dcrjson.RPCError {
+	return dcrjson.NewRPCError(dcrjson.ErrRPCNoTxInfo,
 		fmt.Sprintf("No information available about transaction %v",
 			txHash))
 }
@@ -1372,120 +1372,122 @@ func stringInSlice(a string, list []string) bool {
 
 // createVinList returns a slice of JSON objects for the inputs of the passed
 // transaction.
+/*
 func createVinListPrevOut(s *rpcServer, mtx *wire.MsgTx,
 	chainParams *chaincfg.Params, vinExtra int,
 	filterAddrMap map[string]struct{}) []dcrjson.VinPrevOut {
-	/*
-		// Use a dynamically sized list to accommodate the address filter.
-		vinList := make([]dcrjson.VinPrevOut, 0, len(mtx.TxIn))
 
-		// Coinbase transactions only have a single txin by definition.
-		if blockchain.IsCoinBaseTx(mtx) {
-			// Include tx only if filterAddrMap is empty because coinbase
-			// has no address and so would never match a non-empty filter.
-			if len(filterAddrMap) != 0 {
-				return vinList
-			}
+	// Use a dynamically sized list to accommodate the address filter.
+	vinList := make([]dcrjson.VinPrevOut, 0, len(mtx.TxIn))
 
-			var vinEntry dcrjson.VinPrevOut
-			txIn := mtx.TxIn[0]
-			vinEntry.Coinbase = hex.EncodeToString(txIn.SignatureScript)
-			vinEntry.Sequence = txIn.Sequence
-			AmountIn: dcrjson.Float64(dcrutil.Amount(txIn.ValueIn).ToCoin()),
-			Sequence: txIn.Sequence,
-		}
-			vinList = append(vinList, vinEntry)
+	// Coinbase transactions only have a single txin by definition.
+	if blockchain.IsCoinBaseTx(mtx) {
+		// Include tx only if filterAddrMap is empty because coinbase
+		// has no address and so would never match a non-empty filter.
+		if len(filterAddrMap) != 0 {
 			return vinList
 		}
 
-		// Lookup all of the referenced transactions needed to populate the
-		// previous output information if requested.
-		var txStore blockchain.TxStore
-		if vinExtra != 0 || len(filterAddrMap) > 0 {
-			tx := dcrutil.NewTx(mtx)
-			txStoreNew, err := s.server.txMemPool.fetchInputTransactions(tx, true)
-			if err == nil {
-				txStore = txStoreNew
-			}
-		}
+		var vinEntry dcrjson.VinPrevOut
+		txIn := mtx.TxIn[0]
+		vinEntry.Coinbase = hex.EncodeToString(txIn.SignatureScript)
+		vinEntry.Sequence = txIn.Sequence
+		vinEntry.AmountIn = dcrjson.Float64(dcrutil.Amount(txIn.ValueIn).ToCoin())
+		vinEntry.Sequence = txIn.Sequence
 
-		for _, txIn := range mtx.TxIn {
-			// The disassembled string will contain [error] inline
-			// if the script doesn't fully parse, so ignore the
-			// error here.
-			disbuf, _ := txscript.DisasmString(txIn.SignatureScript)
-
-			txData := txStore[txIn.PreviousOutPoint.Hash]
-			if txData == nil {
-				continue
-			}
-
-			originTxOut := txData.Tx.MsgTx().TxOut[txIn.PreviousOutPoint.Index]
-
-			// Ignore the error here since an error means the script
-			// couldn't parse and there is no additional information about
-			// it anyways.
-			_, addrs, _, _ := txscript.ExtractPkScriptAddrs(
-				txscript.DefaultScriptVersion, originTxOut.PkScript, chainParams)
-
-			// Encode the addresses while checking if the address passes the
-			// filter when needed.
-			passesFilter := len(filterAddrMap) == 0
-			encodedAddrs := make([]string, len(addrs))
-			for j, addr := range addrs {
-				encodedAddr := addr.EncodeAddress()
-				encodedAddrs[j] = encodedAddr
-
-				// No need to check the map again if the filter already
-				// passes.
-				if passesFilter {
-					continue
-				}
-				if _, exists := filterAddrMap[encodedAddr]; exists {
-					passesFilter = true
-				}
-			}
-
-			if !passesFilter {
-				continue
-			}
-
-			var vinEntry dcrjson.VinPrevOut
-			vinEntry.Txid = txIn.PreviousOutPoint.Hash.String()
-			vinEntry.Vout = txIn.PreviousOutPoint.Index
-			vinEntry.Tree = txIn.PreviousOutPoint.Tree
-
-			// Use the null block index as a flag to indicate if
-			// it was found in the mempool. If so, do not set the
-			// Vin entries for BlockHeight and BlockIndex.
-			if txIn.BlockIndex != wire.NullBlockIndex {
-				amtCoin := dcrutil.Amount(txIn.ValueIn).ToCoin()
-				vinEntry.AmountIn = &amtCoin
-				vinEntry.BlockHeight = &txIn.BlockHeight
-				vinEntry.BlockIndex = &txIn.BlockIndex
-			}
-
-			vinEntry.Sequence = txIn.Sequence
-			vinEntry.ScriptSig = &dcrjson.ScriptSig{
-				Asm: disbuf,
-				Hex: hex.EncodeToString(txIn.SignatureScript),
-			}
-
-			// Only populate previous output information if requested
-			if vinExtra != 0 {
-				vinEntry.PrevOut = &dcrjson.PrevOut{
-					Addresses: encodedAddrs,
-					Value:     dcrutil.Amount(originTxOut.Value).ToCoin(),
-				}
-			}
-
-			vinList = append(vinList, vinEntry)
-		}
-
+		vinList = append(vinList, vinEntry)
 		return vinList
-	*/
+	}
+
+	// Lookup all of the referenced transactions needed to populate the
+	// previous output information if requested.
+	var txStore blockchain.TxStore
+	if vinExtra != 0 || len(filterAddrMap) > 0 {
+		tx := dcrutil.NewTx(mtx)
+		txStoreNew, err := s.server.txMemPool.fetchInputTransactions(tx, true)
+		if err == nil {
+			txStore = txStoreNew
+		}
+	}
+
+	for _, txIn := range mtx.TxIn {
+		// The disassembled string will contain [error] inline
+		// if the script doesn't fully parse, so ignore the
+		// error here.
+		disbuf, _ := txscript.DisasmString(txIn.SignatureScript)
+
+		txData := txStore[txIn.PreviousOutPoint.Hash]
+		if txData == nil {
+			continue
+		}
+
+		originTxOut := txData.Tx.MsgTx().TxOut[txIn.PreviousOutPoint.Index]
+
+		// Ignore the error here since an error means the script
+		// couldn't parse and there is no additional information about
+		// it anyways.
+		_, addrs, _, _ := txscript.ExtractPkScriptAddrs(
+			txscript.DefaultScriptVersion, originTxOut.PkScript, chainParams)
+
+		// Encode the addresses while checking if the address passes the
+		// filter when needed.
+		passesFilter := len(filterAddrMap) == 0
+		encodedAddrs := make([]string, len(addrs))
+		for j, addr := range addrs {
+			encodedAddr := addr.EncodeAddress()
+			encodedAddrs[j] = encodedAddr
+
+			// No need to check the map again if the filter already
+			// passes.
+			if passesFilter {
+				continue
+			}
+			if _, exists := filterAddrMap[encodedAddr]; exists {
+				passesFilter = true
+			}
+		}
+
+		if !passesFilter {
+			continue
+		}
+
+		var vinEntry dcrjson.VinPrevOut
+		vinEntry.Txid = txIn.PreviousOutPoint.Hash.String()
+		vinEntry.Vout = txIn.PreviousOutPoint.Index
+		vinEntry.Tree = txIn.PreviousOutPoint.Tree
+
+		// Use the null block index as a flag to indicate if
+		// it was found in the mempool. If so, do not set the
+		// Vin entries for BlockHeight and BlockIndex.
+		if txIn.BlockIndex != wire.NullBlockIndex {
+			amtCoin := dcrutil.Amount(txIn.ValueIn).ToCoin()
+			vinEntry.AmountIn = &amtCoin
+			vinEntry.BlockHeight = &txIn.BlockHeight
+			vinEntry.BlockIndex = &txIn.BlockIndex
+		}
+
+		vinEntry.Sequence = txIn.Sequence
+		vinEntry.ScriptSig = &dcrjson.ScriptSig{
+			Asm: disbuf,
+			Hex: hex.EncodeToString(txIn.SignatureScript),
+		}
+
+		// Only populate previous output information if requested
+		if vinExtra != 0 {
+			vinEntry.PrevOut = &dcrjson.PrevOut{
+				Addresses: encodedAddrs,
+				Value:     dcrutil.Amount(originTxOut.Value).ToCoin(),
+			}
+		}
+
+		vinList = append(vinList, vinEntry)
+	}
+
+	return vinList
+
 	return nil
 }
+*/
 
 // createVoutList returns a slice of JSON objects for the outputs of the passed
 // transaction.
@@ -1580,6 +1582,7 @@ func createVoutList(mtx *wire.MsgTx, chainParams *chaincfg.Params,
 
 // createSearchRawTransactionsResult converts the passed transaction and associated parameters
 // to a raw transaction JSON object, possibly with vin.PrevOut section.
+/*
 func createSearchRawTransactionsResult(s *rpcServer, chainParams *chaincfg.Params,
 	mtx *wire.MsgTx, txHash string, blkHeader *wire.BlockHeader, blkHash string,
 	blkHeight int64, chainHeight int64, vinExtra int,
@@ -1615,6 +1618,7 @@ func createSearchRawTransactionsResult(s *rpcServer, chainParams *chaincfg.Param
 
 	return txReply, nil
 }
+*/
 
 // createTxRawResult converts the passed transaction and associated parameters
 // to a raw transaction JSON object.
@@ -1632,7 +1636,7 @@ func createTxRawResult(chainParams *chaincfg.Params, mtx *wire.MsgTx,
 		Hex:         mtxHex,
 		Txid:        txHash,
 		Vin:         createVinList(mtx),
-		Vout:     createVoutList(mtx, chainParams, nil),
+		Vout:        createVoutList(mtx, chainParams, nil),
 		Version:     mtx.Version,
 		LockTime:    mtx.LockTime,
 		Expiry:      mtx.Expiry,
@@ -3839,148 +3843,148 @@ func handleGetRawMempool(s *rpcServer, cmd interface{}, closeChan <-chan struct{
 // handleGetRawTransaction implements the getrawtransaction command.
 func handleGetRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	/*
-		TODO requires txindex
-		c := cmd.(*dcrjson.GetRawTransactionCmd)
+			TODO requires txindex
+			c := cmd.(*dcrjson.GetRawTransactionCmd)
 
-		// Convert the provided transaction hash hex to a ShaHash.
-		txHash, err := chainhash.NewHashFromStr(c.Txid)
-		if err != nil {
-			return nil, rpcDecodeHexError(c.Txid)
-		}
-
-		verbose := false
-		if c.Verbose != nil {
-			verbose = *c.Verbose != 0
-		}
-
-		var blkHash *chainhash.Hash
-		var blkHeight int64
-		var blkIndex uint32
-		var tip *dcrutil.Block
-		needsVotes := false
-
-		// Try to fetch the transaction from the memory pool.
-		tx, err := s.server.txMemPool.FetchTransaction(txHash)
-		if err != nil {
-		txIndex := s.server.txIndex
-		if txIndex == nil {
-			return nil, &btcjson.RPCError{
-				Code: btcjson.ErrRPCNoTxInfo,
-				Message: "The transaction index must be " +
-					"enabled to query the blockchain " +
-					"(specify --txindex)",
+			// Convert the provided transaction hash hex to a ShaHash.
+			txHash, err := chainhash.NewHashFromStr(c.Txid)
+			if err != nil {
+				return nil, rpcDecodeHexError(c.Txid)
 			}
-		}
 
-		// Look up the location of the transaction.
-		blockRegion, err := txIndex.TxBlockRegion(txHash)
-		if err != nil {
-			context := "Failed to retrieve transaction location"
-			return nil, internalRPCError(err.Error(), context)
-		}
-		if blockRegion == nil {
-			return nil, rpcNoTxInfoError(txHash)
-		}
-
-		// Load the raw transaction bytes from the database.
-		var txBytes []byte
-		err = s.server.db.View(func(dbTx database.Tx) error {
-			var err error
-			txBytes, err = dbTx.FetchBlockRegion(blockRegion)
-			return err
-		})
-		if err != nil {
-			return nil, rpcNoTxInfoError(txHash)
-					}
-
-		// When the verbose flag isn't set, simply return the serialized
-		// transaction as a hex-encoded string.  This is done here to
-		// avoid deserializing it only to reserialize it again later.
-		if !verbose {
-			return hex.EncodeToString(txBytes), nil
-		}
-			} else { // It was successfully fetched from the DB.
-				lastTx := txList[len(txList)-1]
-				mtx = lastTx.Tx
-				blkHash = lastTx.BlkSha
-				blkHeight = lastTx.Height
-				blkIndex = lastTx.Index
+			verbose := false
+			if c.Verbose != nil {
+				verbose = *c.Verbose != 0
 			}
+
+			var blkHash *chainhash.Hash
+			var blkHeight int64
+			var blkIndex uint32
+			var tip *dcrutil.Block
+			needsVotes := false
+
+			// Try to fetch the transaction from the memory pool.
+			tx, err := s.server.txMemPool.FetchTransaction(txHash)
+			if err != nil {
+			txIndex := s.server.txIndex
+			if txIndex == nil {
+				return nil, &dcrjson.RPCError{
+					Code: dcrjson.ErrRPCNoTxInfo,
+					Message: "The transaction index must be " +
+						"enabled to query the blockchain " +
+						"(specify --txindex)",
+				}
+			}
+
+			// Look up the location of the transaction.
+			blockRegion, err := txIndex.TxBlockRegion(txHash)
+			if err != nil {
+				context := "Failed to retrieve transaction location"
+				return nil, internalRPCError(err.Error(), context)
+			}
+			if blockRegion == nil {
+				return nil, rpcNoTxInfoError(txHash)
+			}
+
+			// Load the raw transaction bytes from the database.
+			var txBytes []byte
+			err = s.server.db.View(func(dbTx database.Tx) error {
+				var err error
+				txBytes, err = dbTx.FetchBlockRegion(blockRegion)
+				return err
+			})
+			if err != nil {
+				return nil, rpcNoTxInfoError(txHash)
+						}
+
+			// When the verbose flag isn't set, simply return the serialized
+			// transaction as a hex-encoded string.  This is done here to
+			// avoid deserializing it only to reserialize it again later.
+			if !verbose {
+				return hex.EncodeToString(txBytes), nil
+			}
+				} else { // It was successfully fetched from the DB.
+					lastTx := txList[len(txList)-1]
+					mtx = lastTx.Tx
+					blkHash = lastTx.BlkSha
+					blkHeight = lastTx.Height
+					blkIndex = lastTx.Index
+				}
+			} else {
+				mtx = tx.MsgTx()
+			}
+
+			// Grab the block height.
+			blkHash = blockRegion.Hash
+			blkHeight, err = s.chain.BlockHeightByHash(blkHash)
+			if err != nil {
+				context := "Failed to retrieve block height"
+				return nil, internalRPCError(err.Error(), context)
+			}
+
+			// Deserialize the transaction
+			var msgTx wire.MsgTx
+			err = msgTx.Deserialize(bytes.NewReader(txBytes))
+			if err != nil {
+				context := "Failed to deserialize transaction"
+				return nil, internalRPCError(err.Error(), context)
+			}
+			mtx = &msgTx
 		} else {
+			// When the verbose flag isn't set, simply return the
+			// network-serialized transaction as a hex-encoded string.
+			if !verbose {
+				// Note that this is intentionally not directly
+				// returning because the first return value is a
+				// string and it would result in returning an empty
+				// string to the client instead of nothing (nil) in the
+				// case of an error.
+				mtxHex, err := messageToHex(tx.MsgTx())
+				if err != nil {
+					return nil, err
+				}
+				return mtxHex, nil
+			}
+
 			mtx = tx.MsgTx()
 		}
 
-		// Grab the block height.
-		blkHash = blockRegion.Hash
-		blkHeight, err = s.chain.BlockHeightByHash(blkHash)
-		if err != nil {
-			context := "Failed to retrieve block height"
-			return nil, internalRPCError(err.Error(), context)
+			// The verbose flag is set, so generate the JSON object and return it.
+		var blkHeader *wire.BlockHeader
+		var blkHashStr string
+		var chainHeight int32
+		if blkHash != nil {
+			// Load the raw header bytes.
+			var headerBytes []byte
+			err := s.server.db.View(func(dbTx database.Tx) error {
+				var err error
+				headerBytes, err = dbTx.FetchBlockHeader(blkHash)
+				return err
+			})
+			if err != nil {
+				context := "Failed to fetch block header"
+				return nil, internalRPCError(err.Error(), context)
+			}
+
+			// Deserialize the header.
+			var header wire.BlockHeader
+			err = header.Deserialize(bytes.NewReader(headerBytes))
+			if err != nil {
+				context := "Failed to deserialize block header"
+				return nil, internalRPCError(err.Error(), context)
+			}
+
+			blkHeader = &header
+			blkHashStr = blkHash.String()
+			chainHeight = s.chain.BestSnapshot().Height
 		}
 
-		// Deserialize the transaction
-		var msgTx wire.MsgTx
-		err = msgTx.Deserialize(bytes.NewReader(txBytes))
-		if err != nil {
-			context := "Failed to deserialize transaction"
-			return nil, internalRPCError(err.Error(), context)
-		}
-		mtx = &msgTx
-	} else {
-		// When the verbose flag isn't set, simply return the
-		// network-serialized transaction as a hex-encoded string.
-		if !verbose {
-			// Note that this is intentionally not directly
-			// returning because the first return value is a
-			// string and it would result in returning an empty
-			// string to the client instead of nothing (nil) in the
-			// case of an error.
-			mtxHex, err := messageToHex(tx.MsgTx())
+		rawTxn, err := createTxRawResult(s.server.chainParams, mtx,
+			txHash.String(), blkHeader, blkHashStr, blkHeight, chainHeight)
 			if err != nil {
 				return nil, err
 			}
-			return mtxHex, nil
-		}
-
-		mtx = tx.MsgTx()
-	}
-
-		// The verbose flag is set, so generate the JSON object and return it.
-	var blkHeader *wire.BlockHeader
-	var blkHashStr string
-	var chainHeight int32
-	if blkHash != nil {
-		// Load the raw header bytes.
-		var headerBytes []byte
-		err := s.server.db.View(func(dbTx database.Tx) error {
-			var err error
-			headerBytes, err = dbTx.FetchBlockHeader(blkHash)
-			return err
-		})
-		if err != nil {
-			context := "Failed to fetch block header"
-			return nil, internalRPCError(err.Error(), context)
-		}
-
-		// Deserialize the header.
-		var header wire.BlockHeader
-		err = header.Deserialize(bytes.NewReader(headerBytes))
-		if err != nil {
-			context := "Failed to deserialize block header"
-			return nil, internalRPCError(err.Error(), context)
-		}
-
-		blkHeader = &header
-		blkHashStr = blkHash.String()
-		chainHeight = s.chain.BestSnapshot().Height
-	}
-
-	rawTxn, err := createTxRawResult(s.server.chainParams, mtx,
-		txHash.String(), blkHeader, blkHashStr, blkHeight, chainHeight)
-		if err != nil {
-			return nil, err
-		}
-		return *rawTxn, nil
+			return *rawTxn, nil
 	*/
 	return nil, nil
 }
@@ -4680,8 +4684,8 @@ func handleRebroadcastWinners(s *rpcServer, cmd interface{}, closeChan <-chan st
 // possible.
 type retrievedTx struct {
 	txBytes []byte
-	blkHash *wire.ShaHash // Only set when transaction is in a block.
-	tx      *btcutil.Tx
+	blkHash *chainhash.Hash // Only set when transaction is in a block.
+	tx      *dcrutil.Tx
 }
 
 // fetchInputTxos fetches the outpoints from all transactions referenced by the
@@ -4752,7 +4756,7 @@ func fetchInputTxos(s *rpcServer, tx *wire.MsgTx) (map[wire.OutPoint]wire.TxOut,
 
 // createVinListPrevOut returns a slice of JSON objects for the inputs of the
 // passed transaction.
-func createVinListPrevOut(s *rpcServer, mtx *wire.MsgTx, chainParams *chaincfg.Params, vinExtra bool, filterAddrMap map[string]struct{}) ([]btcjson.VinPrevOut, error) {
+func createVinListPrevOut(s *rpcServer, mtx *wire.MsgTx, chainParams *chaincfg.Params, vinExtra bool, filterAddrMap map[string]struct{}) ([]dcrjson.VinPrevOut, error) {
 	// Coinbase transactions only have a single txin by definition.
 	if blockchain.IsCoinBaseTx(mtx) {
 		// Only include the transaction if the filter map is empty
@@ -4763,14 +4767,16 @@ func createVinListPrevOut(s *rpcServer, mtx *wire.MsgTx, chainParams *chaincfg.P
 		}
 
 		txIn := mtx.TxIn[0]
-		vinList := make([]btcjson.VinPrevOut, 1)
+		vinList := make([]dcrjson.VinPrevOut, 1)
 		vinList[0].Coinbase = hex.EncodeToString(txIn.SignatureScript)
+		amountIn := dcrutil.Amount(txIn.ValueIn).ToCoin()
+		vinList[0].AmountIn = &amountIn
 		vinList[0].Sequence = txIn.Sequence
 		return vinList, nil
 	}
 
 	// Use a dynamically sized list to accomodate the address filter.
-	vinList := make([]btcjson.VinPrevOut, 0, len(mtx.TxIn))
+	vinList := make([]dcrjson.VinPrevOut, 0, len(mtx.TxIn))
 
 	// Lookup all of the referenced transaction outputs needed to populate
 	// the previous output information if requested.
@@ -4793,11 +4799,16 @@ func createVinListPrevOut(s *rpcServer, mtx *wire.MsgTx, chainParams *chaincfg.P
 		// previous output details which will be added later if
 		// requested and available.
 		prevOut := &txIn.PreviousOutPoint
-		vinEntry := btcjson.VinPrevOut{
-			Txid:     prevOut.Hash.String(),
-			Vout:     prevOut.Index,
-			Sequence: txIn.Sequence,
-			ScriptSig: &btcjson.ScriptSig{
+		amountIn := dcrutil.Amount(txIn.ValueIn).ToCoin()
+		vinEntry := dcrjson.VinPrevOut{
+			Txid:        prevOut.Hash.String(),
+			Vout:        prevOut.Index,
+			Tree:        prevOut.Tree,
+			AmountIn:    &amountIn,
+			BlockHeight: &txIn.BlockHeight,
+			BlockIndex:  &txIn.BlockIndex,
+			Sequence:    txIn.Sequence,
+			ScriptSig: &dcrjson.ScriptSig{
 				Asm: disbuf,
 				Hex: hex.EncodeToString(txIn.SignatureScript),
 			},
@@ -4823,7 +4834,7 @@ func createVinListPrevOut(s *rpcServer, mtx *wire.MsgTx, chainParams *chaincfg.P
 		// Ignore the error here since an error means the script
 		// couldn't parse and there is no additional information about
 		// it anyways.
-		_, addrs, _, _ := txscript.ExtractPkScriptAddrs(
+		_, addrs, _, _ := txscript.ExtractPkScriptAddrs(originTxOut.Version,
 			originTxOut.PkScript, chainParams)
 
 		// Encode the addresses while checking if the address passes the
@@ -4857,9 +4868,9 @@ func createVinListPrevOut(s *rpcServer, mtx *wire.MsgTx, chainParams *chaincfg.P
 		// requested.
 		if vinExtra {
 			vinListEntry := &vinList[len(vinList)-1]
-			vinListEntry.PrevOut = &btcjson.PrevOut{
+			vinListEntry.PrevOut = &dcrjson.PrevOut{
 				Addresses: encodedAddrs,
-				Value:     btcutil.Amount(originTxOut.Value).ToBTC(),
+				Value:     dcrutil.Amount(originTxOut.Value).ToCoin(),
 			}
 		}
 	}
@@ -4870,7 +4881,7 @@ func createVinListPrevOut(s *rpcServer, mtx *wire.MsgTx, chainParams *chaincfg.P
 // fetchMempoolTxnsForAddress queries the address index for all unconfirmed
 // transactions that involve the provided address.  The results will be limited
 // by the number to skip and the number requested.
-func fetchMempoolTxnsForAddress(s *rpcServer, addr btcutil.Address, numToSkip, numRequested uint32) ([]*btcutil.Tx, uint32) {
+func fetchMempoolTxnsForAddress(s *rpcServer, addr dcrutil.Address, numToSkip, numRequested uint32) ([]*dcrutil.Tx, uint32) {
 	// There are no entries to return when there are less available than the
 	// number being skipped.
 	mpTxns := s.server.addrIndex.UnconfirmedTxnsForAddress(addr)
@@ -4893,15 +4904,15 @@ func handleSearchRawTransactions(s *rpcServer, cmd interface{}, closeChan <-chan
 	// Respond with an error if the address index is not enabled.
 	addrIndex := s.server.addrIndex
 	if addrIndex == nil {
-		return nil, &btcjson.RPCError{
-			Code:    btcjson.ErrRPCMisc,
+		return nil, &dcrjson.RPCError{
+			Code:    dcrjson.ErrRPCMisc,
 			Message: "Address index must be enabled (--addrindex)",
 		}
 	}
 
 	// Override the flag for including extra previous output information in
 	// each input if needed.
-	c := cmd.(*btcjson.SearchRawTransactionsCmd)
+	c := cmd.(*dcrjson.SearchRawTransactionsCmd)
 	vinExtra := false
 	if c.VinExtra != nil {
 		vinExtra = *c.VinExtra != 0
@@ -4912,17 +4923,17 @@ func handleSearchRawTransactions(s *rpcServer, cmd interface{}, closeChan <-chan
 	// transaction index, so this check is redundant, but it's better to be
 	// safe in case the address index is ever changed to not rely on it.
 	if vinExtra && s.server.txIndex == nil {
-		return nil, &btcjson.RPCError{
-			Code:    btcjson.ErrRPCMisc,
+		return nil, &dcrjson.RPCError{
+			Code:    dcrjson.ErrRPCMisc,
 			Message: "Transaction index must be enabled (--txindex)",
 		}
 	}
 
 	// Attempt to decode the supplied address.
-	addr, err := btcutil.DecodeAddress(c.Address, s.server.chainParams)
+	addr, err := dcrutil.DecodeAddress(c.Address, s.server.chainParams)
 	if err != nil {
-		return nil, &btcjson.RPCError{
-			Code:    btcjson.ErrRPCInvalidAddressOrKey,
+		return nil, &dcrjson.RPCError{
+			Code:    dcrjson.ErrRPCInvalidAddressOrKey,
 			Message: "Invalid address or key: " + err.Error(),
 		}
 	}
@@ -5034,8 +5045,8 @@ func handleSearchRawTransactions(s *rpcServer, cmd interface{}, closeChan <-chan
 
 	// Address has never been used if neither source yielded any results.
 	if len(addressTxns) == 0 {
-		return nil, &btcjson.RPCError{
-			Code:    btcjson.ErrRPCNoTxInfo,
+		return nil, &dcrjson.RPCError{
+			Code:    dcrjson.ErrRPCNoTxInfo,
 			Message: "No information available about address",
 		}
 	}
@@ -5076,7 +5087,7 @@ func handleSearchRawTransactions(s *rpcServer, cmd interface{}, closeChan <-chan
 	// The verbose flag is set, so generate the JSON object and return it.
 	best := s.chain.BestSnapshot()
 	chainParams := s.server.chainParams
-	srtList := make([]btcjson.SearchRawTransactionsResult, len(addressTxns))
+	srtList := make([]dcrjson.SearchRawTransactionsResult, len(addressTxns))
 	for i := range addressTxns {
 		// The deserialized transaction is needed, so deserialize the
 		// retrieved transaction if it's in serialized form (which will
@@ -5115,7 +5126,7 @@ func handleSearchRawTransactions(s *rpcServer, cmd interface{}, closeChan <-chan
 		// confirmations or block information).
 		var blkHeader *wire.BlockHeader
 		var blkHashStr string
-		var blkHeight int32
+		var blkHeight int64
 		if blkHash := rtx.blkHash; blkHash != nil {
 			// Load the raw header bytes from the database.
 			var headerBytes []byte
@@ -5125,8 +5136,8 @@ func handleSearchRawTransactions(s *rpcServer, cmd interface{}, closeChan <-chan
 				return err
 			})
 			if err != nil {
-				return nil, &btcjson.RPCError{
-					Code:    btcjson.ErrRPCBlockNotFound,
+				return nil, &dcrjson.RPCError{
+					Code:    dcrjson.ErrRPCBlockNotFound,
 					Message: "Block not found",
 				}
 			}

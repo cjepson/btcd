@@ -311,7 +311,7 @@ func (m *Manager) Init(chain *blockchain.BlockChain) error {
 				// Get the block, unless it's already cached.
 				var block *dcrutil.Block
 				if cachedBlock == nil && height > 0 {
-					block, err := blockchain.DBFetchBlockByHeight(dbTx,
+					block, err = blockchain.DBFetchBlockByHeight(dbTx,
 						int64(height))
 					if err != nil {
 						return err
@@ -417,7 +417,7 @@ func (m *Manager) Init(chain *blockchain.BlockChain) error {
 				// Get the parent of the block, unless it's already cached.
 				var parent *dcrutil.Block
 				if cachedParent == nil && height > 0 {
-					parent, err := blockchain.DBFetchBlockByHeight(dbTx, height-1)
+					parent, err = blockchain.DBFetchBlockByHeight(dbTx, height-1)
 					if err != nil {
 						return err
 					}

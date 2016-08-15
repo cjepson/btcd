@@ -24,6 +24,7 @@ import (
 	"github.com/decred/dcrd/addrmgr"
 	"github.com/decred/dcrd/blockchain"
 	"github.com/decred/dcrd/blockchain/indexers"
+	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg"
 	"github.com/decred/dcrd/chaincfg/chainhash"
 	database "github.com/decred/dcrd/database2"

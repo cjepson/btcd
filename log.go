@@ -11,12 +11,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/btcsuite/btcd/blockchain/indexers"
 	"github.com/btcsuite/btclog"
 	"github.com/btcsuite/seelog"
 
 	"github.com/decred/dcrd/addrmgr"
 	"github.com/decred/dcrd/blockchain"
+	"github.com/decred/dcrd/blockchain/indexers"
 	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg/chainhash"
 	"github.com/decred/dcrd/database"

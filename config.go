@@ -60,7 +60,6 @@ const (
 	defaultSigCacheMaxSize       = 50000
 	sampleConfigFilename         = "sample-dcrd.conf"
 	defaultTxIndex               = false
-	defaultAddrIndex             = false
 )
 
 var (
