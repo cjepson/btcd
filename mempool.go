@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"github.com/decred/dcrd/blockchain"
-	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/blockchain/indexers"
+	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg"
 	"github.com/decred/dcrd/chaincfg/chainhash"
 	"github.com/decred/dcrd/mining"
@@ -745,152 +745,6 @@ func (mp *txMemPool) addTransaction(utxoView *blockchain.UtxoViewpoint,
 	}
 }
 
-// addTransactionToAddrIndex adds all addresses related to the transaction to
-// our in-memory address index. Note that this address is only populated when
-// we're running with the optional address index activated.
-//
-// This function MUST be called with the mempool lock held (for writes).
-func (mp *txMemPool) addTransactionToAddrIndex(tx *dcrutil.Tx,
-	txType stake.TxType) error {
-
-	// Insert the addresses into the mempool address index.
-	for _, txOut := range tx.MsgTx().TxOut {
-		err := mp.indexScriptAddressToTx(txOut.Version, txOut.PkScript,
-			tx, txType)
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// indexScriptByAddress alters our address index by indexing the payment address
-// encoded by the passed scriptPubKey to the passed transaction.
-//
-// This function MUST be called with the mempool lock held (for writes).
-func (mp *txMemPool) indexScriptAddressToTx(pkVersion uint16, pkScript []byte,
-	tx *dcrutil.Tx, txType stake.TxType) error {
-	/*
-		class, addresses, _, err := txscript.ExtractPkScriptAddrs(pkVersion, pkScript,
-			activeNetParams.Params)
-		if err != nil {
-			txmpLog.Tracef("Unable to extract encoded addresses from script "+
-				"for addrindex: %v", err)
-			return err
-		}
-
-		// An exception is SStx commitments. Handle these manually.
-		if txType == stake.TxTypeSStx && class == txscript.NullDataTy {
-			addr, err := stake.AddrFromSStxPkScrCommitment(pkScript,
-				mp.cfg.ChainParams)
-			if err != nil {
-				txmpLog.Tracef("Unable to extract encoded addresses "+
-					"from sstx commitment script for addrindex: %v", err)
-				return err
-			}
-
-			addresses = []dcrutil.Address{addr}
-		}
-
-		for _, addr := range addresses {
-			if mp.addrindex[addr.EncodeAddress()] == nil {
-				mp.addrindex[addr.EncodeAddress()] = make(map[chainhash.Hash]struct{})
-			}
-			mp.addrindex[addr.EncodeAddress()][*tx.Sha()] = struct{}{}
-		}
-	*/
-
-	return nil
-}
-
-// pruneTxFromAddrIndex deletes references to the transaction in the address
-// index by searching first for the address from an output and second for the
-// transaction itself.
-//
-// This function MUST be called with the mempool lock held (for writes).
-func (mp *txMemPool) pruneTxFromAddrIndex(tx *dcrutil.Tx, txType stake.TxType) {
-	/*
-		txHash := tx.Sha()
-
-		for _, txOut := range tx.MsgTx().TxOut {
-			class, addresses, _, err := txscript.ExtractPkScriptAddrs(txOut.Version,
-				txOut.PkScript, activeNetParams.Params)
-			if err != nil {
-				// If we couldn't extract addresses, skip this output.
-				continue
-			}
-
-			// An exception is SStx commitments. Handle these manually.
-			if txType == stake.TxTypeSStx && class == txscript.NullDataTy {
-				addr, err := stake.AddrFromSStxPkScrCommitment(txOut.PkScript,
-					mp.cfg.ChainParams)
-				if err != nil {
-					// If we couldn't extract addresses, skip this output.
-					continue
-				}
-
-				addresses = []dcrutil.Address{addr}
-			}
-
-			for _, addr := range addresses {
-				if mp.addrindex[addr.EncodeAddress()] != nil {
-					// First remove all references to the transaction hash.
-					for thisTxHash := range mp.addrindex[addr.EncodeAddress()] {
-						if thisTxHash == *txHash {
-							delete(mp.addrindex[addr.EncodeAddress()], thisTxHash)
-						}
-					}
-
-					// Then, if the address has no transactions referenced,
-					// remove it too.
-					if len(mp.addrindex[addr.EncodeAddress()]) == 0 {
-						delete(mp.addrindex, addr.EncodeAddress())
-					}
-				}
-			}
-		}
-	*/
-}
-
-// findTxForAddr searches for all referenced transactions for a given address
-// that are currently stored in the mempool.
-//
-// This function is safe for concurrent access.
-func (mp *txMemPool) findTxForAddr(addr dcrutil.Address) []*dcrutil.Tx {
-	/*
-		var txs []*dcrutil.Tx
-		if mp.addrindex[addr.EncodeAddress()] != nil {
-			// Lookup all relevant transactions and append them.
-			for thisTxHash := range mp.addrindex[addr.EncodeAddress()] {
-				txDesc, exists := mp.pool[thisTxHash]
-				if !exists {
-					txmpLog.Warnf("Failed to find transaction %v in mempool "+
-						"that was referenced in the mempool addrIndex",
-						thisTxHash)
-					continue
-				}
-
-				txs = append(txs, txDesc.Tx)
-			}
-		}
-
-		return txs
-	*/
-	return nil
-}
-
-// FindTxForAddr is the exported and concurrency safe version of findTxForAddr.
-//
-// This function is safe for concurrent access.
-func (mp *txMemPool) FindTxForAddr(addr dcrutil.Address) []*dcrutil.Tx {
-	// Protect concurrent access.
-	mp.Lock()
-	defer mp.Unlock()
-
-	return mp.findTxForAddr(addr)
-}
-
 // checkPoolDoubleSpend checks whether or not the passed transaction is
 // attempting to spend coins already spent by other transactions in the pool.
 // Note it does not check for double spends against transactions already in the
@@ -1413,13 +1267,6 @@ func (mp *txMemPool) maybeAcceptTransaction(tx *dcrutil.Tx, isNew,
 		if err != nil {
 			return nil, err
 		}
-	}
-
-	// Insert the address into the mempool address index.
-	for _, txOut := range tx.MsgTx().TxOut {
-		// This function returns an error, but we don't really care
-		// if the script was non-standard or otherwise malformed.
-		mp.indexScriptAddressToTx(txOut.Version, txOut.PkScript, tx, txType)
 	}
 
 	txmpLog.Debugf("Accepted transaction %v (pool size: %v)", txHash,

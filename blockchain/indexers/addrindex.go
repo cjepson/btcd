@@ -1,10 +1,11 @@
-// Copyright (c) 2016 The btcsuite developers
+// Copyright (c) 2016 The Decred developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
 package indexers
 
 import (
+	//	"bytes"
 	"errors"
 	"fmt"
 	"sync"
@@ -786,9 +787,8 @@ func (idx *AddrIndex) indexBlock(data writeIndexData, block, parent *dcrutil.Blo
 // the transactions in the block involve.
 //
 // This is part of the Indexer interface.
-func (idx *AddrIndex) ConnectBlock(dbTx database.Tx, block, parent *dcrutil.Block, view *blockchain.UtxoViewpoint) error {
-	// fmt.Printf("Connect block %v\n", block.Height())
-
+func (idx *AddrIndex) ConnectBlock(dbTx database.Tx, block, parent *dcrutil.Block,
+	view *blockchain.UtxoViewpoint) error {
 	// The offset and length of the transactions within the serialized
 	// block for the regular transactions of the previous block, if
 	// applicable.
@@ -796,7 +796,7 @@ func (idx *AddrIndex) ConnectBlock(dbTx database.Tx, block, parent *dcrutil.Bloc
 		dcrutil.BlockValid)
 	var parentTxLocs []wire.TxLoc
 	var parentBlockID uint32
-	if regularTxTreeValid {
+	if regularTxTreeValid && block.Height() > 1 {
 		var err error
 		parentTxLocs, _, err = parent.TxLoc()
 		if err != nil {
@@ -827,7 +827,6 @@ func (idx *AddrIndex) ConnectBlock(dbTx database.Tx, block, parent *dcrutil.Bloc
 	idx.indexBlock(addrsToTxns, block, parent, view)
 
 	// Add all of the index entries for each address.
-	allTxLocs := append(parentTxLocs, blockStxLocs...)
 	stakeIdxsStart := len(parentTxLocs)
 	offsetStakeIdxStartBlock := len(block.Transactions())
 	addrIdxBucket := dbTx.Metadata().Bucket(addrIndexKey)
@@ -837,21 +836,19 @@ func (idx *AddrIndex) ConnectBlock(dbTx database.Tx, block, parent *dcrutil.Bloc
 			// since these are not from the parent. Offset the index to be
 			// correct for the location in this given block.
 			blockIDToUse := parentBlockID
+			txLocsToUse := parentTxLocs
 			if txIdx >= stakeIdxsStart {
 				txIdx -= offsetStakeIdxStartBlock
+				txLocsToUse = blockStxLocs
 				blockIDToUse = blockID
 			}
-			//fmt.Printf("txIdx %v, addrsToTxns %v:%v\n", txIdx, len(txIdxs), txIdxs)
+
 			err := dbPutAddrIndexEntry(addrIdxBucket, addrKey,
-				blockIDToUse, allTxLocs[txIdx])
+				blockIDToUse, txLocsToUse[txIdx])
 			if err != nil {
 				return err
 			}
 		}
-	}
-
-	if block.Height() == 270 {
-		//panic("270")
 	}
 
 	return nil

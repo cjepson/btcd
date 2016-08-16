@@ -1,4 +1,4 @@
-// Copyright (c) 2016 The btcsuite developers
+// Copyright (c) 2016 The Decred developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
@@ -41,12 +41,16 @@ func newBlockProgressLogger(progressMessage string, logger btclog.Logger) *block
 // LogBlockHeight logs a new block height as an information message to show
 // progress to the user. In order to prevent spam, it limits logging to one
 // message every 10 seconds with duration and totals included.
-func (b *blockProgressLogger) LogBlockHeight(block *dcrutil.Block) {
+func (b *blockProgressLogger) LogBlockHeight(block, parent *dcrutil.Block) {
 	b.Lock()
 	defer b.Unlock()
-
 	b.receivedLogBlocks++
-	b.receivedLogTx += int64(len(block.MsgBlock().Transactions))
+	regularTxTreeValid := dcrutil.IsFlagSet16(block.MsgBlock().Header.VoteBits,
+		dcrutil.BlockValid)
+	if regularTxTreeValid {
+		b.receivedLogTx += int64(len(parent.MsgBlock().Transactions))
+	}
+	b.receivedLogTx += int64(len(block.MsgBlock().STransactions))
 
 	now := time.Now()
 	duration := now.Sub(b.lastBlockLogTime)
