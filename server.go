@@ -2607,7 +2607,7 @@ func newServer(listenAddrs []string, db database.DB, tmdb *stake.TicketDB, chain
 	// Create an index manager if any of the optional indexes are enabled.
 	var indexManager blockchain.IndexManager
 	if len(indexes) > 0 {
-		indexManager = indexers.NewManager(db, indexes)
+		indexManager = indexers.NewManager(db, indexes, chainParams)
 	}
 	bm, err := newBlockManager(&s, indexManager)
 	if err != nil {

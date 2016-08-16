@@ -7,8 +7,10 @@ package indexers
 import (
 	"bytes"
 	"fmt"
+	"time"
 
 	"github.com/decred/dcrd/blockchain"
+	"github.com/decred/dcrd/chaincfg"
 	"github.com/decred/dcrd/chaincfg/chainhash"
 	database "github.com/decred/dcrd/database2"
 	"github.com/decred/dcrd/wire"
@@ -16,16 +18,11 @@ import (
 )
 
 const (
-	// uninitializedIndexerHeight is the height to set the first key
-	// in the index to in order for it to be set to an 'uninitialized'
-	// state.
-	uninitializedAddrIndexHeight = 0xFFFFFFFF
-
 	// Syncing width is the number of blocks to sync in a single database
 	// transaction when newly initializing the address index.
 	// TODO Make this a variable that is easily modified by the end user
 	// to increase/decrease cache size.
-	syncingWidth = 250
+	syncingWidth = 1
 )
 
 var (
@@ -139,6 +136,7 @@ func dbIndexDisconnectBlock(dbTx database.Tx, indexer Indexer, block, parent *dc
 // implements the blockchain.IndexManager interface so it can be seamlessly
 // plugged into normal chain processing.
 type Manager struct {
+	params         *chaincfg.Params
 	db             database.DB
 	enabledIndexes []Indexer
 }
@@ -220,9 +218,9 @@ func (m *Manager) maybeCreateIndexes(dbTx database.Tx) error {
 		}
 
 		// Set the tip for the index to values which represent an
-		// uninitialized index.
-		err := dbPutIndexerTip(dbTx, idxKey, &chainhash.Hash{},
-			uninitializedAddrIndexHeight)
+		// uninitialized index (the genesis block hack and height).
+		genesisBlockHash := m.params.GenesisBlock.BlockSha()
+		err := dbPutIndexerTip(dbTx, idxKey, &genesisBlockHash, 0)
 		if err != nil {
 			return err
 		}
@@ -272,6 +270,8 @@ func (m *Manager) Init(chain *blockchain.BlockChain) error {
 		}
 	}
 
+	startTime := time.Now()
+
 	// Rollback indexes to the main chain if their tip is an orphaned fork.
 	// This is fairly unlikely, but it can happen if the chain is
 	// reorganized while the index is disabled.  This has to be done in
@@ -296,7 +296,7 @@ func (m *Manager) Init(chain *blockchain.BlockChain) error {
 		}
 
 		// Nothing to do if the index does not have any entries yet.
-		if height == uninitializedAddrIndexHeight {
+		if height == 0 {
 			continue
 		}
 
@@ -466,7 +466,8 @@ func (m *Manager) Init(chain *blockchain.BlockChain) error {
 				// the entire cache width.
 				if height%syncingWidth == 0 {
 					progressLogger.LogBlockHeight(block)
-					break
+					height++
+					return nil
 				}
 			}
 
@@ -475,8 +476,10 @@ func (m *Manager) Init(chain *blockchain.BlockChain) error {
 		if err != nil {
 			return err
 		}
-
 	}
+
+	timeTaken := time.Since(startTime)
+	fmt.Printf("TIME OF EXECUTION: %v\n", timeTaken)
 
 	log.Infof("Indexes caught up to height %d", bestHeight)
 	return nil
@@ -619,10 +622,11 @@ func (m *Manager) DisconnectBlock(dbTx database.Tx, block, parent *dcrutil.Block
 //
 // The manager returned satisfies the blockchain.IndexManager interface and thus
 // cleanly plugs into the normal blockchain processing path.
-func NewManager(db database.DB, enabledIndexes []Indexer) *Manager {
+func NewManager(db database.DB, enabledIndexes []Indexer, params *chaincfg.Params) *Manager {
 	return &Manager{
 		db:             db,
 		enabledIndexes: enabledIndexes,
+		params:         params,
 	}
 }
 

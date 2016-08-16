@@ -749,7 +749,7 @@ func (idx *AddrIndex) indexBlock(data writeIndexData, block, parent *dcrutil.Blo
 		}
 	}
 
-	stakeStartIdx := len(block.STransactions())
+	stakeStartIdx := len(block.Transactions())
 	for txIdx, tx := range block.STransactions() {
 		isSSGen, _ := stake.IsSSGen(tx)
 		for i, txIn := range tx.MsgTx().TxIn {
@@ -775,8 +775,8 @@ func (idx *AddrIndex) indexBlock(data writeIndexData, block, parent *dcrutil.Blo
 
 		isSStx, _ := stake.IsSStx(tx)
 		for _, txOut := range tx.MsgTx().TxOut {
-			idx.indexPkScript(data, txOut.Version, txOut.PkScript, txIdx,
-				isSStx)
+			idx.indexPkScript(data, txOut.Version, txOut.PkScript,
+				txIdx+stakeStartIdx, isSStx)
 		}
 	}
 }
@@ -787,15 +787,23 @@ func (idx *AddrIndex) indexBlock(data writeIndexData, block, parent *dcrutil.Blo
 //
 // This is part of the Indexer interface.
 func (idx *AddrIndex) ConnectBlock(dbTx database.Tx, block, parent *dcrutil.Block, view *blockchain.UtxoViewpoint) error {
+	// fmt.Printf("Connect block %v\n", block.Height())
+
 	// The offset and length of the transactions within the serialized
 	// block for the regular transactions of the previous block, if
 	// applicable.
 	regularTxTreeValid := dcrutil.IsFlagSet16(block.MsgBlock().Header.VoteBits,
 		dcrutil.BlockValid)
 	var parentTxLocs []wire.TxLoc
+	var parentBlockID uint32
 	if regularTxTreeValid {
 		var err error
 		parentTxLocs, _, err = parent.TxLoc()
+		if err != nil {
+			return err
+		}
+
+		parentBlockID, err = dbFetchBlockIDByHash(dbTx, parent.Sha())
 		if err != nil {
 			return err
 		}
@@ -820,15 +828,30 @@ func (idx *AddrIndex) ConnectBlock(dbTx database.Tx, block, parent *dcrutil.Bloc
 
 	// Add all of the index entries for each address.
 	allTxLocs := append(parentTxLocs, blockStxLocs...)
+	stakeIdxsStart := len(parentTxLocs)
+	offsetStakeIdxStartBlock := len(block.Transactions())
 	addrIdxBucket := dbTx.Metadata().Bucket(addrIndexKey)
 	for addrKey, txIdxs := range addrsToTxns {
 		for _, txIdx := range txIdxs {
+			// Switch to using the newest block ID for the stake transactions,
+			// since these are not from the parent. Offset the index to be
+			// correct for the location in this given block.
+			blockIDToUse := parentBlockID
+			if txIdx >= stakeIdxsStart {
+				txIdx -= offsetStakeIdxStartBlock
+				blockIDToUse = blockID
+			}
+			//fmt.Printf("txIdx %v, addrsToTxns %v:%v\n", txIdx, len(txIdxs), txIdxs)
 			err := dbPutAddrIndexEntry(addrIdxBucket, addrKey,
-				blockID, allTxLocs[txIdx])
+				blockIDToUse, allTxLocs[txIdx])
 			if err != nil {
 				return err
 			}
 		}
+	}
+
+	if block.Height() == 270 {
+		//panic("270")
 	}
 
 	return nil

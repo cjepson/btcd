@@ -160,7 +160,6 @@ type config struct {
 	dial               func(string, string) (net.Conn, error)
 	miningAddrs        []dcrutil.Address
 	minRelayTxFee      dcrutil.Amount
-	NoAddrIndex        bool
 }
 
 // serviceOptions defines the configuration options for the daemon as a service on
@@ -541,7 +540,7 @@ func loadConfig() (*config, []string, error) {
 		return nil, nil, err
 	}
 
-	if !cfg.NoAddrIndex && cfg.DropAddrIndex {
+	if cfg.AddrIndex && cfg.DropAddrIndex {
 		err := fmt.Errorf("addrindex and dropaddrindex cannot be " +
 			"activated at the same")
 		fmt.Fprintln(os.Stderr, err)

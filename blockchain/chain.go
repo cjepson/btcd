@@ -1233,10 +1233,14 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block,
 		return nil
 	})
 	if err != nil {
+		log.Errorf("Failed to insert block %v: %s", node.hash, err.Error())
+
 		// Attempt to restore TicketDb if this fails.
-		_, _, _, errRemove := b.tmdb.RemoveBlockToHeight(node.height - 1)
-		if errRemove != nil {
-			return errRemove
+		if node.height >= b.chainParams.StakeEnabledHeight {
+			_, _, _, errRemove := b.tmdb.RemoveBlockToHeight(node.height - 1)
+			if errRemove != nil {
+				return errRemove
+			}
 		}
 
 		return err

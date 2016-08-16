@@ -3842,6 +3842,136 @@ func handleGetRawMempool(s *rpcServer, cmd interface{}, closeChan <-chan struct{
 
 // handleGetRawTransaction implements the getrawtransaction command.
 func handleGetRawTransaction(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
+	c := cmd.(*dcrjson.GetRawTransactionCmd)
+
+	// Convert the provided transaction hash hex to a Hash.
+	txHash, err := chainhash.NewHashFromStr(c.Txid)
+	if err != nil {
+		return nil, rpcDecodeHexError(c.Txid)
+	}
+
+	verbose := false
+	if c.Verbose != nil {
+		verbose = *c.Verbose != 0
+	}
+
+	// Try to fetch the transaction from the memory pool and if that fails,
+	// try the block database.
+	var mtx *wire.MsgTx
+	var blkHash *chainhash.Hash
+	var blkHeight int64
+	// var blkIndex uint32
+	tx, err := s.server.txMemPool.FetchTransaction(txHash)
+	if err != nil {
+		txIndex := s.server.txIndex
+		if txIndex == nil {
+			return nil, &dcrjson.RPCError{
+				Code: dcrjson.ErrRPCNoTxInfo,
+				Message: "The transaction index must be " +
+					"enabled to query the blockchain " +
+					"(specify --txindex)",
+			}
+		}
+
+		// Look up the location of the transaction.
+		blockRegion, err := txIndex.TxBlockRegion(txHash)
+		if err != nil {
+			context := "Failed to retrieve transaction location"
+			return nil, internalRPCError(err.Error(), context)
+		}
+		if blockRegion == nil {
+			return nil, rpcNoTxInfoError(txHash)
+		}
+
+		// Load the raw transaction bytes from the database.
+		var txBytes []byte
+		err = s.server.db.View(func(dbTx database.Tx) error {
+			var err error
+			txBytes, err = dbTx.FetchBlockRegion(blockRegion)
+			return err
+		})
+		if err != nil {
+			return nil, rpcNoTxInfoError(txHash)
+		}
+
+		// When the verbose flag isn't set, simply return the serialized
+		// transaction as a hex-encoded string.  This is done here to
+		// avoid deserializing it only to reserialize it again later.
+		if !verbose {
+			return hex.EncodeToString(txBytes), nil
+		}
+
+		// Grab the block height.
+		blkHash = blockRegion.Hash
+		blkHeight, err = s.chain.BlockHeightByHash(blkHash)
+		if err != nil {
+			context := "Failed to retrieve block height"
+			return nil, internalRPCError(err.Error(), context)
+		}
+
+		// Deserialize the transaction
+		var msgTx wire.MsgTx
+		err = msgTx.Deserialize(bytes.NewReader(txBytes))
+		if err != nil {
+			context := "Failed to deserialize transaction"
+			return nil, internalRPCError(err.Error(), context)
+		}
+		mtx = &msgTx
+	} else {
+		// When the verbose flag isn't set, simply return the
+		// network-serialized transaction as a hex-encoded string.
+		if !verbose {
+			// Note that this is intentionally not directly
+			// returning because the first return value is a
+			// string and it would result in returning an empty
+			// string to the client instead of nothing (nil) in the
+			// case of an error.
+			mtxHex, err := messageToHex(tx.MsgTx())
+			if err != nil {
+				return nil, err
+			}
+			return mtxHex, nil
+		}
+
+		mtx = tx.MsgTx()
+	}
+
+	// The verbose flag is set, so generate the JSON object and return it.
+	var blkHeader *wire.BlockHeader
+	var blkHashStr string
+	var chainHeight int64
+	if blkHash != nil {
+		// Load the raw header bytes.
+		var headerBytes []byte
+		err := s.server.db.View(func(dbTx database.Tx) error {
+			var err error
+			headerBytes, err = dbTx.FetchBlockHeader(blkHash)
+			return err
+		})
+		if err != nil {
+			context := "Failed to fetch block header"
+			return nil, internalRPCError(err.Error(), context)
+		}
+
+		// Deserialize the header.
+		var header wire.BlockHeader
+		err = header.Deserialize(bytes.NewReader(headerBytes))
+		if err != nil {
+			context := "Failed to deserialize block header"
+			return nil, internalRPCError(err.Error(), context)
+		}
+
+		blkHeader = &header
+		blkHashStr = blkHash.String()
+		chainHeight = s.chain.BestSnapshot().Height
+	}
+
+	rawTxn, err := createTxRawResult(s.server.chainParams, mtx,
+		txHash.String(), 0, blkHeader, blkHashStr, blkHeight, chainHeight)
+	if err != nil {
+		return nil, err
+	}
+	return *rawTxn, nil
 	/*
 			TODO requires txindex
 			c := cmd.(*dcrjson.GetRawTransactionCmd)

@@ -233,7 +233,7 @@ func dbAddTxIndexEntries(dbTx database.Tx, block, parent *dcrutil.Block, blockID
 	var parentRegularTxs []*dcrutil.Tx
 	var parentTxLocs []wire.TxLoc
 	var parentBlockID uint32
-	if regularTxTreeValid {
+	if regularTxTreeValid && block.Height() > 1 {
 		var err error
 		parentRegularTxs = parent.Transactions()
 
@@ -262,7 +262,7 @@ func dbAddTxIndexEntries(dbTx database.Tx, block, parent *dcrutil.Block, blockID
 	// subslice to the database to be written.  This approach significantly
 	// cuts down on the number of required allocations.
 	offset := 0
-	serializedValues := make([]byte, len(block.Transactions())*txEntrySize)
+	serializedValues := make([]byte, len(allTxs)*txEntrySize)
 	blockIDToUse := parentBlockID
 	for i, tx := range allTxs {
 		// Switch to using the newest block ID for the stake transactions,
