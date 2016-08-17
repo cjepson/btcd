@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/decred/dcrd/blockchain"
+	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg"
 	database "github.com/decred/dcrd/database2"
 	"github.com/decred/dcrd/txscript"
@@ -54,7 +55,21 @@ type ExistsAddrIndex struct {
 	// This allows fairly efficient updates when transactions are removed
 	// once they are included into a block.
 	unconfirmedLock sync.RWMutex
-	existsAddr      map[[addrKeySize]byte]struct{}
+	mpExistsAddr    map[[addrKeySize]byte]struct{}
+}
+
+// NewExistsAddrIndex returns a new instance of an indexer that is used to
+// create a mapping of all addresses ever seen.
+//
+// It implements the Indexer interface which plugs into the IndexManager that in
+// turn is used by the blockchain package.  This allows the index to be
+// seamlessly maintained along with the chain.
+func NewExistsAddrIndex(db database.DB, chainParams *chaincfg.Params) *ExistsAddrIndex {
+	return &ExistsAddrIndex{
+		db:           db,
+		chainParams:  chainParams,
+		mpExistsAddr: make(map[[addrKeySize]byte]struct{}),
+	}
 }
 
 // Ensure the ExistsAddrIndex type implements the Indexer interface.
@@ -106,26 +121,98 @@ func (idx *ExistsAddrIndex) Create(dbTx database.Tx) error {
 
 // dbPutExistsAddr uses an existing database transaction to update or add a
 // used address index to the database.
-func dbPutExistsAddr(dbTx database.Tx, bucket database.Bucket, addrKey [addrKeySize]byte) error {
+func dbPutExistsAddr(bucket database.Bucket, addrKey [addrKeySize]byte) error {
 	return bucket.Put(addrKey[:], nil)
 }
 
-// ExistsAddress
-func (idx *ExistsAddrIndex) ExistsAddress(addr dcrutil.Address) (bool, error) {
-	var region *database.BlockRegion
-	err := idx.db.View(func(dbTx database.Tx) error {
+// existsAddress takes a bucket and key for an address and responds with
+// whether or not the key exists in the database.
+func (idx *ExistsAddrIndex) existsAddress(bucket database.Bucket, k [addrKeySize]byte) bool {
+	if bucket.Get(k[:]) != nil {
+		return true
+	}
 
+	idx.unconfirmedLock.RLock()
+	_, exists := idx.mpExistsAddr[k]
+	idx.unconfirmedLock.RUnlock()
+
+	return exists
+}
+
+// ExistsAddress is the concurrency safe, exported function that returns
+// whether or not an address has been seen before.
+func (idx *ExistsAddrIndex) ExistsAddress(addr dcrutil.Address) (bool, error) {
+	k, err := addrToKey(addr, idx.chainParams)
+	if err != nil {
+		return false, err
+	}
+
+	var exists bool
+	err = idx.db.View(func(dbTx database.Tx) error {
+		meta := dbTx.Metadata()
+		existsAddrIndex := meta.Bucket(existsAddrIndexKey)
+		exists = existsAddrIndex.Get(k[:]) != nil
+
+		return nil
 	})
-	return bool, err
+	if err != nil {
+		return false, err
+	}
+
+	// Only check the in memory map if needed.
+	if !exists {
+		idx.unconfirmedLock.RLock()
+		_, exists = idx.mpExistsAddr[k]
+		idx.unconfirmedLock.RUnlock()
+	}
+
+	return exists, nil
+}
+
+// ExistsAddresses is the concurrency safe, exported function that returns
+// whether or not each address in a slice of addresses has been seen before.
+func (idx *ExistsAddrIndex) ExistsAddresses(addrs []dcrutil.Address) ([]bool, error) {
+	exists := make([]bool, len(addrs))
+	addrKeys := make([][addrKeySize]byte, len(addrs))
+	for i := range addrKeys {
+		var err error
+		addrKeys[i], err = addrToKey(addrs[i], idx.chainParams)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	err := idx.db.View(func(dbTx database.Tx) error {
+		for i := range addrKeys {
+			meta := dbTx.Metadata()
+			existsAddrIndex := meta.Bucket(existsAddrIndexKey)
+
+			exists[i] = existsAddrIndex.Get(addrKeys[i][:]) != nil
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	idx.unconfirmedLock.RLock()
+	for i := range addrKeys {
+		if !exists[i] {
+			_, exists[i] = idx.mpExistsAddr[addrKeys[i]]
+		}
+	}
+	idx.unconfirmedLock.RUnlock()
+
+	return exists, nil
 }
 
 // ConnectBlock is invoked by the index manager when a new block has been
-// connected to the main chain.  This indexer adds a mapping for each address
+// connected to the main chain.  This indexer adds a key for each address
 // the transactions in the block involve.
 //
 // This is part of the Indexer interface.
-func (idx *ExistsAddrIndex) ConnectBlock(dbTx database.Tx, block, parent *dcrutil.Block,
-	view *blockchain.UtxoViewpoint) error {
+func (idx *ExistsAddrIndex) ConnectBlock(dbTx database.Tx, block, parent *dcrutil.Block, view *blockchain.UtxoViewpoint) error {
 	regularTxTreeValid := dcrutil.IsFlagSet16(block.MsgBlock().Header.VoteBits,
 		dcrutil.BlockValid)
 	var parentTxs []*dcrutil.Tx
@@ -138,6 +225,7 @@ func (idx *ExistsAddrIndex) ConnectBlock(dbTx database.Tx, block, parent *dcruti
 	usedAddrs := make(map[[addrKeySize]byte]struct{})
 
 	for _, tx := range allTxns {
+		isSStx, _ := stake.IsSStx(tx)
 		for _, txIn := range tx.MsgTx().TxIn {
 			if txscript.IsMultisigSigScript(txIn.SignatureScript) {
 				rs, err :=
@@ -170,11 +258,22 @@ func (idx *ExistsAddrIndex) ConnectBlock(dbTx database.Tx, block, parent *dcruti
 		}
 
 		for _, txOut := range tx.MsgTx().TxOut {
-			_, addrs, _, err := txscript.ExtractPkScriptAddrs(
+			class, addrs, _, err := txscript.ExtractPkScriptAddrs(
 				txOut.Version, txOut.PkScript, idx.chainParams)
 			if err != nil {
 				// Non-standard outputs are skipped.
 				continue
+			}
+
+			if isSStx && class == txscript.NullDataTy {
+				addr, err := stake.AddrFromSStxPkScrCommitment(txOut.PkScript,
+					idx.chainParams)
+				if err != nil {
+					// Ignore unsupported address types.
+					continue
+				}
+
+				addrs = append(addrs, addr)
 			}
 
 			for _, addr := range addrs {
@@ -189,10 +288,33 @@ func (idx *ExistsAddrIndex) ConnectBlock(dbTx database.Tx, block, parent *dcruti
 		}
 	}
 
-	// Add the block hash to ID mapping to the index.
+	// Write all the newly used addresses to the database,
+	// skipping any keys that already exist. Write any
+	// addresses we see in mempool at this time, too,
+	// then remove them from the unconfirmed map drop
+	// dropping the old map and reassigning a new map.
+	idx.unconfirmedLock.Lock()
+	for k, _ := range idx.mpExistsAddr {
+		usedAddrs[k] = struct{}{}
+	}
+	idx.mpExistsAddr = make(map[[addrKeySize]byte]struct{})
+	idx.unconfirmedLock.Unlock()
+
 	meta := dbTx.Metadata()
 	existsAddrIndex := meta.Bucket(existsAddrIndexKey)
 	newUsedAddrs := make(map[[addrKeySize]byte]struct{})
+	for k, _ := range usedAddrs {
+		if !idx.existsAddress(existsAddrIndex, k) {
+			newUsedAddrs[k] = struct{}{}
+		}
+	}
+
+	for k, _ := range newUsedAddrs {
+		err := dbPutExistsAddr(existsAddrIndex, k)
+		if err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
@@ -204,4 +326,90 @@ func (idx *ExistsAddrIndex) ConnectBlock(dbTx database.Tx, block, parent *dcruti
 // This is part of the Indexer interface.
 func (idx *ExistsAddrIndex) DisconnectBlock(dbTx database.Tx, block, parent *dcrutil.Block, view *blockchain.UtxoViewpoint) error {
 	return nil
+}
+
+// addUnconfirmedTx adds all addresses related to the transaction to the
+// unconfirmed (memory-only) exists address index.
+func (idx *ExistsAddrIndex) addUnconfirmedTx(tx *dcrutil.Tx) {
+	isSStx, _ := stake.IsSStx(tx)
+	for _, txIn := range tx.MsgTx().TxIn {
+		if txscript.IsMultisigSigScript(txIn.SignatureScript) {
+			rs, err :=
+				txscript.MultisigRedeemScriptFromScriptSig(
+					txIn.SignatureScript)
+			if err != nil {
+				continue
+			}
+
+			class, addrs, _, err := txscript.ExtractPkScriptAddrs(
+				txscript.DefaultScriptVersion, rs, idx.chainParams)
+			if err != nil {
+				// Non-standard outputs are skipped.
+				continue
+			}
+			if class != txscript.MultiSigTy {
+				// This should never happen, but be paranoid.
+				continue
+			}
+
+			for _, addr := range addrs {
+				k, err := addrToKey(addr, idx.chainParams)
+				if err != nil {
+					continue
+				}
+
+				if _, exists := idx.mpExistsAddr[k]; !exists {
+					idx.mpExistsAddr[k] = struct{}{}
+				}
+			}
+		}
+	}
+
+	for _, txOut := range tx.MsgTx().TxOut {
+		class, addrs, _, err := txscript.ExtractPkScriptAddrs(txOut.Version,
+			txOut.PkScript, idx.chainParams)
+		if err != nil {
+			// Non-standard outputs are skipped.
+			continue
+		}
+
+		if isSStx && class == txscript.NullDataTy {
+			addr, err := stake.AddrFromSStxPkScrCommitment(txOut.PkScript,
+				idx.chainParams)
+			if err != nil {
+				// Ignore unsupported address types.
+				continue
+			}
+
+			addrs = append(addrs, addr)
+		}
+
+		for _, addr := range addrs {
+			k, err := addrToKey(addr, idx.chainParams)
+			if err != nil {
+				// Ignore unsupported address types.
+				continue
+			}
+
+			if _, exists := idx.mpExistsAddr[k]; !exists {
+				idx.mpExistsAddr[k] = struct{}{}
+			}
+		}
+	}
+}
+
+// AddUnconfirmedTx is the exported form of addUnconfirmedTx.
+//
+// This function is safe for concurrent access.
+func (idx *ExistsAddrIndex) AddUnconfirmedTx(tx *dcrutil.Tx) {
+	idx.unconfirmedLock.Lock()
+	defer idx.unconfirmedLock.Unlock()
+
+	idx.addUnconfirmedTx(tx)
+}
+
+// DropExistsAddrIndex drops the exists address index from the provided
+// database if it exists.
+func DropExistsAddrIndex(db database.DB) error {
+	return dropIndex(db, existsAddrIndexKey, existsAddressIndexName)
 }

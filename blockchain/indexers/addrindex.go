@@ -919,12 +919,23 @@ func (idx *AddrIndex) TxRegionsForAddress(dbTx database.Tx, addr dcrutil.Address
 // script to the transaction.
 //
 // This function is safe for concurrent access.
-func (idx *AddrIndex) indexUnconfirmedAddresses(scriptVersion uint16, pkScript []byte, tx *dcrutil.Tx) {
+func (idx *AddrIndex) indexUnconfirmedAddresses(scriptVersion uint16, pkScript []byte, tx *dcrutil.Tx, isSStx bool) {
 	// The error is ignored here since the only reason it can fail is if the
 	// script fails to parse and it was already validated before being
 	// admitted to the mempool.
-	_, addresses, _, _ := txscript.ExtractPkScriptAddrs(scriptVersion, pkScript,
-		idx.chainParams)
+	class, addresses, _, _ := txscript.ExtractPkScriptAddrs(scriptVersion,
+		pkScript, idx.chainParams)
+
+	if isSStx && class == txscript.NullDataTy {
+		addr, err := stake.AddrFromSStxPkScrCommitment(pkScript, idx.chainParams)
+		if err != nil {
+			// Fail if this fails to decode. It should.
+			return
+		}
+
+		addresses = append(addresses, addr)
+	}
+
 	for _, addr := range addresses {
 		// Ignore unsupported address types.
 		addrKey, err := addrToKey(addr, idx.chainParams)
@@ -977,12 +988,16 @@ func (idx *AddrIndex) AddUnconfirmedTx(tx *dcrutil.Tx, utxoView *blockchain.Utxo
 		}
 		version := entry.ScriptVersionByIndex(txIn.PreviousOutPoint.Index)
 		pkScript := entry.PkScriptByIndex(txIn.PreviousOutPoint.Index)
-		idx.indexUnconfirmedAddresses(version, pkScript, tx)
+		txType := entry.TransactionType()
+		idx.indexUnconfirmedAddresses(version, pkScript, tx,
+			txType == stake.TxTypeSStx)
 	}
 
 	// Index addresses of all created outputs.
+	isSStx, _ := stake.IsSStx(tx)
 	for _, txOut := range tx.MsgTx().TxOut {
-		idx.indexUnconfirmedAddresses(txOut.Version, txOut.PkScript, tx)
+		idx.indexUnconfirmedAddresses(txOut.Version, txOut.PkScript, tx,
+			isSStx)
 	}
 }
 

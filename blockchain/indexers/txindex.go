@@ -36,6 +36,9 @@ var (
 	// errNoBlockIDEntry is an error that indicates a requested entry does
 	// not exist in the block ID index.
 	errNoBlockIDEntry = errors.New("no entry in the block ID index")
+
+	// errNilHashPointer indicating that the passed hash pointer is nil.
+	errNilHashPointer = errors.New("nil hash pointer argument passed")
 )
 
 // -----------------------------------------------------------------------------
@@ -133,6 +136,10 @@ func dbRemoveBlockIDIndexEntry(dbTx database.Tx, hash *chainhash.Hash) error {
 // dbFetchBlockIDByHash uses an existing database transaction to retrieve the
 // block id for the provided hash from the index.
 func dbFetchBlockIDByHash(dbTx database.Tx, hash *chainhash.Hash) (uint32, error) {
+	if hash == nil {
+		return 0, errNilHashPointer
+	}
+
 	hashIndex := dbTx.Metadata().Bucket(idByHashIndexBucketName)
 	serializedID := hashIndex.Get(hash[:])
 	if serializedID == nil {

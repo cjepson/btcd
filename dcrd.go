@@ -159,6 +159,14 @@ func dcrdMain(serverChan chan<- *server) error {
 
 		return nil
 	}
+	if cfg.DropExistsAddrIndex {
+		if err := indexers.DropExistsAddrIndex(db); err != nil {
+			dcrdLog.Errorf("%v", err)
+			return err
+		}
+
+		return nil
+	}
 
 	// Create server and start it.
 	server, err := newServer(cfg.Listeners, db, tmdb, activeNetParams.Params)

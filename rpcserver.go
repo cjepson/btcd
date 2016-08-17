@@ -1673,18 +1673,13 @@ func handleEstimateStakeDiff(s *rpcServer, cmd interface{},
 // handleExistsAddress implements the existsaddress command.
 func handleExistsAddress(s *rpcServer, cmd interface{},
 	closeChan <-chan struct{}) (interface{}, error) {
-	/* TODO new address index
-	if cfg.NoAddrIndex {
+	existsAddrIndex := s.server.existsAddrIndex
+	if existsAddrIndex == nil {
 		return nil, &dcrjson.RPCError{
-			Code:    dcrjson.ErrRPCMisc,
-			Message: "Address indexing must be enabled",
-		}
-	}
-	if !s.server.addrIndexer.IsCaughtUp() {
-		return nil, &dcrjson.RPCError{
-			Code: dcrjson.ErrRPCMisc,
-			Message: "Address index has not yet caught up to the " +
-				"current best height",
+			Code: dcrjson.ErrRPCNoTxInfo,
+			Message: "The exists address index must be " +
+				"enabled to query whether or not an " +
+				"address has been seen",
 		}
 	}
 
@@ -1699,52 +1694,30 @@ func handleExistsAddress(s *rpcServer, cmd interface{},
 		}
 	}
 
-	var numRequested, numToSkip int
-	numToSkip = 0
-	numRequested = 1
-
-	// Check the blockchain for the relevant address usage.
-	tlr, _, err := s.server.db.FetchTxsForAddr(addr, numToSkip, numRequested,
-		false)
-	if err == nil && tlr != nil {
-		return true, nil
+	exists, err := existsAddrIndex.ExistsAddress(addr)
+	if err != nil {
+		return nil, err
 	}
 
-	// Check the mempool as well.
-	txs := s.server.txMemPool.FindTxForAddr(addr)
-	if len(txs) > 0 {
-		return true, nil
-	}
-
-	return false, nil
-	*/
-	return nil, nil
+	return exists, nil
 }
 
 // handleExistsAddresses implements the existsaddresses command.
 func handleExistsAddresses(s *rpcServer, cmd interface{},
 	closeChan <-chan struct{}) (interface{}, error) {
-	/* TODO new address index
-	if cfg.NoAddrIndex {
+	existsAddrIndex := s.server.existsAddrIndex
+	if existsAddrIndex == nil {
 		return nil, &dcrjson.RPCError{
-			Code:    dcrjson.ErrRPCMisc,
-			Message: "Address indexing must be enabled",
-		}
-	}
-	if !s.server.addrIndexer.IsCaughtUp() {
-		return nil, &dcrjson.RPCError{
-			Code: dcrjson.ErrRPCMisc,
-			Message: "Address index has not yet caught up to the " +
-				"current best height",
+			Code: dcrjson.ErrRPCNoTxInfo,
+			Message: "The exists address index must be " +
+				"enabled to query whether or not an " +
+				"address has been seen",
 		}
 	}
 
 	c := cmd.(*dcrjson.ExistsAddressesCmd)
-	addrsLen := len(c.Addresses)
-	exists := make([]bool, addrsLen)
+	addresses := make([]dcrutil.Address, len(c.Addresses))
 	for i := range c.Addresses {
-		exists[i] = false
-
 		// Attempt to decode the supplied address.
 		addr, err := dcrutil.DecodeAddress(c.Addresses[i], s.server.chainParams)
 		if err != nil {
@@ -1753,27 +1726,16 @@ func handleExistsAddresses(s *rpcServer, cmd interface{},
 				Message: "Invalid address or key: " + err.Error(),
 			}
 		}
+		addresses[i] = addr
+	}
 
-		var numRequested, numToSkip int
-		numToSkip = 0
-		numRequested = 1
-
-		// Check the blockchain for the relevant address usage.
-		tlr, _, err := s.server.db.FetchTxsForAddr(addr, numToSkip,
-			numRequested, false)
-		if err == nil && tlr != nil {
-			exists[i] = true
-		}
-
-		// Check the mempool as well.
-		txs := s.server.txMemPool.FindTxForAddr(addr)
-		if len(txs) > 0 {
-			exists[i] = true
-		}
+	exists, err := existsAddrIndex.ExistsAddresses(addresses)
+	if err != nil {
+		return nil, err
 	}
 
 	// Convert the slice of bools into a compacted set of bit flags.
-	set := bitset.NewBytes(addrsLen)
+	set := bitset.NewBytes(len(c.Addresses))
 	for i := range exists {
 		if exists[i] {
 			set.Set(i)
@@ -1781,8 +1743,6 @@ func handleExistsAddresses(s *rpcServer, cmd interface{},
 	}
 
 	return hex.EncodeToString([]byte(set)), nil
-	*/
-	return nil, nil
 }
 
 // handleExistsLiveTicket implements the existsliveticket command.

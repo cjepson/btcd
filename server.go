@@ -211,8 +211,9 @@ type server struct {
 	// if the associated index is not enabled.  These fields are set during
 	// initial creation of the server and never changed afterwards, so they
 	// do not need to be protected for concurrent access.
-	txIndex   *indexers.TxIndex
-	addrIndex *indexers.AddrIndex
+	txIndex         *indexers.TxIndex
+	addrIndex       *indexers.AddrIndex
+	existsAddrIndex *indexers.ExistsAddrIndex
 }
 
 // serverPeer extends the peer to maintain state shared by the server and
@@ -1955,11 +1956,6 @@ out:
 		}
 	}
 
-	/* TODO addrindex
-	if !cfg.NoAddrIndex {
-		s.addrIndexer.Stop()
-	}
-	*/
 	s.blockManager.Stop()
 	s.addrManager.Stop()
 
@@ -2228,12 +2224,6 @@ func (s *server) Start() {
 	if cfg.Generate {
 		s.cpuMiner.Start()
 	}
-
-	/* TODO addrindex
-	if !cfg.NoAddrIndex {
-		s.addrIndexer.Start()
-	}
-	*/
 }
 
 // Stop gracefully shuts down the server by stopping and disconnecting all
@@ -2602,6 +2592,11 @@ func newServer(listenAddrs []string, db database.DB, tmdb *stake.TicketDB, chain
 		indxLog.Info("Address index is enabled")
 		s.addrIndex = indexers.NewAddrIndex(db, chainParams)
 		indexes = append(indexes, s.addrIndex)
+	}
+	if !cfg.NoExistsAddrIndex {
+		indxLog.Info("Exists address index is enabled")
+		s.existsAddrIndex = indexers.NewExistsAddrIndex(db, chainParams)
+		indexes = append(indexes, s.existsAddrIndex)
 	}
 
 	// Create an index manager if any of the optional indexes are enabled.

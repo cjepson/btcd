@@ -443,7 +443,6 @@ func (m *Manager) Init(chain *blockchain.BlockChain) error {
 				errLocal := dbIndexConnectBlock(dbTx, indexer, block,
 					parent, view)
 				if errLocal != nil {
-					panic("S")
 					return errLocal
 				}
 

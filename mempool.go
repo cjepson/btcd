@@ -116,6 +116,11 @@ type mempoolConfig struct {
 	// indexing the unconfirmed transactions in the memory pool.
 	// This can be nil if the address index is not enabled.
 	AddrIndex *indexers.AddrIndex
+
+	// ExistsAddrIndex defines the optional exists address index instance
+	// to use for indexing the unconfirmed transactions in the memory pool.
+	// This can be nil if the address index is not enabled.
+	ExistsAddrIndex *indexers.ExistsAddrIndex
 }
 
 // mempoolPolicy houses the policy (configuration parameters) which is used to
@@ -742,6 +747,9 @@ func (mp *txMemPool) addTransaction(utxoView *blockchain.UtxoViewpoint,
 	// if enabled.
 	if mp.cfg.AddrIndex != nil {
 		mp.cfg.AddrIndex.AddUnconfirmedTx(tx, utxoView)
+	}
+	if mp.cfg.ExistsAddrIndex != nil {
+		mp.cfg.ExistsAddrIndex.AddUnconfirmedTx(tx)
 	}
 }
 
@@ -1634,11 +1642,5 @@ func newTxMemPool(cfg *mempoolConfig) *txMemPool {
 		subsidyCache:  cfg.Chain.FetchSubsidyCache(),
 	}
 
-	/*
-		TODO New address index
-		if cfg.EnableAddrIndex {
-			memPool.addrindex = make(map[string]map[chainhash.Hash]struct{})
-		}
-	*/
 	return memPool
 }
