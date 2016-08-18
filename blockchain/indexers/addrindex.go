@@ -816,6 +816,11 @@ func (idx *AddrIndex) ConnectBlock(dbTx database.Tx, block, parent *dcrutil.Bloc
 		return err
 	}
 
+	// Nothing to index, just return.
+	if len(parentTxLocs)+len(blockStxLocs) == 0 {
+		return nil
+	}
+
 	// Get the internal block ID associated with the block.
 	blockID, err := dbFetchBlockIDByHash(dbTx, block.Sha())
 	if err != nil {
@@ -835,6 +840,7 @@ func (idx *AddrIndex) ConnectBlock(dbTx database.Tx, block, parent *dcrutil.Bloc
 			// Switch to using the newest block ID for the stake transactions,
 			// since these are not from the parent. Offset the index to be
 			// correct for the location in this given block.
+			fmt.Printf("txIdx %v, stakeIdxsStart %v\n", txIdx, stakeIdxsStart)
 			blockIDToUse := parentBlockID
 			txLocsToUse := parentTxLocs
 			if txIdx >= stakeIdxsStart {
@@ -842,6 +848,8 @@ func (idx *AddrIndex) ConnectBlock(dbTx database.Tx, block, parent *dcrutil.Bloc
 				txLocsToUse = blockStxLocs
 				blockIDToUse = blockID
 			}
+			fmt.Printf("blockIDToUse to use: %v, offsetStakeIdxStartBlock %v\n", blockIDToUse, offsetStakeIdxStartBlock)
+			fmt.Printf("tx index to use: %v, block height %v\n", txIdx, block.Height())
 
 			err := dbPutAddrIndexEntry(addrIdxBucket, addrKey,
 				blockIDToUse, txLocsToUse[txIdx])
@@ -978,7 +986,13 @@ func (idx *AddrIndex) AddUnconfirmedTx(tx *dcrutil.Tx, utxoView *blockchain.Utxo
 	// The existence checks are elided since this is only called after the
 	// transaction has already been validated and thus all inputs are
 	// already known to exist.
-	for _, txIn := range tx.MsgTx().TxIn {
+	isSSGen, _ := stake.IsSSGen(tx)
+	for i, txIn := range tx.MsgTx().TxIn {
+		// Skip stakebase.
+		if i == 0 && isSSGen {
+			continue
+		}
+
 		entry := utxoView.LookupEntry(&txIn.PreviousOutPoint.Hash)
 		if entry == nil {
 			// Ignore missing entries.  This should never happen

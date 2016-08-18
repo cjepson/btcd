@@ -2635,11 +2635,12 @@ func newServer(listenAddrs []string, db database.DB, tmdb *stake.TicketDB, chain
 			MaxSigOpsPerTx:       blockchain.MaxSigOpsPerBlock / 5,
 			MinRelayTxFee:        cfg.minRelayTxFee,
 		},
-		FetchUtxoView: s.blockManager.chain.FetchUtxoView,
-		Chain:         s.blockManager.chain,
-		SigCache:      s.sigCache,
-		TimeSource:    s.timeSource,
-		AddrIndex:     s.addrIndex,
+		FetchUtxoView:   s.blockManager.chain.FetchUtxoView,
+		Chain:           s.blockManager.chain,
+		SigCache:        s.sigCache,
+		TimeSource:      s.timeSource,
+		AddrIndex:       s.addrIndex,
+		ExistsAddrIndex: s.existsAddrIndex,
 	}
 	s.txMemPool = newTxMemPool(&txC)
 
@@ -2653,16 +2654,6 @@ func newServer(listenAddrs []string, db database.DB, tmdb *stake.TicketDB, chain
 		TxMinFreeFee:      cfg.minRelayTxFee,
 	}
 	s.cpuMiner = newCPUMiner(&policy, &s)
-
-	/* TODO new addrindex
-	if !cfg.NoAddrIndex {
-		ai, err := newAddrIndexer(&s)
-		if err != nil {
-			return nil, err
-		}
-		s.addrIndexer = ai
-	}
-	*/
 
 	if !cfg.DisableRPC {
 		s.rpcServer, err = newRPCServer(cfg.RPCListeners, &policy, &s)

@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/decred/dcrd/blockchain"
+	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg"
 	"github.com/decred/dcrd/chaincfg/chainhash"
 	database "github.com/decred/dcrd/database2"
@@ -480,7 +481,8 @@ func dbFetchTx(dbTx database.Tx, hash *chainhash.Hash) (*wire.MsgTx, error) {
 		return nil, err
 	}
 	if blockRegion == nil {
-		return nil, fmt.Errorf("transaction %v not found", hash)
+		panic("ayyy")
+		return nil, fmt.Errorf("transaction %v not found in the txindex", hash)
 	}
 
 	// Load the raw transaction bytes from the database.
@@ -533,18 +535,17 @@ func makeUtxoView(dbTx database.Tx, block, parent *dcrutil.Block) (*blockchain.U
 		}
 	}
 
-	for txIdx, tx := range parent.STransactions() {
-		// Coinbases do not reference any inputs.  Since the block is
-		// required to have already gone through full validation, it has
-		// already been proven on the first transaction in the block is
-		// a coinbase.
-		if txIdx == 0 {
-			continue
-		}
+	for _, tx := range parent.STransactions() {
+		isSSGen, _ := stake.IsSSGen(tx)
 
 		// Use the transaction index to load all of the referenced
 		// inputs and add their outputs to the view.
-		for _, txIn := range tx.MsgTx().TxIn {
+		for i, txIn := range tx.MsgTx().TxIn {
+			// Skip stakebases.
+			if isSSGen && i == 0 {
+				continue
+			}
+
 			originOut := &txIn.PreviousOutPoint
 			originTx, err := dbFetchTx(dbTx, &originOut.Hash)
 			if err != nil {

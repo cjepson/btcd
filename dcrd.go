@@ -106,20 +106,6 @@ func dcrdMain(serverChan chan<- *server) error {
 	}
 	defer db.Close()
 
-	if cfg.DropAddrIndex {
-		/*
-			TODO New address index
-			dcrdLog.Info("Deleting entire addrindex.")
-			err := db.PurgeAddrIndex()
-			if err != nil {
-				dcrdLog.Errorf("Unable to delete the addrindex: %v", err)
-				return err
-			}
-			dcrdLog.Info("Successfully deleted addrindex, exiting")
-			return nil
-		*/
-	}
-
 	tmdb, err := loadTicketDB(db, activeNetParams.Params)
 	if err != nil {
 		dcrdLog.Errorf("%v", err)

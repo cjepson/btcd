@@ -2322,16 +2322,6 @@ func (b *blockManager) handleNotifyMsg(notification *blockchain.Notification) {
 			r.ntfnMgr.NotifyBlockConnected(block)
 		}
 
-		/*
-			TODO Merge in new address indexer
-			if !cfg.NoAddrIndex && b.server.addrIndexer.IsCaughtUp() {
-				err := b.server.addrIndexer.InsertBlock(block, parentBlock)
-				if err != nil {
-					bmgrLog.Errorf("AddrIndexManager error: %v", err.Error())
-				}
-			}
-		*/
-
 	// Stake tickets are spent or missed from the most recently connected block.
 	case blockchain.NTSpentAndMissedTickets:
 		tnd, ok := notification.Data.(*blockchain.TicketNotificationsData)
@@ -2415,18 +2405,6 @@ func (b *blockManager) handleNotifyMsg(notification *blockchain.Notification) {
 		if r := b.server.rpcServer; r != nil {
 			r.ntfnMgr.NotifyBlockDisconnected(block)
 		}
-
-		/*
-			TODO Merge in new address indexer
-			// If we're maintaing the address index, and it is up to date
-			// then update it based off this removed block.
-			if !cfg.NoAddrIndex && b.server.addrIndexer.IsCaughtUp() {
-				err := b.server.addrIndexer.RemoveBlock(block, parentBlock)
-				if err != nil {
-					bmgrLog.Errorf("AddrIndexManager error: %v", err.Error())
-				}
-			}
-		*/
 
 	// The blockchain is reorganizing.
 	case blockchain.NTReorganization:
