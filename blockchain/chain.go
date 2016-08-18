@@ -36,6 +36,12 @@ const (
 	// searchDepth is the distance in blocks to search down the blockchain
 	// to find some parent.
 	searchDepth = 2048
+
+	// mainChainCacheSize is the size of the cache of mainchain blocks to
+	// maintain. It is also used to establish the some of the parameters
+	// for fast syncing, for example the number of blocks to look ahead
+	// when priming a fast sync.
+	mainChainCacheSize = 300
 )
 
 // blockNode represents a block within the block chain and is primarily used to
@@ -217,6 +223,10 @@ type BlockChain struct {
 	// by the chain lock.
 	nextCheckpoint  *chaincfg.Checkpoint
 	checkpointBlock *dcrutil.Block
+
+	// latestNodesFastSync
+	latestNodesFastSyncLock sync.RWMutex
+	latestNodesFastSync     map[int64]*blockNode
 
 	// The state is used as a fairly efficient way to cache information
 	// about the current best chain state that is returned to callers when
@@ -2089,7 +2099,8 @@ func New(config *Config) (*BlockChain, error) {
 		prevOrphans:             make(map[chainhash.Hash][]*orphanBlock),
 		blockCache:              make(map[chainhash.Hash]*dcrutil.Block),
 		mainchainBlockCache:     make(map[chainhash.Hash]*dcrutil.Block),
-		mainchainBlockCacheSize: int(params.CoinbaseMaturity) + 1,
+		mainchainBlockCacheSize: mainChainCacheSize,
+		latestNodesFastSync:     make(map[int64]*blockNode),
 	}
 
 	// Initialize the chain state from the passed database.  When the db

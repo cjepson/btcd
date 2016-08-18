@@ -185,26 +185,36 @@ func (b *BlockChain) checkBlockContext(block *dcrutil.Block, prevNode *blockNode
 func (b *BlockChain) maybeAcceptBlock(block *dcrutil.Block,
 	flags BehaviorFlags) (bool, error) {
 	dryRun := flags&BFDryRun == BFDryRun
+	block.SetHeight(int64(block.MsgBlock().Header.Height))
 
 	// Get a block node for the block previous to this one.  Will be nil
 	// if this is the genesis block.
-	prevNode, err := b.getPrevNodeFromBlock(block)
-	if err != nil {
-		log.Debugf("getPrevNodeFromBlock: %v", err)
-		return false, err
+	var prevNode *blockNode
+	if int64(block.Height()) > b.latestCheckpoint().Height {
+		var err error
+		prevNode, err = b.getPrevNodeFromBlock(block)
+		if err != nil {
+			log.Debugf("getPrevNodeFromBlock failed in mayAcceptBlock: %v", err)
+			return false, err
+		}
+	} else {
+		// Block 1 exception.
+		if block.Height() == 1 {
+			prevNode = b.bestNode
+		} else {
+			// Fast sync fetch of the needed node.
+			prevBlockHash := block.MsgBlock().Header.PrevBlock
+			var found bool
+			found, prevNode = b.fastSyncFindNode(&prevBlockHash)
+			if !found {
+				return false, fmt.Errorf("could not find fast sync node")
+			}
+		}
 	}
-
-	// The height of this block is one more than the referenced previous
-	// block.
-	blockHeight := int64(0)
-	if prevNode != nil {
-		blockHeight = prevNode.height + 1
-	}
-	block.SetHeight(blockHeight)
 
 	// The block must pass all of the validation rules which depend on the
 	// position of the block within the block chain.
-	err = b.checkBlockContext(block, prevNode, flags)
+	err := b.checkBlockContext(block, prevNode, flags)
 	if err != nil {
 		return false, err
 	}
@@ -229,16 +239,68 @@ func (b *BlockChain) maybeAcceptBlock(block *dcrutil.Block,
 		}
 	}
 
-	newNode := newBlockNode(blockHeader, block.Sha(), blockHeight, voteBitsStake)
+	newNode := newBlockNode(blockHeader, block.Sha(), block.Height(),
+		voteBitsStake)
 	if prevNode != nil {
 		newNode.parent = prevNode
-		newNode.height = blockHeight
 		newNode.workSum.Add(prevNode.workSum, newNode.workSum)
 	}
 
 	// Connect the passed block to the chain while respecting proper chain
 	// selection according to the chain with the most proof of work.  This
-	// also handles validation of the transaction scripts.
+	// also handles validation of the transaction scripts.  In the case of
+	// fast syncing mode before a checkpoint, we cache the latest seen node
+	// and then evaluate whether or not we should try to begin a fast sync
+	// of a large chain of blocks.
+	if newNode.height <= b.latestCheckpoint().Height {
+		// Prime the mainchain cache for fast addition.
+		log.Tracef("Inserting block %v into the fast sync cache",
+			newNode.hash)
+		b.mainchainBlockCacheLock.Lock()
+		b.mainchainBlockCache[*newNode.hash] = block
+		b.mainchainBlockCacheLock.Unlock()
+
+		b.latestNodesFastSyncLock.Lock()
+		b.latestNodesFastSync[newNode.height] = newNode
+		b.latestNodesFastSyncLock.Unlock()
+
+		completePath, path := b.fastSyncTraceNodeToCurrentHeight(newNode)
+		// TODO check newNode.height == b.latestCheckpoint().Height  should
+		// instead just check highest and then see if path made...
+		if completePath {
+			if len(path) >= mainChainCacheSize ||
+				newNode.height == b.latestCheckpoint().Height {
+				// Form the slice of blocks. These should all be located
+				// in the mainchain cache unless something has gone
+				// terribly wrong.
+				fastInsertBlocks := make([]*dcrutil.Block, len(path))
+				b.mainchainBlockCacheLock.RLock()
+				for i, n := range path {
+					foundBlock, ok := b.mainchainBlockCache[*n.hash]
+					if !ok {
+						b.mainchainBlockCacheLock.RUnlock()
+						return false, fmt.Errorf("missing block %v for "+
+							"fast sync in mainchain cache", n.hash)
+					}
+
+					fastInsertBlocks[i] = foundBlock
+				}
+				b.mainchainBlockCacheLock.RUnlock()
+
+				// Execute the fast insert for the entire chain.
+				log.Infof("Fast inserting %v many blocks before latest "+
+					"checkpoint", len(path))
+				err := b.fastImportNodes(fastInsertBlocks, path)
+				if err != nil {
+					return false, fmt.Errorf("failure to fast insert blocks: %s",
+						err.Error())
+				}
+			}
+		}
+
+		return true, nil
+	}
+
 	var onMainChain bool
 	onMainChain, err = b.connectBestChain(newNode, block, flags)
 	if err != nil {

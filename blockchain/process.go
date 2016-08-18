@@ -49,6 +49,13 @@ func (b *BlockChain) blockExists(hash *chainhash.Hash) (bool, error) {
 		return true, nil
 	}
 
+	b.mainchainBlockCacheLock.RLock()
+	if _, ok := b.mainchainBlockCache[*hash]; ok {
+		b.mainchainBlockCacheLock.RUnlock()
+		return true, nil
+	}
+	b.mainchainBlockCacheLock.RUnlock()
+
 	// Check in the database.
 	var exists bool
 	err := b.db.View(func(dbTx database.Tx) error {

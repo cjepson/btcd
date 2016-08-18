@@ -75,16 +75,18 @@ func dbIndexConnectBlock(dbTx database.Tx, indexer Indexer, block, parent *dcrut
 	// Assert that the block being connected properly connects to the
 	// current tip of the index.
 	idxKey := indexer.Key()
-	curTipHash, _, err := dbFetchIndexerTip(dbTx, idxKey)
-	if err != nil {
-		return err
-	}
-	if !curTipHash.IsEqual(&block.MsgBlock().Header.PrevBlock) {
-		return AssertError(fmt.Sprintf("dbIndexConnectBlock must be "+
-			"called with a block that extends the current index "+
-			"tip (%s, tip %s, block %s)", indexer.Name(),
-			curTipHash, block.Sha()))
-	}
+	/*
+		curTipHash, _, err := dbFetchIndexerTip(dbTx, idxKey)
+		if err != nil {
+			return err
+		}
+			if !curTipHash.IsEqual(&block.MsgBlock().Header.PrevBlock) {
+				return AssertError(fmt.Sprintf("dbIndexConnectBlock must be "+
+					"called with a block that extends the current index "+
+					"tip (%s, tip %s, block %s)", indexer.Name(),
+					curTipHash, block.Sha()))
+			}
+	*/
 
 	// Notify the indexer with the connected block so it can index it.
 	if err := indexer.ConnectBlock(dbTx, block, parent, view); err != nil {
