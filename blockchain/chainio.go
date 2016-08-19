@@ -517,6 +517,7 @@ func dbFetchSpendJournalEntry(dbTx database.Tx, block *dcrutil.Block,
 		block.MsgBlock().STransactions...)
 
 	if len(blockTxns) > 0 && len(serialized) == 0 {
+		panic("sffft")
 		return nil, AssertError("missing spend journal data")
 	}
 

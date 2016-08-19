@@ -519,6 +519,8 @@ func (b *BlockChain) addOrphanBlock(block *dcrutil.Block) {
 		b.oldestOrphan = nil
 	}
 
+	log.Infof("Fef")
+
 	// Protect concurrent access.  This is intentionally done here instead
 	// of near the top since removeOrphanBlock does its own locking and
 	// the range iterator is not invalidated by removing map entries.

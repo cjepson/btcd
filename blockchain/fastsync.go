@@ -76,7 +76,7 @@ func (b *BlockChain) fastSyncFindNode(hash *chainhash.Hash) (bool, *blockNode) {
 // blocks, it will return a bool indicating that the path is broken or absent
 // (false). If the path exists, it will return the length of the path.
 func (b *BlockChain) fastSyncTraceNodeToCurrentHeight(node *blockNode) (bool, []*blockNode) {
-	log.Infof("Try to find path for node %v", node.hash)
+	// log.Infof("Try to find path for node %v", node.hash)
 	best := b.bestNode
 
 	searchDepth := mainChainCacheSize * 2
@@ -88,7 +88,7 @@ func (b *BlockChain) fastSyncTraceNodeToCurrentHeight(node *blockNode) (bool, []
 		// The path is broken due to asynchronous
 		// insertion of blocks.
 		if node.parent == nil {
-			log.Infof("FAIL to find path parent of %v nil!", node.hash)
+			// log.Infof("FAIL to find path parent of %v nil!", node.hash)
 			break
 		}
 
@@ -100,7 +100,7 @@ func (b *BlockChain) fastSyncTraceNodeToCurrentHeight(node *blockNode) (bool, []
 		// Path is complete, append the last node and
 		// break.
 		if *thisNode.parent.hash == *best.hash {
-			log.Infof("FOUND COMPLETE PATH!")
+			// log.Infof("FOUND COMPLETE PATH!")
 			path = append(path, thisNode)
 			foundBest = true
 			break
@@ -145,16 +145,18 @@ func (b *BlockChain) fastImportNodes(blocks []*dcrutil.Block, nodes []*blockNode
 		}
 		parent := initialParent
 
-		stxoCount := 0
-		for i := range blocks {
-			// We need to fetch the first parent manually, but we
-			// have all the rest of the parents in the passed slice.
-			if i > 0 {
-				parent = blocks[i-1]
+		/*
+			stxoCount := 0
+			for i := range blocks {
+				// We need to fetch the first parent manually, but we
+				// have all the rest of the parents in the passed slice.
+				if i > 0 {
+					parent = blocks[i-1]
+				}
+				stxoCount += countSpentOutputs(blocks[i], parent)
 			}
-			stxoCount += countSpentOutputs(blocks[i], parent)
-		}
-		stxos := make([]spentTxOut, 0, stxoCount)
+			stxos := make([]spentTxOut, 0, stxoCount)
+		*/
 
 		// Parse and create the UTXs. Jam them into the database.
 		parent = initialParent
@@ -164,6 +166,8 @@ func (b *BlockChain) fastImportNodes(blocks []*dcrutil.Block, nodes []*blockNode
 
 			curTotalTxns += countNumberOfTransactions(block, parent)
 			curTotalSubsidy += CalculateAddedSubsidy(block, parent)
+			stxoCount := countSpentOutputs(block, parent)
+			stxos := make([]spentTxOut, 0, stxoCount)
 
 			err := b.checkConnectBlock(nodes[i], block, view, &stxos)
 			if err != nil {
@@ -183,6 +187,22 @@ func (b *BlockChain) fastImportNodes(blocks []*dcrutil.Block, nodes []*blockNode
 				return err
 			}
 
+			// Update the utxo set using the state of the utxo view.  This
+			// entails removing all of the utxos spent and adding the new
+			// ones created by the block.
+			err = dbPutUtxoView(dbTx, view)
+			if err != nil {
+				return err
+			}
+
+			// Update the transaction spend journal by adding a record for
+			// the block that contains all txos spent by it.
+			lenBlocks := len(blocks)
+			err = dbPutSpendJournalEntry(dbTx, blocks[lenBlocks-1].Sha(), stxos)
+			if err != nil {
+				return err
+			}
+
 			// Allow the index manager to call each of the currently active
 			// optional indexes with the block being connected so they can
 			// update themselves accordingly.
@@ -195,51 +215,35 @@ func (b *BlockChain) fastImportNodes(blocks []*dcrutil.Block, nodes []*blockNode
 				}
 			}
 
+			// Insert the last block as the "best node" with its cumulative
+			// work.
+			b.bestNode = nodes[len(nodes)-1]
+
+			numTxns := countNumberOfTransactions(blocks[lenBlocks-1],
+				blocks[lenBlocks-2])
+			blockSize := uint64(blocks[lenBlocks-1].MsgBlock().Header.Size)
+			state := newBestState(b.bestNode, blockSize, numTxns, curTotalTxns,
+				curTotalSubsidy)
+			err = dbPutBestState(dbTx, state, finalBlockWork)
+			if err != nil {
+				return err
+			}
+
+			b.stateLock.Lock()
+			b.stateSnapshot = state
+			b.stateLock.Unlock()
+
+			// put it in
+			view.commit()
+
 			parent = blocks[i]
 		}
-
-		// Update the utxo set using the state of the utxo view.  This
-		// entails removing all of the utxos spent and adding the new
-		// ones created by the block.
-		err = dbPutUtxoView(dbTx, view)
-		if err != nil {
-			return err
-		}
-
-		// Update the transaction spend journal by adding a record for
-		// the block that contains all txos spent by it.
-		lenBlocks := len(blocks)
-		err = dbPutSpendJournalEntry(dbTx, blocks[lenBlocks-1].Sha(), stxos)
-		if err != nil {
-			return err
-		}
-
-		// Insert the last block as the "best node" with its cumulative
-		// work.
-		b.bestNode = nodes[len(nodes)-1]
-
-		numTxns := countNumberOfTransactions(blocks[lenBlocks-1],
-			blocks[lenBlocks-2])
-		blockSize := uint64(blocks[lenBlocks-1].MsgBlock().Header.Size)
-		state := newBestState(b.bestNode, blockSize, numTxns, curTotalTxns,
-			curTotalSubsidy)
-		err = dbPutBestState(dbTx, state, finalBlockWork)
-		if err != nil {
-			return err
-		}
-
-		b.stateLock.Lock()
-		b.stateSnapshot = state
-		b.stateLock.Unlock()
 
 		return nil
 	})
 	if err != nil {
 		return err
 	}
-
-	// put it in
-	view.commit()
 
 	// dump all the old blocks from the node cache, since they're now added
 	for i := blocks[0].Height(); i < blocks[len(blocks)-1].Height(); i++ {

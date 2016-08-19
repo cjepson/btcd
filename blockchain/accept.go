@@ -264,36 +264,40 @@ func (b *BlockChain) maybeAcceptBlock(block *dcrutil.Block,
 		b.latestNodesFastSync[newNode.height] = newNode
 		b.latestNodesFastSyncLock.Unlock()
 
-		completePath, path := b.fastSyncTraceNodeToCurrentHeight(newNode)
-		// TODO check newNode.height == b.latestCheckpoint().Height  should
-		// instead just check highest and then see if path made...
-		if completePath {
-			if len(path) >= mainChainCacheSize ||
-				newNode.height == b.latestCheckpoint().Height {
-				// Form the slice of blocks. These should all be located
-				// in the mainchain cache unless something has gone
-				// terribly wrong.
-				fastInsertBlocks := make([]*dcrutil.Block, len(path))
-				b.mainchainBlockCacheLock.RLock()
-				for i, n := range path {
-					foundBlock, ok := b.mainchainBlockCache[*n.hash]
-					if !ok {
-						b.mainchainBlockCacheLock.RUnlock()
-						return false, fmt.Errorf("missing block %v for "+
-							"fast sync in mainchain cache", n.hash)
+		// Only check complete path when it could possibly be long
+		// enough.
+		if newNode.height-mainChainCacheSize >= b.bestNode.height {
+			completePath, path := b.fastSyncTraceNodeToCurrentHeight(newNode)
+			// TODO check newNode.height == b.latestCheckpoint().Height  should
+			// instead just check highest and then see if path made...
+			if completePath {
+				if len(path) >= mainChainCacheSize ||
+					newNode.height == b.latestCheckpoint().Height {
+					// Form the slice of blocks. These should all be located
+					// in the mainchain cache unless something has gone
+					// terribly wrong.
+					fastInsertBlocks := make([]*dcrutil.Block, len(path))
+					b.mainchainBlockCacheLock.RLock()
+					for i, n := range path {
+						foundBlock, ok := b.mainchainBlockCache[*n.hash]
+						if !ok {
+							b.mainchainBlockCacheLock.RUnlock()
+							return false, fmt.Errorf("missing block %v for "+
+								"fast sync in mainchain cache", n.hash)
+						}
+
+						fastInsertBlocks[i] = foundBlock
 					}
+					b.mainchainBlockCacheLock.RUnlock()
 
-					fastInsertBlocks[i] = foundBlock
-				}
-				b.mainchainBlockCacheLock.RUnlock()
-
-				// Execute the fast insert for the entire chain.
-				log.Infof("Fast inserting %v many blocks before latest "+
-					"checkpoint", len(path))
-				err := b.fastImportNodes(fastInsertBlocks, path)
-				if err != nil {
-					return false, fmt.Errorf("failure to fast insert blocks: %s",
-						err.Error())
+					// Execute the fast insert for the entire chain.
+					log.Infof("Fast inserting %v many blocks before latest "+
+						"checkpoint", len(path))
+					err := b.fastImportNodes(fastInsertBlocks, path)
+					if err != nil {
+						return false, fmt.Errorf("failure to fast insert blocks: %s",
+							err.Error())
+					}
 				}
 			}
 		}

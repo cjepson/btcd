@@ -566,6 +566,124 @@ func (b *BlockChain) disconnectTickets(tixStore TicketStore, node *blockNode,
 // chain (or another side chain).  Another scenario is where a ticket exists from
 // the point of view of the main chain, but doesn't exist in a side chain that
 // branches before the block that contains the ticket on the main chain.
+func (b *BlockChain) fetchTicketStoreLocalDbTx(dbTx database.Tx, node *blockNode) (TicketStore, error) {
+	tixStore := make(TicketStore)
+
+	// Get the previous block node.  This function is used over simply
+	// accessing node.parent directly as it will dynamically create previous
+	// block nodes as needed.  This helps allow only the pieces of the chain
+	// that are needed to remain in memory.
+	prevNode, err := b.getPrevNodeFromNode(node)
+	if err != nil {
+		return nil, err
+	}
+
+	// If we haven't selected a best chain yet or we are extending the main
+	// (best) chain with a new block, just use the ticket database we already
+	// have.
+	if b.bestNode == nil || (prevNode != nil &&
+		prevNode.hash.IsEqual(b.bestNode.hash)) {
+		return nil, nil
+	}
+
+	// We don't care about nodes before stake enabled height.
+	if node.height < b.chainParams.StakeEnabledHeight {
+		return nil, nil
+	}
+
+	// The requested node is either on a side chain or is a node on the main
+	// chain before the end of it.  In either case, we need to undo the
+	// transactions and spend information for the blocks which would be
+	// disconnected during a reorganize to the point of view of the
+	// node just before the requested node.
+	detachNodes, attachNodes := b.getReorganizeNodes(node)
+	if err != nil {
+		return nil, err
+	}
+
+	view := NewUtxoViewpoint()
+	view.SetBestHash(b.bestNode.hash)
+	view.SetStakeViewpoint(ViewpointPrevValidInitial)
+
+	for e := detachNodes.Front(); e != nil; e = e.Next() {
+		n := e.Value.(*blockNode)
+		block, err := b.getBlockFromHash(n.hash)
+		if err != nil {
+			return nil, err
+		}
+
+		parent, err := b.getBlockFromHash(&n.header.PrevBlock)
+		if err != nil {
+			return nil, err
+		}
+
+		// Load all of the spent txos for the block from the spend
+		// journal.
+		var stxos []spentTxOut
+		stxos, err = dbFetchSpendJournalEntry(dbTx, block, parent, view)
+		if err != nil {
+			return nil, err
+		}
+		err = b.disconnectTransactions(view, block, parent, stxos)
+		if err != nil {
+			return nil, err
+		}
+		err = b.disconnectTickets(tixStore, n, block)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// The ticket store is now accurate to either the node where the
+	// requested node forks off the main chain (in the case where the
+	// requested node is on a side chain), or the requested node itself if
+	// the requested node is an old node on the main chain.  Entries in the
+	// attachNodes list indicate the requested node is on a side chain, so
+	// if there are no nodes to attach, we're done.
+	if attachNodes.Len() == 0 {
+		return tixStore, nil
+	}
+
+	// The requested node is on a side chain, so we need to apply the
+	// transactions and spend information from each of the nodes to attach.
+	for e := attachNodes.Front(); e != nil; e = e.Next() {
+		n := e.Value.(*blockNode)
+		block, exists := b.blockCache[*n.hash]
+		if !exists {
+			return nil, fmt.Errorf("unable to find block %v in "+
+				"side chain cache for ticket db patch construction",
+				n.hash)
+		}
+
+		// The number of blocks below this block but above the root of the fork
+		err = b.connectTickets(tixStore, n, block, view)
+		if err != nil {
+			return nil, err
+		}
+
+		parent, err := b.getBlockFromHash(&n.header.PrevBlock)
+		if err != nil {
+			return nil, err
+		}
+
+		var stxos []spentTxOut
+		err = b.connectTransactions(view, block, parent, &stxos)
+		if err != nil {
+			return nil, err
+		}
+
+		view.SetBestHash(node.hash)
+	}
+
+	return tixStore, nil
+}
+
+// fetchTicketStore fetches ticket data from the point of view of the given node.
+// For example, a given node might be down a side chain where a ticket hasn't been
+// spent from its point of view even though it might have been spent in the main
+// chain (or another side chain).  Another scenario is where a ticket exists from
+// the point of view of the main chain, but doesn't exist in a side chain that
+// branches before the block that contains the ticket on the main chain.
 func (b *BlockChain) fetchTicketStore(node *blockNode) (TicketStore, error) {
 	tixStore := make(TicketStore)
 
