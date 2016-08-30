@@ -125,9 +125,9 @@ type UndoTicketData struct {
 // undoTicketDataSize is the serialized size of an UndoTicketData struct in bytes.
 const undoTicketDataSize = 37
 
-// convertUndoBitFlags converts the bools of the UndoTicketData struct into a
+// undoBitFlagsToByte converts the bools of the UndoTicketData struct into a
 // series of bitflags in a single byte.
-func convertUndoBitFlags(missed, revoked, expired bool) byte {
+func undoBitFlagsToByte(missed, revoked, expired bool) byte {
 	var b byte
 	if missed {
 		b |= 1 << 0
@@ -142,28 +142,119 @@ func convertUndoBitFlags(missed, revoked, expired bool) byte {
 	return b
 }
 
-// SerializeBlockUndoData serializes an entire list of relevant tickets for
+// undoBitFlagsFromByte converts a byte into its relevant flags.
+func undoBitFlagsFromByte(b byte) (bool, bool, bool) {
+	missed := b&(1<<0) > 0
+	revoked := b&(1<<1) > 0
+	expired := b&(1<<2) > 0
+
+	return missed, revoked, expired
+}
+
+// serializeBlockUndoData serializes an entire list of relevant tickets for
 // undoing tickets at any given height.
-func SerializeBlockUndoData(utds []*UndoTicketData) []byte {
-	// 4 bytes for the number of tickets serialized in little endian.
-	b := make([]byte, 4+len(utds)*undoTicketDataSize)
+func serializeBlockUndoData(utds []*UndoTicketData) []byte {
+	b := make([]byte, len(utds)*undoTicketDataSize)
 	offset := 0
-	dbnamespace.ByteOrder.PutUint32(b[offset:offset+4], uint32(len(utds)))
-	offset += 4
 	for _, utd := range utds {
 		copy(b[offset:offset+chainhash.HashSize], utd.TicketHash[:])
 		offset += chainhash.HashSize
 		dbnamespace.ByteOrder.PutUint32(b[offset:offset+4], utd.TicketHeight)
 		offset += 4
-		b[offset] = convertUndoBitFlags(utd.Missed, utd.Revoked, utd.Expired)
+		b[offset] = undoBitFlagsToByte(utd.Missed, utd.Revoked, utd.Expired)
 		offset += 1
 	}
 
 	return b
 }
 
-// DeserializeBlockUndoData deserializes a list of UndoTicketData for an entire
+// deserializeBlockUndoData deserializes a list of UndoTicketData for an entire
 // block.
-func DeserializeBlockUndoData() ([]byte, error) {
+func deserializeBlockUndoData(b []byte) ([]*UndoTicketData, error) {
+	if len(b) < undoTicketDataSize {
+		return nil, ticketDBError(ErrUndoDataShortRead, "short read when "+
+			"deserializing block undo data")
+	}
 
+	if len(b)%undoTicketDataSize != 0 {
+		return nil, ticketDBError(ErrUndoDataCorrupt, "corrupt data found "+
+			"when deserializing block undo data")
+	}
+
+	entries := len(b) / undoTicketDataSize
+	utds := make([]*UndoTicketData, entries)
+
+	offset := 0
+	for i := 0; i < entries; i++ {
+		hash, err := chainhash.NewHash(
+			b[offset : offset+chainhash.HashSize])
+		if err != nil {
+			return nil, ticketDBError(ErrUndoDataCorrupt, "corrupt hash found "+
+				"when deserializing block undo data")
+		}
+		offset += chainhash.HashSize
+
+		height := dbnamespace.ByteOrder.Uint32(b[offset : offset+4])
+		offset += 4
+
+		missed, revoked, expired := undoBitFlagsFromByte(b[offset])
+		offset += 1
+
+		utds[i] = &UndoTicketData{
+			TicketHash:   *hash,
+			TicketHeight: height,
+			Missed:       missed,
+			Revoked:      revoked,
+			Expired:      expired,
+		}
+	}
+
+	return utds, nil
+}
+
+// TicketHashes is a list of ticket hashes that will mature in TicketMaturity
+// many blocks from the block in which they were included.
+type TicketHashes []*chainhash.Hash
+
+// serializeTicketHashes serializes a list of ticket hashes.
+func serializeTicketHashes(ths TicketHashes) []byte {
+	b := make([]byte, len(ths)*chainhash.HashSize)
+	offset := 0
+	for _, th := range ths {
+		copy(b[offset:offset+chainhash.HashSize], th[:])
+		offset += chainhash.HashSize
+	}
+
+	return b
+}
+
+// deserializeTicketHashes deserializes a list of ticket hashes.
+func deserializeTicketHashes(b []byte) (TicketHashes, error) {
+	if len(b) < chainhash.HashSize {
+		return nil, ticketDBError(ErrTicketHashesShortRead, "short read when "+
+			"deserializing ticket hashes")
+	}
+
+	if len(b)%chainhash.HashSize != 0 {
+		return nil, ticketDBError(ErrTicketHashesCorrupt, "corrupt data found "+
+			"when deserializing ticket hashes")
+	}
+
+	entries := len(b) / chainhash.HashSize
+	ths := make(TicketHashes, entries)
+
+	offset := 0
+	for i := 0; i < entries; i++ {
+		hash, err := chainhash.NewHash(
+			b[offset : offset+chainhash.HashSize])
+		if err != nil {
+			return nil, ticketDBError(ErrUndoDataCorrupt, "corrupt hash found "+
+				"when deserializing block undo data")
+		}
+		offset += chainhash.HashSize
+
+		ths[i] = hash
+	}
+
+	return ths, nil
 }
