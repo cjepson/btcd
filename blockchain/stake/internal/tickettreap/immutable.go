@@ -348,6 +348,44 @@ func (t *Immutable) ForEach(fn func(k Key, v *Value) bool) {
 	}
 }
 
+// FetchWinnersAndExpired is a ticket database specific function which iterates
+// over the entire treap and finds winners at selected indexes and all tickets
+// whose height is less than or equal to the passed height. There are returned
+// as slices of pointers to keys, which can be recast as []*chainhash.Hash.
+func (t *Immutable) FetchWinnersAndExpired(idxs []int, height uint32) ([]*Key, []*Key) {
+	if idxs == nil {
+		return nil, nil
+	}
+
+	inIndexes := func(is []int, i int) bool {
+		for j := range is {
+			if is[j] == i {
+				return true
+			}
+		}
+		return false
+	}
+
+	// TODO buffer winners according to the TicketsPerBlock value from
+	// chaincfg?
+	idx := 0
+	winners := make([]*Key, 0)
+	expired := make([]*Key, 0)
+	t.ForEach(func(k Key, v *Value) bool {
+		if inIndexes(idxs, idx) {
+			winners = append(winners, &k)
+		}
+		if v.Height <= height {
+			expired = append(expired, &k)
+		}
+
+		idx++
+		return true
+	})
+
+	return winners, expired
+}
+
 // NewImmutable returns a new empty immutable treap ready for use.  See the
 // documentation for the Immutable structure for more details.
 func NewImmutable() *Immutable {
