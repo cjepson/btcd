@@ -40,6 +40,10 @@ const (
 	// ErrDatabaseInfoShortRead indicates that the given database information
 	// was too small.
 	ErrDatabaseInfoShortRead
+
+	// ErrLoadAllTickets indicates that there was an error loading the tickets
+	// from the database, presumably at startup.
+	ErrLoadAllTickets
 )
 
 // Map of ErrorCode values back to their constant names for pretty printing.
@@ -52,6 +56,7 @@ var errorCodeStrings = map[ErrorCode]string{
 	ErrMissingKey:            "ErrMissingKey",
 	ErrChainStateShortRead:   "ErrChainStateShortRead",
 	ErrDatabaseInfoShortRead: "ErrDatabaseInfoShortRead",
+	ErrLoadAllTickets:        "ErrLoadAllTickets",
 }
 
 // String returns the ErrorCode as a human-readable name.

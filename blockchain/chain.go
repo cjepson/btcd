@@ -72,10 +72,10 @@ type blockNode struct {
 	// DECRED TODO: Is this actually used anywhere? If not prune it.
 	outputAmtsTotal int64
 
-	// Decred: Keep the full block header.
+	// header is the full block header.
 	header wire.BlockHeader
 
-	// VoteBits for the stake voters.
+	// voteBits are the VoteBits for the stake voters.
 	voteBits []uint16
 }
 

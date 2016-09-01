@@ -147,6 +147,14 @@ const (
 	// ErrVerifyOutPkhs indicates that the recipient of the P2PKH or P2SH
 	// script was different from that indicated in the SStx input.
 	ErrVerifyOutPkhs
+
+	// ErrDatabaseCorrupt indicates a database inconsistency.
+	ErrDatabaseCorrupt
+
+	// ErrMissingDatabaseTx indicates that a node disconnection failed to
+	// pass a database transaction when attempted to remove a very old
+	// node.
+	ErrMissingDatabaseTx
 )
 
 // Map of ErrorCode values back to their constant names for pretty printing.
@@ -183,6 +191,8 @@ var errorCodeStrings = map[ErrorCode]string{
 	ErrVerifySpendTooMuch:   "ErrVerifySpendTooMuch",
 	ErrVerifyOutputAmt:      "ErrVerifyOutputAmt",
 	ErrVerifyOutPkhs:        "ErrVerifyOutPkhs",
+	ErrDatabaseCorrupt:      "ErrDatabaseCorrupt",
+	ErrMissingDatabaseTx:    "ErrMissingDatabaseTx",
 }
 
 // String returns the ErrorCode as a human-readable name.

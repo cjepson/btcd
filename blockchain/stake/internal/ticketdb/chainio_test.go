@@ -32,24 +32,24 @@ func TestDatabaseInfoSerialization(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		info       databaseInfo
+		info       DatabaseInfo
 		serialized []byte
 	}{
 		{
 			name: "not upgrade",
-			info: databaseInfo{
-				version:        currentDatabaseVersion,
-				date:           time.Unix(int64(0x57acca95), 0),
-				upgradeStarted: false,
+			info: DatabaseInfo{
+				Version:        currentDatabaseVersion,
+				Date:           time.Unix(int64(0x57acca95), 0),
+				UpgradeStarted: false,
 			},
 			serialized: hexToBytes("0100000095caac57"),
 		},
 		{
 			name: "upgrade",
-			info: databaseInfo{
-				version:        currentDatabaseVersion,
-				date:           time.Unix(int64(0x57acca95), 0),
-				upgradeStarted: true,
+			info: DatabaseInfo{
+				Version:        currentDatabaseVersion,
+				Date:           time.Unix(int64(0x57acca95), 0),
+				UpgradeStarted: true,
 			},
 			serialized: hexToBytes("0100008095caac57"),
 		},
@@ -123,21 +123,29 @@ func TestDbInfoDeserializeErrors(t *testing.T) {
 func TestBestChainStateSerialization(t *testing.T) {
 	t.Parallel()
 
+	hash1 := chainhash.HashFuncH([]byte{0x00})
+	hash2 := chainhash.HashFuncH([]byte{0x01})
+	hash3 := chainhash.HashFuncH([]byte{0x02})
+	hash4 := chainhash.HashFuncH([]byte{0x03})
+	hash5 := chainhash.HashFuncH([]byte{0x04})
+
 	tests := []struct {
 		name       string
-		state      bestChainState
+		state      BestChainState
 		serialized []byte
 	}{
 		{
 			name: "generic block",
-			state: bestChainState{
-				hash:    *newShaHashFromStr("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"),
-				height:  12323,
-				live:    29399,
-				missed:  293929392,
-				revoked: 349839493,
+			state: BestChainState{
+				Hash:        *newShaHashFromStr("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"),
+				Height:      12323,
+				Live:        29399,
+				Missed:      293929392,
+				Revoked:     349839493,
+				PerBlock:    5,
+				NextWinners: []chainhash.Hash{hash1, hash2, hash3, hash4, hash5},
 			},
-			serialized: hexToBytes("6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d619000000000023300000d7720000b0018511000000008520da1400000000"),
+			serialized: hexToBytes("6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d619000000000023300000d7720000b0018511000000008520da140000000005000ce8d4ef4dd7cd8d62dfded9d4edb0a774ae6a41929a74da23109e8f11139c874a6c419a1e25c85327115c4ace586decddfe2990ed8f3d4d801871158338501d49af37ab5270015fe25276ea5a3bb159d852943df23919522a202205fb7d175cb706d561742ad3671703c247eb927ee8a386369c79644131cdeb2c5c26bf6c5d4c6eb9e38415034f4c93d3304d10bef38bf0ad420eefd0f72f940f11c5857786"),
 		},
 	}
 
@@ -223,6 +231,7 @@ func TestBlockUndoDataSerializing(t *testing.T) {
 					Missed:       true,
 					Revoked:      false,
 					Expired:      true,
+					Spent:        false,
 				},
 				&UndoTicketData{
 					TicketHash:   chainhash.HashFuncH([]byte{0x01}),
@@ -230,9 +239,10 @@ func TestBlockUndoDataSerializing(t *testing.T) {
 					Missed:       false,
 					Revoked:      true,
 					Expired:      false,
+					Spent:        true,
 				},
 			},
-			serialized: hexToBytes("0ce8d4ef4dd7cd8d62dfded9d4edb0a774ae6a41929a74da23109e8f11139c8740e20100054a6c419a1e25c85327115c4ace586decddfe2990ed8f3d4d801871158338501d6edd010002"),
+			serialized: hexToBytes("0ce8d4ef4dd7cd8d62dfded9d4edb0a774ae6a41929a74da23109e8f11139c8740e20100054a6c419a1e25c85327115c4ace586decddfe2990ed8f3d4d801871158338501d6edd01000a"),
 		},
 	}
 
