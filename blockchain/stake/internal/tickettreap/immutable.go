@@ -5,7 +5,10 @@
 
 package tickettreap
 
-import "bytes"
+import (
+	"bytes"
+	"sort"
+)
 
 // cloneTreapNode returns a shallow copy of the passed node.
 func cloneTreapNode(node *treapNode) *treapNode {
@@ -357,26 +360,24 @@ func (t *Immutable) FetchWinnersAndExpired(idxs []int, height uint32) ([]*Key, [
 		return nil, nil
 	}
 
-	inIndexes := func(is []int, i int) bool {
-		for j := range is {
-			if is[j] == i {
-				return true
-			}
-		}
-		return false
-	}
+	sortedIdxs := sort.IntSlice(idxs)
+	sort.Sort(sortedIdxs)
 
 	// TODO buffer winners according to the TicketsPerBlock value from
 	// chaincfg?
 	idx := 0
 	winners := make([]*Key, 0)
 	expired := make([]*Key, 0)
+	winnerIdx := 0
 	t.ForEach(func(k Key, v *Value) bool {
-		if inIndexes(idxs, idx) {
-			winners = append(winners, &k)
-		}
 		if v.Height <= height {
 			expired = append(expired, &k)
+		}
+		if idx == sortedIdxs[winnerIdx] {
+			winners = append(winners, &k)
+			if winnerIdx+1 < len(sortedIdxs) {
+				winnerIdx++
+			}
 		}
 
 		idx++

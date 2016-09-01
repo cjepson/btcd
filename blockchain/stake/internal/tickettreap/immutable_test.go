@@ -602,10 +602,15 @@ func TestImmutableMemory(t *testing.T) {
 		return sum / uint64(len(uis))
 	}
 
+	runtime.GC()
 	runtime.ReadMemStats(memStats)
 	finalAlloc := memStats.Alloc
 	t.Logf("Ticket treaps for %v nodes allocated %v many bytes total after GC",
 		numNodes, finalAlloc-initAlloc)
 	t.Logf("Ticket treaps allocated an average of %v many bytes per node",
 		avgUint64(allocsPerNode))
+
+	// Keep all the treaps alive in memory so GC doesn't rm them in
+	// the previous step.
+	nodeTreaps[0] = nodeTreaps[0]
 }
