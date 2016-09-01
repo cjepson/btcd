@@ -4,13 +4,37 @@
 package ticketdb
 
 import (
+	"time"
+
 	"github.com/decred/dcrd/blockchain/dbnamespace"
 	"github.com/decred/dcrd/chaincfg/chainhash"
+	"github.com/decred/dcrd/database"
+)
+
+const (
+	// upgradeStartedBit if the bit flag for whether or not a database
+	// upgrade is in progress. It is used to determine if the database
+	// is in an inconsistent state from the update.
+	upgradeStartedBit = 0x80000000
+
+	// currentDatabaseVersion indicates what the current database
+	// version is.
+	currentDatabaseVersion = 1
 )
 
 // Database structure -------------------------------------------------------------
 //
 //   Buckets
+//
+// The information about the ticket database is defined by the
+// StakeDbInfoBucketName bucket. By default, this bucket contains a single key
+// keyed to the contents of StakeDbInfoBucketName which contains the value of
+// all the database information, such as the date created and the version of
+// the database.
+//
+// Blockchain state is stored in a root key named StakeChainStateKeyName. This
+// contains the current height of the blockchain, which should be equivalent to
+// the height of the best chain on start up.
 //
 // There are 5 buckets from the database reserved for tickets. These are:
 // 1. Live
@@ -92,11 +116,185 @@ import (
 //  the data for the block removed is purged from both the BlockUndo and
 //  TicketsToAdd buckets.
 
-// LiveTicketData is the data for live tickets to be written to the disk with
-// the addition of every block.
-type LiveTicketData struct {
-	TicketHash   chainhash.Hash
-	TicketHeight uint32
+// -----------------------------------------------------------------------------
+// The database information contains information about the version and date
+// of the blockchain database.
+//
+//   Field      Type     Size      Description
+//   version    uint32   4 bytes   The version of the database
+//   date       uint32   4 bytes   The date of the creation of the database
+//
+// The high bit (0x80000000) is used on version to indicate that an upgrade
+// is in progress and used to confirm the database fidelity on start up.
+// -----------------------------------------------------------------------------
+
+// databaseInfoSize is the serialized size of the best chain state in bytes.
+const databaseInfoSize = 8
+
+// databaseInfo is the structure for a database.
+type databaseInfo struct {
+	version        uint32
+	date           time.Time
+	upgradeStarted bool
+}
+
+// serializeDatabaseInfo serializes a database information struct.
+func serializeDatabaseInfo(dbi *databaseInfo) []byte {
+	version := dbi.version
+	if dbi.upgradeStarted {
+		version |= upgradeStartedBit
+	}
+
+	val := make([]byte, databaseInfoSize)
+	versionBytes := make([]byte, 4)
+	dbnamespace.ByteOrder.PutUint32(versionBytes, version)
+	copy(val[0:4], versionBytes)
+	timestampBytes := make([]byte, 4)
+	dbnamespace.ByteOrder.PutUint32(timestampBytes, uint32(dbi.date.Unix()))
+	copy(val[4:8], timestampBytes)
+
+	return val
+}
+
+// dbPutDatabaseInfo uses an existing database transaction to store the database
+// information.
+func dbPutDatabaseInfo(dbTx database.Tx, dbi *databaseInfo) error {
+	meta := dbTx.Metadata()
+	subsidyBucket := meta.Bucket(dbnamespace.StakeDbInfoBucketName)
+	val := serializeDatabaseInfo(dbi)
+
+	// Store the current database info into the database.
+	return subsidyBucket.Put(dbnamespace.StakeDbInfoBucketName, val)
+}
+
+// deserializeDatabaseInfo deserializes a database information struct.
+func deserializeDatabaseInfo(dbInfoBytes []byte) (*databaseInfo, error) {
+	if len(dbInfoBytes) < databaseInfoSize {
+		return nil, ticketDBError(ErrDatabaseInfoShortRead,
+			"short read when deserializing best chain state data")
+	}
+
+	rawVersion := dbnamespace.ByteOrder.Uint32(dbInfoBytes[0:4])
+	upgradeStarted := (upgradeStartedBit & rawVersion) > 0
+	version := rawVersion &^ upgradeStartedBit
+	ts := dbnamespace.ByteOrder.Uint32(dbInfoBytes[4:8])
+
+	return &databaseInfo{
+		version:        version,
+		date:           time.Unix(int64(ts), 0),
+		upgradeStarted: upgradeStarted,
+	}, nil
+}
+
+// dbFetchSubsidyForHeightInterval uses an existing database transaction to
+// fetch the database versioning and creation information.
+func dbFetchDatabaseInfo(dbTx database.Tx) (*databaseInfo, error) {
+	meta := dbTx.Metadata()
+	bucket := meta.Bucket(dbnamespace.StakeDbInfoBucketName)
+
+	// Uninitialized state.
+	if bucket == nil {
+		return nil, nil
+	}
+
+	dbInfoBytes := bucket.Get(dbnamespace.StakeDbInfoBucketName)
+	if dbInfoBytes == nil {
+		return nil, ticketDBError(ErrMissingKey, "missing key for database info")
+	}
+
+	return deserializeDatabaseInfo(dbInfoBytes)
+}
+
+// -----------------------------------------------------------------------------
+// The best chain state consists of the best block hash and height, the total
+// number of live tickets, the total number of missed tickets, and the number of
+// revoked tickets.
+//
+// The serialized format is:
+//
+//   <block hash><block height><live><missed><revoked>
+//
+//   Field             Type             Size
+//   block hash        chainhash.Hash   chainhash.HashSize
+//   block height      uint32           4 bytes
+//   live tickets      uint32           4 bytes
+//   missed tickets    uint64           8 bytes
+//   revoked tickets   uint64           8 bytes
+// -----------------------------------------------------------------------------
+
+// bestChainStateSize is the serialized size of the best chain state in bytes.
+const bestChainStateSize = 56
+
+// bestChainState represents the data to be stored the database for the current
+// best chain state.
+type bestChainState struct {
+	hash    chainhash.Hash
+	height  uint32
+	live    uint32
+	missed  uint64
+	revoked uint64
+}
+
+// serializeBestChainState returns the serialization of the passed block best
+// chain state.  This is data to be stored in the chain state bucket.
+func serializeBestChainState(state bestChainState) []byte {
+	// Serialize the chain state.
+	serializedData := make([]byte, bestChainStateSize)
+
+	offset := 0
+	copy(serializedData[offset:offset+chainhash.HashSize], state.hash[:])
+	offset += chainhash.HashSize
+	dbnamespace.ByteOrder.PutUint32(serializedData[offset:], state.height)
+	offset += 4
+	dbnamespace.ByteOrder.PutUint32(serializedData[offset:], state.live)
+	offset += 4
+	dbnamespace.ByteOrder.PutUint64(serializedData[offset:], state.missed)
+	offset += 8
+	dbnamespace.ByteOrder.PutUint64(serializedData[offset:], state.revoked)
+	offset += 8
+
+	return serializedData[:]
+}
+
+// deserializeBestChainState deserializes the passed serialized best chain
+// state.  This is data stored in the chain state bucket and is updated after
+// every block is connected or disconnected form the main chain.
+// block.
+func deserializeBestChainState(serializedData []byte) (bestChainState, error) {
+	// Ensure the serialized data has enough bytes to properly deserialize
+	// the state.
+	if len(serializedData) < bestChainStateSize {
+		return bestChainState{}, ticketDBError(ErrChainStateShortRead,
+			"short read when deserializing best chain state data")
+	}
+
+	state := bestChainState{}
+	offset := 0
+	copy(state.hash[:], serializedData[offset:offset+chainhash.HashSize])
+	offset += chainhash.HashSize
+	state.height = dbnamespace.ByteOrder.Uint32(serializedData[offset : offset+4])
+	offset += 4
+	state.live = dbnamespace.ByteOrder.Uint32(
+		serializedData[offset : offset+4])
+	offset += 4
+	state.missed = dbnamespace.ByteOrder.Uint64(
+		serializedData[offset : offset+8])
+	offset += 8
+	state.revoked = dbnamespace.ByteOrder.Uint64(
+		serializedData[offset : offset+8])
+	offset += 8
+
+	return state, nil
+}
+
+// dbPutBestState uses an existing database transaction to update the best chain
+// state with the given parameters.
+func dbPutBestState(dbTx database.Tx, bcs bestChainState) error {
+	// Serialize the current best chain state.
+	serializedData := serializeBestChainState(bcs)
+
+	// Store the current best chain state into the database.
+	return dbTx.Metadata().Put(dbnamespace.StakeChainStateKeyName, serializedData)
 }
 
 // UndoTicketData is the data for any ticket that has been spent, missed, or
@@ -212,6 +410,33 @@ func deserializeBlockUndoData(b []byte) ([]*UndoTicketData, error) {
 	return utds, nil
 }
 
+// dbFetchBlockUndoData fetches block undo data from the database.
+func dbFetchBlockUndoData(dbTx database.Tx, height uint32) ([]*UndoTicketData, error) {
+	meta := dbTx.Metadata()
+	bucket := meta.Bucket(dbnamespace.StakeBlockUndoDataBucketName)
+
+	k := make([]byte, 4)
+	dbnamespace.ByteOrder.PutUint32(k, height)
+	v := bucket.Get(k)
+	if v == nil {
+		return nil, ticketDBError(ErrMissingKey,
+			"missing key for block undo data")
+	}
+
+	return deserializeBlockUndoData(v)
+}
+
+// dbPutBlockUndoData inserts block undo data into the database.
+func dbPutBlockUndoData(dbTx database.Tx, height uint32, utds []*UndoTicketData) error {
+	meta := dbTx.Metadata()
+	bucket := meta.Bucket(dbnamespace.StakeBlockUndoDataBucketName)
+	k := make([]byte, 4)
+	dbnamespace.ByteOrder.PutUint32(k, height)
+	v := serializeBlockUndoData(utds)
+
+	return bucket.Put(k, v)
+}
+
 // TicketHashes is a list of ticket hashes that will mature in TicketMaturity
 // many blocks from the block in which they were included.
 type TicketHashes []*chainhash.Hash
@@ -257,4 +482,51 @@ func deserializeTicketHashes(b []byte) (TicketHashes, error) {
 	}
 
 	return ths, nil
+}
+
+// dbFetchNewTickets fetches new tickets for a mainchain block from the database.
+func dbFetchNewTickets(dbTx database.Tx, height uint32) (TicketHashes, error) {
+	meta := dbTx.Metadata()
+	bucket := meta.Bucket(dbnamespace.TicketsInBlockBucketName)
+
+	k := make([]byte, 4)
+	dbnamespace.ByteOrder.PutUint32(k, height)
+	v := bucket.Get(k)
+	if v == nil {
+		return nil, ticketDBError(ErrMissingKey,
+			"missing key for new tickets")
+	}
+
+	return deserializeTicketHashes(v)
+}
+
+// dbPutNewTickets inserts new tickets for a mainchain block data into the
+// database.
+func dbPutNewTickets(dbTx database.Tx, height uint32, ths TicketHashes) error {
+	meta := dbTx.Metadata()
+	bucket := meta.Bucket(dbnamespace.StakeBlockUndoDataBucketName)
+	k := make([]byte, 4)
+	dbnamespace.ByteOrder.PutUint32(k, height)
+	v := serializeTicketHashes(ths)
+
+	return bucket.Put(k, v)
+}
+
+// dbDeleteTicket removes a ticket from one of the ticket database buckets.
+func dbDeleteTicket(dbTx database.Tx, ticketBucket []byte, hash *chainhash.Hash) error {
+	meta := dbTx.Metadata()
+	bucket := meta.Bucket(ticketBucket)
+
+	return bucket.Delete(hash[:])
+}
+
+// dbInsertTicket inserts a ticket into one of the ticket database buckets.
+func dbPutTicket(dbTx database.Tx, ticketBucket []byte, hash *chainhash.Hash, height uint32) error {
+	meta := dbTx.Metadata()
+	bucket := meta.Bucket(ticketBucket)
+	k := hash[:]
+	v := make([]byte, 4)
+	dbnamespace.ByteOrder.PutUint32(v, height)
+
+	return bucket.Put(k, v)
 }

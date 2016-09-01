@@ -25,6 +25,21 @@ const (
 	// ErrTicketHashesCorrupt indicates that the data for ticket hashes
 	// in a serialized entry was corrupt.
 	ErrTicketHashesCorrupt
+
+	// ErrUninitializedBucket indicates that a database bucket was not
+	// initialized and therefore could not be written to or read from.
+	ErrUninitializedBucket
+
+	// ErrMissingKey indicates that a key was not found in a bucket.
+	ErrMissingKey
+
+	// ErrChainStateShortRead indicates that the given chain state data
+	// was too small.
+	ErrChainStateShortRead
+
+	// ErrDatabaseInfoShortRead indicates that the given database information
+	// was too small.
+	ErrDatabaseInfoShortRead
 )
 
 // Map of ErrorCode values back to their constant names for pretty printing.
@@ -33,6 +48,10 @@ var errorCodeStrings = map[ErrorCode]string{
 	ErrUndoDataCorrupt:       "ErrUndoDataCorrupt",
 	ErrTicketHashesShortRead: "ErrTicketHashesShortRead",
 	ErrTicketHashesCorrupt:   "ErrTicketHashesCorrupt",
+	ErrUninitializedBucket:   "ErrUninitializedBucket",
+	ErrMissingKey:            "ErrMissingKey",
+	ErrChainStateShortRead:   "ErrChainStateShortRead",
+	ErrDatabaseInfoShortRead: "ErrDatabaseInfoShortRead",
 }
 
 // String returns the ErrorCode as a human-readable name.

@@ -1096,11 +1096,11 @@ func serializeDatabaseInfo(dbi *databaseInfo) []byte {
 // information.
 func dbPutDatabaseInfo(dbTx database.Tx, dbi *databaseInfo) error {
 	meta := dbTx.Metadata()
-	subsidyBucket := meta.Bucket(dbnamespace.BlockChainDbInfoBucketName)
+	bucket := meta.Bucket(dbnamespace.BlockChainDbInfoBucketName)
 	val := serializeDatabaseInfo(dbi)
 
 	// Store the current best chain state into the database.
-	return subsidyBucket.Put(dbnamespace.BlockChainDbInfoBucketName, val)
+	return bucket.Put(dbnamespace.BlockChainDbInfoBucketName, val)
 }
 
 // deserializeDatabaseInfo deserializes a database information struct.
@@ -1162,7 +1162,6 @@ func dbFetchDatabaseInfo(dbTx database.Tx) (*databaseInfo, error) {
 //   block height      uint32           4 bytes
 //   total txns        uint64           8 bytes
 //   total subsidy     int64            8 bytes
-//   ticket pool value int64            8 bytes
 //   work sum length   uint32           4 bytes
 //   work sum          big.Int          work sum length
 // -----------------------------------------------------------------------------

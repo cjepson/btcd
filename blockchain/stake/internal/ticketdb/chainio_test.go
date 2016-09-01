@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/decred/dcrd/chaincfg/chainhash"
 )
@@ -15,6 +16,192 @@ func hexToBytes(s string) []byte {
 	b, _ := hex.DecodeString(s)
 
 	return b
+}
+
+// newShaHashFromStr converts a 64 character hex string to a chainhash.Hash.
+func newShaHashFromStr(s string) *chainhash.Hash {
+	h, _ := chainhash.NewHashFromStr(s)
+
+	return h
+}
+
+// TestDatabaseInfoSerialization ensures serializing and deserializing the
+// database version information works as expected.
+func TestDatabaseInfoSerialization(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		info       databaseInfo
+		serialized []byte
+	}{
+		{
+			name: "not upgrade",
+			info: databaseInfo{
+				version:        currentDatabaseVersion,
+				date:           time.Unix(int64(0x57acca95), 0),
+				upgradeStarted: false,
+			},
+			serialized: hexToBytes("0100000095caac57"),
+		},
+		{
+			name: "upgrade",
+			info: databaseInfo{
+				version:        currentDatabaseVersion,
+				date:           time.Unix(int64(0x57acca95), 0),
+				upgradeStarted: true,
+			},
+			serialized: hexToBytes("0100008095caac57"),
+		},
+	}
+
+	for i, test := range tests {
+		// Ensure the state serializes to the expected value.
+		gotBytes := serializeDatabaseInfo(&test.info)
+		if !bytes.Equal(gotBytes, test.serialized) {
+			t.Errorf("serializeDatabaseInfo #%d (%s): mismatched "+
+				"bytes - got %x, want %x", i, test.name,
+				gotBytes, test.serialized)
+			continue
+		}
+
+		// Ensure the serialized bytes are decoded back to the expected
+		// state.
+		info, err := deserializeDatabaseInfo(test.serialized)
+		if err != nil {
+			t.Errorf("deserializeDatabaseInfo #%d (%s) "+
+				"unexpected error: %v", i, test.name, err)
+			continue
+		}
+		if !reflect.DeepEqual(info, &test.info) {
+			t.Errorf("deserializeDatabaseInfo #%d (%s) "+
+				"mismatched state - got %v, want %v", i,
+				test.name, info, test.info)
+			continue
+		}
+	}
+}
+
+// TestDbInfoDeserializeErrors performs negative tests against
+// deserializing the database information to ensure error paths
+// work as expected.
+func TestDbInfoDeserializeErrors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		serialized []byte
+		errCode    ErrorCode
+	}{
+		{
+			name:       "short read",
+			serialized: hexToBytes("0000"),
+			errCode:    ErrDatabaseInfoShortRead,
+		},
+	}
+
+	for _, test := range tests {
+		// Ensure the expected error type is returned.
+		_, err := deserializeDatabaseInfo(test.serialized)
+		ticketDBErr, ok := err.(TicketDBError)
+		if !ok {
+			t.Errorf("couldn't convert deserializeDatabaseInfo error "+
+				"to ticket db error (err: %v)", err)
+			continue
+		}
+		if ticketDBErr.GetCode() != test.errCode {
+			t.Errorf("deserializeDatabaseInfo (%s): expected error type "+
+				"does not match - got %v, want %v", test.name,
+				ticketDBErr.ErrorCode, test.errCode)
+			continue
+		}
+	}
+}
+
+// TestBestChainStateSerialization ensures serializing and deserializing the
+// best chain state works as expected.
+func TestBestChainStateSerialization(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		state      bestChainState
+		serialized []byte
+	}{
+		{
+			name: "generic block",
+			state: bestChainState{
+				hash:    *newShaHashFromStr("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"),
+				height:  12323,
+				live:    29399,
+				missed:  293929392,
+				revoked: 349839493,
+			},
+			serialized: hexToBytes("6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d619000000000023300000d7720000b0018511000000008520da1400000000"),
+		},
+	}
+
+	for i, test := range tests {
+		// Ensure the state serializes to the expected value.
+		gotBytes := serializeBestChainState(test.state)
+		if !bytes.Equal(gotBytes, test.serialized) {
+			t.Errorf("serializeBestChainState #%d (%s): mismatched "+
+				"bytes - got %x, want %x", i, test.name,
+				gotBytes, test.serialized)
+			continue
+		}
+
+		// Ensure the serialized bytes are decoded back to the expected
+		// state.
+		state, err := deserializeBestChainState(test.serialized)
+		if err != nil {
+			t.Errorf("deserializeBestChainState #%d (%s) "+
+				"unexpected error: %v", i, test.name, err)
+			continue
+		}
+		if !reflect.DeepEqual(state, test.state) {
+			t.Errorf("deserializeBestChainState #%d (%s) "+
+				"mismatched state - got %v, want %v", i,
+				test.name, state, test.state)
+			continue
+
+		}
+	}
+}
+
+// TestBestChainStateDeserializeErrors performs negative tests against
+// deserializing the chain state to ensure error paths work as expected.
+func TestBestChainStateDeserializeErrors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		serialized []byte
+		errCode    ErrorCode
+	}{
+		{
+			name:       "short read",
+			serialized: hexToBytes("0000"),
+			errCode:    ErrChainStateShortRead,
+		},
+	}
+
+	for _, test := range tests {
+		// Ensure the expected error type is returned.
+		_, err := deserializeBestChainState(test.serialized)
+		ticketDBErr, ok := err.(TicketDBError)
+		if !ok {
+			t.Errorf("couldn't convert deserializeBestChainState error "+
+				"to ticket db error (err: %v)", err)
+			continue
+		}
+		if ticketDBErr.GetCode() != test.errCode {
+			t.Errorf("deserializeBestChainState (%s): expected error type "+
+				"does not match - got %v, want %v", test.name,
+				ticketDBErr.ErrorCode, test.errCode)
+			continue
+		}
+	}
 }
 
 // TestBlockUndoDataSerializing ensures serializing and deserializing the
