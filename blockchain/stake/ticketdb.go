@@ -5,11 +5,12 @@
 package stake
 
 import (
-	"sync"
+	//"sync"
 
 	"github.com/decred/dcrd/blockchain/dbnamespace"
 	"github.com/decred/dcrd/blockchain/stake/internal/ticketdb"
 	"github.com/decred/dcrd/blockchain/stake/internal/tickettreap"
+	"github.com/decred/dcrd/chaincfg"
 	"github.com/decred/dcrd/chaincfg/chainhash"
 	"github.com/decred/dcrd/database"
 	"github.com/decred/dcrd/wire"
@@ -30,9 +31,6 @@ type UndoTicketDataSlice []*ticketdb.UndoTicketData
 // returns a pointer to a new stake node, which must be saved and used
 // appropriately.
 type StakeNode struct {
-	// internalMutex ensures safe concurrent access of this data.
-	internalMutex sync.RWMutex
-
 	// liveTickets is the treap of the live tickets for this node.
 	liveTickets *tickettreap.Immutable
 
@@ -52,6 +50,9 @@ type StakeNode struct {
 
 	// nextWinners is the list of the next winners for this block.
 	nextWinners []*chainhash.Hash
+
+	// params is the blockchain parameters.
+	params *chaincfg.Params
 }
 
 // UndoData returns the stored UndoTicketDataSlice used to remove this node
@@ -60,10 +61,28 @@ func (sn *StakeNode) UndoData() UndoTicketDataSlice {
 	return sn.databaseUndoUpdate
 }
 
-// UndoData returns the stored UndoTicketDataSlice used to remove this node
+// NewTickets returns the stored UndoTicketDataSlice used to remove this node
 // and restore it to the parent state.
 func (sn *StakeNode) NewTickets() []*chainhash.Hash {
 	return sn.databaseBlockTickets
+}
+
+// ExistsLiveTicket returns whether or not a ticket exists in the live ticket
+// treap for this stake node.
+func (sn *StakeNode) ExistsLiveTicket(ticket *chainhash.Hash) bool {
+	return sn.liveTickets.Has(tickettreap.Key(*ticket))
+}
+
+// ExistsMissedTicket returns whether or not a ticket exists in the missed
+// ticket treap for this stake node.
+func (sn *StakeNode) ExistsMissedTicket(ticket *chainhash.Hash) bool {
+	return sn.missedTickets.Has(tickettreap.Key(*ticket))
+}
+
+// Winners returns the current list of winners for this stake node, which
+// can vote on this node.
+func (sn *StakeNode) Winners() []*chainhash.Hash {
+	return sn.Winners()
 }
 
 // InitializeTicketDatabase is used when the blockchain is initialized, to
@@ -72,7 +91,7 @@ func (sn *StakeNode) NewTickets() []*chainhash.Hash {
 // on the same location in the blockchain as the blockchain itself. This
 // function also checks to ensure that the database has not failed the
 // upgrade process and reports the current version.
-func InitializeTicketDatabase(dbTx database.Tx, height uint32, blockHash *chainhash.Hash) (*StakeNode, error) {
+func InitializeTicketDatabase(dbTx database.Tx, height uint32, blockHash *chainhash.Hash, params *chaincfg.Params) (*StakeNode, error) {
 	info, err := ticketdb.DbFetchDatabaseInfo(dbTx)
 	if err != nil {
 		return nil, err
@@ -89,6 +108,7 @@ func InitializeTicketDatabase(dbTx database.Tx, height uint32, blockHash *chainh
 
 	// Restore the best node treaps form the database.
 	node := new(StakeNode)
+	node.params = params
 	node.liveTickets, err = ticketdb.DbLoadAllTickets(dbTx,
 		dbnamespace.LiveTicketsBucketName)
 	if err != nil {
@@ -142,10 +162,49 @@ type ticketData struct {
 	height uint32
 }
 
-// ConnectStakeNode connects a child to a parent stake node, returning the
-// modified stake node for the child.
-func ConnectStakeNode(node *StakeNode, header *wire.BlockHeader, tickets []*chainhash.Hash) (*StakeNode, error) {
+// hashInSlice determines if a hash exists in a slice of hashes.
+func hashInSlice(h *chainhash.Hash, list []*chainhash.Hash) bool {
+	for _, hash := range list {
+		if h.IsEqual(hash) {
+			return true
+		}
+	}
 
+	return false
+}
+
+// connectStakeNode connects a child to a parent stake node, returning the
+// modified stake node for the child.
+func connectStakeNode(node *StakeNode, header *wire.BlockHeader, ticketsSpentInBlock []*chainhash.Hash, newTickets []*chainhash.Hash) (*StakeNode, error) {
+	connectedNode := &StakeNode{
+		liveTickets:          node.liveTickets,
+		missedTickets:        node.missedTickets,
+		revokedTickets:       node.revokedTickets,
+		databaseUndoUpdate:   nil,
+		databaseBlockTickets: nil,
+		params:               node.params,
+	}
+
+	// Find the next set of winners.
+	/*
+		hB, err := header.Bytes()
+		if err != nil {
+			return nil, stakeRuleError(ErrMemoryCorruption, "block header failed to "+
+				"serialize")
+		}
+		prng := NewHash256PRNG(hB)
+		ts, err := stake.FindTicketIdxs(int64(len(sortedTickets167)),
+			int(simNetParams.TicketsPerBlock), prng)
+		if err != nil {
+			return stakeRuleError(ErrFindTicketIdxs, "failure on FindTicketIdxs")
+		}
+		for _, idx := range ts {
+			ticketsToSpendIn167 =
+				append(ticketsToSpendIn167, sortedTickets167[idx].SStxHash)
+		}
+	*/
+
+	return connectedNode, nil
 }
 
 // disconnectStakeNode disconnects a stake node from itself and returns the
@@ -182,6 +241,7 @@ func disconnectStakeNode(node *StakeNode, height uint32, parentUtds UndoTicketDa
 		revokedTickets:       node.revokedTickets,
 		databaseUndoUpdate:   parentUtds,
 		databaseBlockTickets: parentTickets,
+		params:               node.params,
 	}
 	nextWinners := make([]*chainhash.Hash, 0)
 	for _, undo := range node.databaseUndoUpdate {

@@ -155,6 +155,15 @@ const (
 	// pass a database transaction when attempted to remove a very old
 	// node.
 	ErrMissingDatabaseTx
+
+	// ErrMemoryCorruption indicates that memory has somehow become corrupt,
+	// for example invalid block header serialization from an in memory
+	// struct.
+	ErrMemoryCorruption
+
+	// ErrFindTicketIdxs indicates a failure to find the selected ticket
+	// indexes from the block header.
+	ErrFindTicketIdxs
 )
 
 // Map of ErrorCode values back to their constant names for pretty printing.
@@ -193,6 +202,8 @@ var errorCodeStrings = map[ErrorCode]string{
 	ErrVerifyOutPkhs:        "ErrVerifyOutPkhs",
 	ErrDatabaseCorrupt:      "ErrDatabaseCorrupt",
 	ErrMissingDatabaseTx:    "ErrMissingDatabaseTx",
+	ErrMemoryCorruption:     "ErrMemoryCorruption",
+	ErrFindTicketIdxs:       "ErrFindTicketIdxs",
 }
 
 // String returns the ErrorCode as a human-readable name.
