@@ -89,7 +89,7 @@ type TicketNotificationsData struct {
 	Hash            chainhash.Hash
 	Height          int64
 	StakeDifficulty int64
-	TicketMap       stake.SStxMemMap
+	Tickets         stake.UndoTicketDataSlice
 }
 
 // Notification defines notification that is sent to the caller via the callback

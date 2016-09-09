@@ -1436,6 +1436,9 @@ func (b *BlockChain) initChainState() error {
 		node.workSum = state.workSum
 		b.bestNode = node
 		b.root = node
+		
+		// Restore the stake node from the database.
+		stake.InitializeBestNode()
 
 		// Add the new node to the indices for faster lookups.
 		prevHash := &node.header.PrevBlock

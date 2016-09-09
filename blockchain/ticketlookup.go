@@ -5,6 +5,8 @@
 
 package blockchain
 
+/*
+
 import (
 	"errors"
 	"fmt"
@@ -689,3 +691,4 @@ func (b *BlockChain) fetchTicketStore(node *blockNode) (TicketStore, error) {
 
 	return tixStore, nil
 }
+*/

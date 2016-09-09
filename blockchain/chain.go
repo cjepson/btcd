@@ -76,7 +76,7 @@ type blockNode struct {
 	header wire.BlockHeader
 
 	// voteBits are the VoteBits for the stake voters.
-	voteBits []uint16
+	stakeNode stake.StakeNode
 }
 
 // newBlockNode returns a new block node for the given block header.  It is
@@ -172,7 +172,6 @@ type BlockChain struct {
 	checkpointsByHeight map[int64]*chaincfg.Checkpoint
 	db                  database.DB
 	dbInfo              *databaseInfo
-	tmdb                *stake.TicketDB
 	chainParams         *chaincfg.Params
 	notifications       NotificationCallback
 	sigCache            *txscript.SigCache
@@ -268,39 +267,38 @@ func (b *BlockChain) FetchSubsidyCache() *SubsidyCache {
 //
 // This function is NOT safe for concurrent access.
 func (b *BlockChain) LiveTickets() ([]*chainhash.Hash, error) {
-	live, err := b.tmdb.DumpAllLiveTicketHashes()
-	if err != nil {
-		return nil, err
-	}
+	b.chainLock.Lock()
+	sn := b.bestNode.stakeNode
+	b.chainLock.Unlock()
 
-	return live, nil
+	return sn.LiveTickets(), nil
 }
 
 // MissedTickets returns all currently missed tickets from the stake database.
 //
 // This function is NOT safe for concurrent access.
-func (b *BlockChain) MissedTickets() (stake.SStxMemMap, error) {
-	missed, err := b.tmdb.DumpMissedTickets()
-	if err != nil {
-		return nil, err
-	}
+func (b *BlockChain) MissedTickets() ([]*chainhash.Hash, error) {
+	b.chainLock.Lock()
+	sn := b.bestNode.stakeNode
+	b.chainLock.Unlock()
 
-	return missed, nil
+	return sn.MissedTickets(), nil
 }
 
 // TicketsWithAddress returns a slice of ticket hashes that are currently live
 // corresponding to the given address.
 //
-// This function is NOT safe for concurrent access.
+// This function is safe for concurrent access.
 func (b *BlockChain) TicketsWithAddress(address dcrutil.Address) ([]chainhash.Hash,
 	error) {
-	tickets, err := b.tmdb.DumpAllLiveTicketHashes()
-	if err != nil {
-		return nil, err
-	}
+	b.chainLock.Lock()
+	sn := b.bestNode.stakeNode
+	b.chainLock.Unlock()
+
+	tickets := sn.LiveTickets()
 
 	var ticketsWithAddr []chainhash.Hash
-	err = b.db.View(func(dbTx database.Tx) error {
+	err := b.db.View(func(dbTx database.Tx) error {
 		var err error
 		for _, hash := range tickets {
 			utxo, err := dbFetchUtxoEntry(dbTx, hash)
@@ -327,26 +325,31 @@ func (b *BlockChain) TicketsWithAddress(address dcrutil.Address) ([]chainhash.Ha
 // CheckLiveTicket returns whether or not a ticket exists in the live ticket
 // map of the stake database.
 //
-// This function is NOT safe for concurrent access.
-func (b *BlockChain) CheckLiveTicket(hash *chainhash.Hash) (bool, error) {
-	return b.tmdb.CheckLiveTicket(*hash)
+// This function is safe for concurrent access.
+func (b *BlockChain) CheckLiveTicket(hash *chainhash.Hash) bool {
+	b.chainLock.Lock()
+	sn := b.bestNode.stakeNode
+	b.chainLock.Unlock()
+
+	return sn.ExistsLiveTicket(hash)
 }
 
 // CheckLiveTickets returns whether or not a slice of tickets exist in the live
 // ticket map of the stake database.
 //
-// This function is NOT safe for concurrent access.
-func (b *BlockChain) CheckLiveTickets(hashes []*chainhash.Hash) ([]bool, error) {
+// This function is safe for concurrent access.
+func (b *BlockChain) CheckLiveTickets(hashes []*chainhash.Hash) []bool {
+	b.chainLock.Lock()
+	sn := b.bestNode.stakeNode
+	b.chainLock.Unlock()
+
 	var err error
 	existsSlice := make([]bool, len(hashes))
 	for i, hash := range hashes {
-		existsSlice[i], err = b.tmdb.CheckLiveTicket(*hash)
-		if err != nil {
-			return nil, err
-		}
+		existsSlice[i] = sn.ExistsLiveTicket(hash)
 	}
 
-	return existsSlice, nil
+	return existsSlice
 }
 
 // TicketPoolValue returns the current value of all the locked funds in the
@@ -356,15 +359,14 @@ func (b *BlockChain) CheckLiveTickets(hashes []*chainhash.Hash) ([]bool, error) 
 // 256 blocks deep on mainnet, so the UTXO set should generally always have
 // the asked for transactions.
 func (b *BlockChain) TicketPoolValue() (dcrutil.Amount, error) {
-	tickets, err := b.tmdb.DumpAllLiveTicketHashes()
-	if err != nil {
-		return 0, err
-	}
+	b.chainLock.Lock()
+	sn := b.bestNode.stakeNode
+	b.chainLock.Unlock()
 
 	var amt int64
-	err = b.db.View(func(dbTx database.Tx) error {
+	err := b.db.View(func(dbTx database.Tx) error {
 		var err error
-		for _, hash := range tickets {
+		for _, hash := range sn.LiveTickets() {
 			utxo, err := dbFetchUtxoEntry(dbTx, hash)
 			if err != nil {
 				return err
@@ -2056,9 +2058,6 @@ type Config struct {
 	// This field is required.
 	DB database.DB
 
-	// tmdb
-	TMDB *stake.TicketDB
-
 	// ChainParams identifies which chain parameters the chain is associated
 	// with.
 	//
@@ -2115,7 +2114,6 @@ func New(config *Config) (*BlockChain, error) {
 	b := BlockChain{
 		checkpointsByHeight:     checkpointsByHeight,
 		db:                      config.DB,
-		tmdb:                    config.TMDB,
 		chainParams:             params,
 		notifications:           config.Notifications,
 		sigCache:                config.SigCache,

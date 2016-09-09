@@ -164,6 +164,10 @@ const (
 	// ErrFindTicketIdxs indicates a failure to find the selected ticket
 	// indexes from the block header.
 	ErrFindTicketIdxs
+
+	// ErrMissingTicket indicates that a ticket was missing in one of the
+	// ticket treaps when it was attempted to be fetched.
+	ErrMissingTicket
 )
 
 // Map of ErrorCode values back to their constant names for pretty printing.
@@ -204,6 +208,7 @@ var errorCodeStrings = map[ErrorCode]string{
 	ErrMissingDatabaseTx:    "ErrMissingDatabaseTx",
 	ErrMemoryCorruption:     "ErrMemoryCorruption",
 	ErrFindTicketIdxs:       "ErrFindTicketIdxs",
+	ErrMissingTicket:        "ErrMissingTicket",
 }
 
 // String returns the ErrorCode as a human-readable name.

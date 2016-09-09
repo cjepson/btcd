@@ -5,6 +5,7 @@
 package stake
 
 import (
+	"fmt"
 	//"sync"
 
 	"github.com/decred/dcrd/blockchain/dbnamespace"
@@ -31,6 +32,8 @@ type UndoTicketDataSlice []*ticketdb.UndoTicketData
 // returns a pointer to a new stake node, which must be saved and used
 // appropriately.
 type StakeNode struct {
+	height uint32
+
 	// liveTickets is the treap of the live tickets for this node.
 	liveTickets *tickettreap.Immutable
 
@@ -73,10 +76,38 @@ func (sn *StakeNode) ExistsLiveTicket(ticket *chainhash.Hash) bool {
 	return sn.liveTickets.Has(tickettreap.Key(*ticket))
 }
 
+// LiveTickets returns the list of live tickets for this stake node.
+func (sn *StakeNode) LiveTickets() []*chainhash.Hash {
+	tickets := make([]*chainhash.Hash, sn.liveTickets.Len())
+	i := 0
+	sn.liveTickets.ForEach(func(k tickettreap.Key, v *tickettreap.Value) bool {
+		h := chainhash.Hash(k)
+		tickets[i] = &h
+		i++
+		return true
+	})
+
+	return tickets
+}
+
 // ExistsMissedTicket returns whether or not a ticket exists in the missed
 // ticket treap for this stake node.
 func (sn *StakeNode) ExistsMissedTicket(ticket *chainhash.Hash) bool {
 	return sn.missedTickets.Has(tickettreap.Key(*ticket))
+}
+
+// MissedTickets returns the list of missed tickets for this stake node.
+func (sn *StakeNode) MissedTickets() []*chainhash.Hash {
+	tickets := make([]*chainhash.Hash, sn.missedTickets.Len())
+	i := 0
+	sn.missedTickets.ForEach(func(k tickettreap.Key, v *tickettreap.Value) bool {
+		h := chainhash.Hash(k)
+		tickets[i] = &h
+		i++
+		return true
+	})
+
+	return tickets
 }
 
 // Winners returns the current list of winners for this stake node, which
@@ -85,13 +116,13 @@ func (sn *StakeNode) Winners() []*chainhash.Hash {
 	return sn.Winners()
 }
 
-// InitializeTicketDatabase is used when the blockchain is initialized, to
-// get the initial stake node from the database bucket. The blockchain must
-// pass the height and the blockHash to confirm that the ticket database is
-// on the same location in the blockchain as the blockchain itself. This
-// function also checks to ensure that the database has not failed the
-// upgrade process and reports the current version.
-func InitializeTicketDatabase(dbTx database.Tx, height uint32, blockHash *chainhash.Hash, params *chaincfg.Params) (*StakeNode, error) {
+// LoadBestNode is used when the blockchain is initialized, to get the initial
+// stake node from the database bucket. The blockchain must pass the height
+// and the blockHash to confirm that the ticket database is on the same
+// location in the blockchain as the blockchain itself. This function also
+// checks to ensure that the database has not failed the upgrade process and
+// reports the current version.
+func LoadBestNode(dbTx database.Tx, height uint32, blockHash *chainhash.Hash, params *chaincfg.Params) (*StakeNode, error) {
 	info, err := ticketdb.DbFetchDatabaseInfo(dbTx)
 	if err != nil {
 		return nil, err
@@ -108,6 +139,7 @@ func InitializeTicketDatabase(dbTx database.Tx, height uint32, blockHash *chainh
 
 	// Restore the best node treaps form the database.
 	node := new(StakeNode)
+	node.height = height
 	node.params = params
 	node.liveTickets, err = ticketdb.DbLoadAllTickets(dbTx,
 		dbnamespace.LiveTicketsBucketName)
@@ -173,10 +205,27 @@ func hashInSlice(h *chainhash.Hash, list []*chainhash.Hash) bool {
 	return false
 }
 
+// hashInUndoData determines if a hash exists in a slice of ticket undo data.
+/*
+func hashInUndoData(h *chainhash.Hash, list UndoTicketDataSlice) bool {
+	for _, entry := range list {
+		if h.IsEqual(&entry.TicketHash) {
+			return true
+		}
+	}
+
+	return false
+}
+*/
+
 // connectStakeNode connects a child to a parent stake node, returning the
-// modified stake node for the child.
-func connectStakeNode(node *StakeNode, header *wire.BlockHeader, ticketsSpentInBlock []*chainhash.Hash, newTickets []*chainhash.Hash) (*StakeNode, error) {
+// modified stake node for the child.  It is important to keep in mind that
+// the argument node is the parent node, and that the child stake node is
+// returned after subsequent modification of the parent node's immutable
+// data.
+func connectStakeNode(node *StakeNode, header *wire.BlockHeader, ticketsSpentInBlock []*chainhash.Hash, revokedTickets []*chainhash.Hash, newTickets []*chainhash.Hash) (*StakeNode, error) {
 	connectedNode := &StakeNode{
+		height:               node.height + 1,
 		liveTickets:          node.liveTickets,
 		missedTickets:        node.missedTickets,
 		revokedTickets:       node.revokedTickets,
@@ -184,6 +233,44 @@ func connectStakeNode(node *StakeNode, header *wire.BlockHeader, ticketsSpentInB
 		databaseBlockTickets: nil,
 		params:               node.params,
 	}
+	undoData := make(UndoTicketDataSlice, 0)
+
+	// Iterate through all possible winners and construct the undo data,
+	// updating the live and missed ticket treaps as necessary.
+	for _, ticket := range node.nextWinners {
+		k := tickettreap.Key(*ticket)
+		v := node.liveTickets.Get(tickettreap.Key(*ticket))
+		if v == nil {
+			return nil, stakeRuleError(ErrMissingTicket, fmt.Sprintf(
+				"ticket %v was supposed to be in the live ticket "+
+					"treap, but could not be found"))
+		}
+
+		// If it's spent in this block, mark it as being spent. Otherwise,
+		// it was missed. Spent tickets are dropped from the live ticket
+		// bucket, while missed tickets are pushed to the missed ticket
+		// bucket.
+		wasSpent := false
+		if hashInSlice(ticket, ticketsSpentInBlock) {
+			wasSpent = true
+			connectedNode.liveTickets = connectedNode.liveTickets.Delete(k)
+		} else {
+			connectedNode.liveTickets = connectedNode.liveTickets.Delete(k)
+			connectedNode.missedTickets = connectedNode.missedTickets.Put(k, v)
+		}
+
+		undoData = append(undoData, &ticketdb.UndoTicketData{
+			TicketHash:   *ticket,
+			TicketHeight: v.Height,
+			Missed:       !wasSpent,
+			Revoked:      false,
+			Expired:      false,
+			Spent:        wasSpent,
+		})
+
+	}
+
+	// Find all expiring tickets and drop them as well.
 
 	// Find the next set of winners.
 	/*
@@ -211,7 +298,7 @@ func connectStakeNode(node *StakeNode, header *wire.BlockHeader, ticketsSpentInB
 // state of the parent node. The database transaction should be included if the
 // UndoTicketDataSlice or tickets are nil in order to look up the undo data or
 // tickets from the database.
-func disconnectStakeNode(node *StakeNode, height uint32, parentUtds UndoTicketDataSlice, parentTickets []*chainhash.Hash, dbTx database.Tx) (*StakeNode, error) {
+func disconnectStakeNode(node *StakeNode, parentUtds UndoTicketDataSlice, parentTickets []*chainhash.Hash, dbTx database.Tx) (*StakeNode, error) {
 	// The undo ticket slice is normally stored in memory for the most
 	// recent blocks and the sidechain, but it may be the case that it
 	// is missing because it's in the mainchain and very old (thus
@@ -224,18 +311,19 @@ func disconnectStakeNode(node *StakeNode, height uint32, parentUtds UndoTicketDa
 		}
 
 		var err error
-		parentUtds, err = ticketdb.DbFetchBlockUndoData(dbTx, height)
+		parentUtds, err = ticketdb.DbFetchBlockUndoData(dbTx, node.height)
 		if err != nil {
 			return nil, err
 		}
 
-		parentTickets, err = ticketdb.DbFetchNewTickets(dbTx, height)
+		parentTickets, err = ticketdb.DbFetchNewTickets(dbTx, node.height)
 		if err != nil {
 			return nil, err
 		}
 	}
 
 	restoredNode := &StakeNode{
+		height:               node.height - 1,
 		liveTickets:          node.liveTickets,
 		missedTickets:        node.missedTickets,
 		revokedTickets:       node.revokedTickets,
@@ -283,6 +371,14 @@ func disconnectStakeNode(node *StakeNode, height uint32, parentUtds UndoTicketDa
 
 // DisconnectNode disconnects a stake node from the node and returns a pointer
 // to the stake node of the parent.
-func (sn *StakeNode) DisconnectNode(height uint32, parentUtds UndoTicketDataSlice, parentTickets []*chainhash.Hash, dbTx database.Tx) (*StakeNode, error) {
-	return disconnectStakeNode(sn, height, parentUtds, parentTickets, dbTx)
+func (sn *StakeNode) DisconnectNode(parentUtds UndoTicketDataSlice, parentTickets []*chainhash.Hash, dbTx database.Tx) (*StakeNode, error) {
+	return disconnectStakeNode(sn, parentUtds, parentTickets, dbTx)
+}
+
+// WriteBestNode writes the best node to the database under an atomic database
+// transaction. It also has the ability to drop reversion data for all nodes
+// after this node on the main chain, for example if you are removing the best
+// node and moving to its parent.
+func WriteBestNode(dbTx database.Tx, node *StakeNode, dropReversionData bool) error {
+	return nil
 }

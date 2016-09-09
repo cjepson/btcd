@@ -2,13 +2,13 @@ package blockchain
 
 import (
 	"bytes"
-	"encoding/binary"
+	//"encoding/binary"
 	"fmt"
-	"sort"
+	//"sort"
 
 	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg"
-	"github.com/decred/dcrd/chaincfg/chainhash"
+	//"github.com/decred/dcrd/chaincfg/chainhash"
 	"github.com/decred/dcrd/database"
 	"github.com/decred/dcrd/txscript"
 	"github.com/decred/dcrd/wire"
@@ -318,6 +318,7 @@ func DebugMsgTxString(msgTx *wire.MsgTx) string {
 	return buffer.String()
 }
 
+/*
 // DebugTicketDataString writes the contents of a ticket data struct
 // as a string.
 func DebugTicketDataString(td *stake.TicketData) string {
@@ -733,3 +734,4 @@ func TicketDbThumbprint(tmdb *stake.TicketDB,
 
 	return dbThumbprints, nil
 }
+*/
