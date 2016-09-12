@@ -2463,7 +2463,7 @@ func (b *BlockChain) CheckConnectBlock(block *dcrutil.Block) error {
 		// journal.
 		var stxos []spentTxOut
 		err = b.db.View(func(dbTx database.Tx) error {
-			stxos, err = dbFetchSpendJournalEntry(dbTx, block, parent, view)
+			stxos, err = dbFetchSpendJournalEntry(dbTx, block, parent)
 			return err
 		})
 		if err != nil {

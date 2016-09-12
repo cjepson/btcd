@@ -1535,7 +1535,7 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 		// journal.
 		var stxos []spentTxOut
 		err = b.db.View(func(dbTx database.Tx) error {
-			stxos, err = dbFetchSpendJournalEntry(dbTx, block, parent, view)
+			stxos, err = dbFetchSpendJournalEntry(dbTx, block, parent)
 			return err
 		})
 		if err != nil {
@@ -1747,7 +1747,7 @@ func (b *BlockChain) forceHeadReorganization(formerBest chainhash.Hash,
 	var stxos []spentTxOut
 	err = b.db.View(func(dbTx database.Tx) error {
 		stxos, err = dbFetchSpendJournalEntry(dbTx, formerBestBlock,
-			commonParentBlock, view)
+			commonParentBlock)
 		return err
 	})
 	if err != nil {
@@ -2143,6 +2143,40 @@ func New(config *Config) (*BlockChain, error) {
 	log.Infof("Chain state (height %d, hash %v, total transactions %d, work %v)",
 		b.bestNode.height, b.bestNode.hash, b.stateSnapshot.TotalTxns,
 		b.bestNode.workSum)
+
+	// Blockchain integrity test. TODO Remove
+	err := b.db.View(func(dbTx database.Tx) error {
+		for i := int64(2); i <= b.bestNode.height; i++ {
+			block, err := dbFetchBlockByHeight(dbTx, i)
+			if err != nil {
+				return err
+			}
+
+			parent, err := dbFetchBlockByHeight(dbTx, i-1)
+			if err != nil {
+				return err
+			}
+
+			ntx := countNumberOfTransactions(block, parent)
+			view := NewUtxoViewpoint()
+			view.SetBestHash(block.Sha())
+			view.SetStakeViewpoint(ViewpointPrevValidInitial)
+			stxos, err := dbFetchSpendJournalEntry(dbTx, block, parent)
+			if err != nil {
+				return err
+			}
+
+			if int(ntx) != len(stxos) {
+				log.Infof("bad number of stxos calculated, got %v expected %v",
+					len(stxos), int(ntx))
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	return &b, nil
 }

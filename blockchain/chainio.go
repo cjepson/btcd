@@ -30,6 +30,10 @@ const (
 	// currentDatabaseVersion indicates what the current database
 	// version is.
 	currentDatabaseVersion = 1
+
+	// minimumStxoSize is the absolute smallest size a serialized STXO
+	// may be, below which is assumed to be an error.
+	minimumStxoSize = 4
 )
 
 // errNotInMainChain signifies that a block hash or height that is not in the
@@ -388,8 +392,7 @@ func decodeSpentTxOut(serialized []byte, stxo *spentTxOut, amount int64,
 // format comments, this function also requires the transactions that spend the
 // txouts and a utxo view that contains any remaining existing utxos in the
 // transactions referenced by the inputs to the passed transasctions.
-func deserializeSpendJournalEntry(serialized []byte, txns []*wire.MsgTx,
-	view *UtxoViewpoint) ([]spentTxOut, error) {
+func deserializeSpendJournalEntry(serialized []byte, txns []*wire.MsgTx) ([]spentTxOut, error) {
 	// Calculate the total number of stxos.
 	var numStxos int
 	for _, tx := range txns {
@@ -479,8 +482,13 @@ func serializeSpendJournalEntry(stxos []spentTxOut) ([]byte, error) {
 	var size int
 	var sizes []int
 	for i := range stxos {
-		// size += spentTxOutSerializeSize(&stxos[i])
 		sz := spentTxOutSerializeSize(&stxos[i])
+		if sz < minimumStxoSize {
+			return nil, AssertError(fmt.Sprintf("short "+
+				"read while trying to serialize spend "+
+				"journal entry stxo %v", i))
+		}
+
 		sizes = append(sizes, sz)
 		size += sz
 	}
@@ -509,7 +517,7 @@ func serializeSpendJournalEntry(stxos []spentTxOut) ([]byte, error) {
 // the passed block since that information is required to reconstruct the spent
 // txouts.
 func dbFetchSpendJournalEntry(dbTx database.Tx, block *dcrutil.Block,
-	parent *dcrutil.Block, view *UtxoViewpoint) ([]spentTxOut, error) {
+	parent *dcrutil.Block) ([]spentTxOut, error) {
 	// Exclude the coinbase transaction since it can't spend anything.
 	spendBucket := dbTx.Metadata().Bucket(dbnamespace.SpendJournalBucketName)
 	serialized := spendBucket.Get(block.Sha()[:])
@@ -520,7 +528,7 @@ func dbFetchSpendJournalEntry(dbTx database.Tx, block *dcrutil.Block,
 		return nil, AssertError("missing spend journal data")
 	}
 
-	stxos, err := deserializeSpendJournalEntry(serialized, blockTxns, view)
+	stxos, err := deserializeSpendJournalEntry(serialized, blockTxns)
 	if err != nil {
 		// Ensure any deserialization errors are returned as database
 		// corruption errors.
