@@ -2189,37 +2189,35 @@ func New(config *Config) (*BlockChain, error) {
 		b.bestNode.workSum)
 
 	// Blockchain integrity test. TODO Remove
-	/*
-		err := b.db.View(func(dbTx database.Tx) error {
-			for i := int64(2); i <= b.bestNode.height; i++ {
-				block, err := dbFetchBlockByHeight(dbTx, i)
-				if err != nil {
-					return err
-				}
-
-				parent, err := dbFetchBlockByHeight(dbTx, i-1)
-				if err != nil {
-					return err
-				}
-
-				ntx := countNumberOfTransactions(block, parent)
-				stxos, err := dbFetchSpendJournalEntry(dbTx, block, parent)
-				if err != nil {
-					return err
-				}
-
-				if int(ntx) != len(stxos) {
-					log.Infof("bad number of stxos calculated at height %v, got %v expected %v",
-						i, len(stxos), int(ntx))
-				}
+	err := b.db.View(func(dbTx database.Tx) error {
+		for i := int64(2); i <= b.bestNode.height; i++ {
+			block, err := dbFetchBlockByHeight(dbTx, i)
+			if err != nil {
+				return err
 			}
 
-			return nil
-		})
-		if err != nil {
-			return nil, err
+			parent, err := dbFetchBlockByHeight(dbTx, i-1)
+			if err != nil {
+				return err
+			}
+
+			ntx := countSpentOutputs(block, parent)
+			stxos, err := dbFetchSpendJournalEntry(dbTx, block, parent)
+			if err != nil {
+				return err
+			}
+
+			if int(ntx) != len(stxos) {
+				log.Infof("bad number of stxos calculated at height %v, got %v expected %v",
+					i, len(stxos), int(ntx))
+			}
 		}
-	*/
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	return &b, nil
 }
@@ -2237,7 +2235,7 @@ func (b *BlockChain) DoStxoTest() error {
 				return err
 			}
 
-			ntx := countNumberOfTransactions(block, parent)
+			ntx := countSpentOutputs(block, parent)
 			stxos, err := dbFetchSpendJournalEntry(dbTx, block, parent)
 			if err != nil {
 				return err
