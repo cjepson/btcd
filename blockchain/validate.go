@@ -2298,6 +2298,10 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 		}
 	}
 
+	if stxos != nil {
+		fmt.Printf("length of stxos after connect parent reg %v\n", len(*stxos))
+	}
+
 	// TxTreeStake of current block.
 	utxoView.SetStakeViewpoint(thisNodeStakeViewpoint)
 	err = b.checkDupTxs(block.STransactions(), utxoView)
@@ -2335,6 +2339,9 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 				"returned on txtreestake of cur block: %v", err.Error())
 			return err
 		}
+	}
+	if stxos != nil {
+		fmt.Printf("length of stxos after connect block stake %v\n", len(*stxos))
 	}
 
 	// TxTreeRegular of current block. At this point, the stake transactions
@@ -2394,6 +2401,10 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 	// Update the best hash for view to include this block since all of its
 	// transactions have been connected.
 	utxoView.SetBestHash(node.hash)
+
+	if stxos != nil {
+		fmt.Printf("length of stxos after end %v\n", len(*stxos))
+	}
 
 	return nil
 }

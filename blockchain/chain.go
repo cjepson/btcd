@@ -1289,8 +1289,8 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block,
 		ntx := countSpentOutputs(block, parent)
 		stxosRead, err := dbFetchSpendJournalEntry(dbTx, block, parent)
 		if err != nil {
-			log.Infof("expected length %v", int(ntx))
-			log.Infof("passed %v", DebugStxosData(stxos))
+			fmt.Printf("expected length %v\n", int(ntx))
+			fmt.Printf("passed %v\n", len(stxos))
 			return err
 		}
 
