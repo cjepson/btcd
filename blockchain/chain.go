@@ -1275,37 +1275,37 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block,
 	b.pushMainChainBlockCache(block)
 
 	// Testing for corruption
-	/*
-		err = b.db.View(func(dbTx database.Tx) error {
-			block, err := dbFetchBlockByHeight(dbTx, b.bestNode.height)
-			if err != nil {
-				return err
-			}
-
-			parent, err := dbFetchBlockByHeight(dbTx, b.bestNode.height-1)
-			if err != nil {
-				return err
-			}
-
-			ntx := countNumberOfTransactions(block, parent)
-			stxosRead, err := dbFetchSpendJournalEntry(dbTx, block, parent)
-			if err != nil {
-				return err
-			}
-
-			if int(ntx) != len(stxosRead) {
-				log.Infof("bad number of stxos calculated at height %v, got %v expected %v",
-					node.height, len(stxos), int(ntx))
-				log.Infof("passed %x", stxos)
-				log.Infof("read %x", stxosRead)
-			}
-
-			return nil
-		})
+	err = b.db.View(func(dbTx database.Tx) error {
+		block, err := dbFetchBlockByHeight(dbTx, b.bestNode.height)
 		if err != nil {
 			return err
 		}
-	*/
+
+		parent, err := dbFetchBlockByHeight(dbTx, b.bestNode.height-1)
+		if err != nil {
+			return err
+		}
+
+		ntx := countSpentOutputs(block, parent)
+		stxosRead, err := dbFetchSpendJournalEntry(dbTx, block, parent)
+		if err != nil {
+			log.Infof("expected length %v", int(ntx))
+			log.Infof("passed %v", DebugStxosData(stxos))
+			return err
+		}
+
+		if int(ntx) != len(stxosRead) {
+			log.Infof("bad number of stxos calculated at height %v, got %v expected %v",
+				node.height, len(stxos), int(ntx))
+			log.Infof("passed %x", stxos)
+			log.Infof("read %x", stxosRead)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return err
+	}
 
 	return nil
 }

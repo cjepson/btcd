@@ -396,14 +396,18 @@ func deserializeSpendJournalEntry(serialized []byte, txns []*wire.MsgTx) ([]spen
 	// Calculate the total number of stxos.
 	var numStxos int
 	for _, tx := range txns {
+		log.Infof("tx hash %v", tx.TxSha())
 		txType := stake.DetermineTxType(dcrutil.NewTx(tx))
 
 		if txType == stake.TxTypeSSGen {
+			log.Infof("number of txins: 1")
 			numStxos++
 			continue
 		}
+		log.Infof("number of txins: %v", len(tx.TxIn))
 		numStxos += len(tx.TxIn)
 	}
+	log.Infof("number of stxos in deserialize: %v (num txns %v)", numStxos, len(txns))
 
 	// When a block has no spent txouts there is nothing to serialize.
 	if len(serialized) == 0 {
@@ -457,6 +461,7 @@ func deserializeSpendJournalEntry(serialized []byte, txns []*wire.MsgTx) ([]spen
 			// to detect this case and pull the tx version from the
 			// entry that contains the version information as just
 			// described.
+			offsetStart := offset
 			n, err := decodeSpentTxOut(serialized[offset:], stxo, txIn.ValueIn,
 				txIn.BlockHeight, txIn.BlockIndex)
 			offset += n
@@ -465,6 +470,8 @@ func deserializeSpendJournalEntry(serialized []byte, txns []*wire.MsgTx) ([]spen
 					"to decode stxo for %v: %v",
 					txIn.PreviousOutPoint, err))
 			}
+
+			log.Infof("stxo %v len %v", stxoIdx+1, offset-offsetStart)
 		}
 	}
 
@@ -492,6 +499,7 @@ func serializeSpendJournalEntry(stxos []spentTxOut) ([]byte, error) {
 		sizes = append(sizes, sz)
 		size += sz
 	}
+	log.Infof("sizes %v", sizes)
 	serialized := make([]byte, size)
 
 	// Serialize each individual stxo directly into the slice in reverse
