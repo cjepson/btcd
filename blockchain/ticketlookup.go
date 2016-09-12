@@ -627,6 +627,15 @@ func (b *BlockChain) fetchTicketStore(node *blockNode) (TicketStore, error) {
 		if err != nil {
 			return nil, err
 		}
+
+		// Quick sanity test.
+		if len(stxos) != countSpentOutputs(block, parent) {
+			return nil, AssertError(fmt.Sprintf("retrieved %v stxos when "+
+				"trying to disconnect block %v (height %v), yet counted %v "+
+				"many spent utxos when fetching ticket store", len(stxos),
+				block.Sha(), block.Height(), countSpentOutputs(block, parent)))
+		}
+
 		err = b.disconnectTransactions(view, block, parent, stxos)
 		if err != nil {
 			return nil, err

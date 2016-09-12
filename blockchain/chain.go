@@ -1205,12 +1205,6 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block,
 		// the block that contains all txos spent by it.
 		err = dbPutSpendJournalEntry(dbTx, block.Sha(), stxos)
 		if err != nil {
-			// Attempt to restore TicketDb if this fails.
-			_, _, _, errRemove := b.tmdb.RemoveBlockToHeight(node.height - 1)
-			if errRemove != nil {
-				return errRemove
-			}
-
 			return err
 		}
 
@@ -1279,6 +1273,39 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block,
 	b.chainLock.Lock()
 
 	b.pushMainChainBlockCache(block)
+
+	// Testing for corruption
+	/*
+		err = b.db.View(func(dbTx database.Tx) error {
+			block, err := dbFetchBlockByHeight(dbTx, b.bestNode.height)
+			if err != nil {
+				return err
+			}
+
+			parent, err := dbFetchBlockByHeight(dbTx, b.bestNode.height-1)
+			if err != nil {
+				return err
+			}
+
+			ntx := countNumberOfTransactions(block, parent)
+			stxosRead, err := dbFetchSpendJournalEntry(dbTx, block, parent)
+			if err != nil {
+				return err
+			}
+
+			if int(ntx) != len(stxosRead) {
+				log.Infof("bad number of stxos calculated at height %v, got %v expected %v",
+					node.height, len(stxos), int(ntx))
+				log.Infof("passed %x", stxos)
+				log.Infof("read %x", stxosRead)
+			}
+
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+	*/
 
 	return nil
 }
@@ -1542,6 +1569,14 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 			return err
 		}
 
+		// Quick sanity test.
+		if len(stxos) != countSpentOutputs(block, parent) {
+			return AssertError(fmt.Sprintf("retrieved %v stxos when trying to "+
+				"disconnect block %v (height %v), yet counted %v "+
+				"many spent utxos", len(stxos), block.Sha(), block.Height(),
+				countSpentOutputs(block, parent)))
+		}
+
 		// Store the loaded block and spend journal entry for later.
 		detachBlocks = append(detachBlocks, block)
 		detachSpentTxOuts = append(detachSpentTxOuts, stxos)
@@ -1752,6 +1787,15 @@ func (b *BlockChain) forceHeadReorganization(formerBest chainhash.Hash,
 	})
 	if err != nil {
 		return err
+	}
+
+	// Quick sanity test.
+	if len(stxos) != countSpentOutputs(formerBestBlock, commonParentBlock) {
+		return AssertError(fmt.Sprintf("retrieved %v stxos when trying to "+
+			"disconnect block %v (height %v), yet counted %v "+
+			"many spent utxos when trying to force head reorg", len(stxos),
+			formerBestBlock.Sha(), formerBestBlock.Height(),
+			countSpentOutputs(formerBestBlock, commonParentBlock)))
 	}
 
 	err = b.disconnectTransactions(view, formerBestBlock, commonParentBlock,
@@ -2145,6 +2189,42 @@ func New(config *Config) (*BlockChain, error) {
 		b.bestNode.workSum)
 
 	// Blockchain integrity test. TODO Remove
+	/*
+		err := b.db.View(func(dbTx database.Tx) error {
+			for i := int64(2); i <= b.bestNode.height; i++ {
+				block, err := dbFetchBlockByHeight(dbTx, i)
+				if err != nil {
+					return err
+				}
+
+				parent, err := dbFetchBlockByHeight(dbTx, i-1)
+				if err != nil {
+					return err
+				}
+
+				ntx := countNumberOfTransactions(block, parent)
+				stxos, err := dbFetchSpendJournalEntry(dbTx, block, parent)
+				if err != nil {
+					return err
+				}
+
+				if int(ntx) != len(stxos) {
+					log.Infof("bad number of stxos calculated at height %v, got %v expected %v",
+						i, len(stxos), int(ntx))
+				}
+			}
+
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	*/
+
+	return &b, nil
+}
+
+func (b *BlockChain) DoStxoTest() error {
 	err := b.db.View(func(dbTx database.Tx) error {
 		for i := int64(2); i <= b.bestNode.height; i++ {
 			block, err := dbFetchBlockByHeight(dbTx, i)
@@ -2158,25 +2238,22 @@ func New(config *Config) (*BlockChain, error) {
 			}
 
 			ntx := countNumberOfTransactions(block, parent)
-			view := NewUtxoViewpoint()
-			view.SetBestHash(block.Sha())
-			view.SetStakeViewpoint(ViewpointPrevValidInitial)
 			stxos, err := dbFetchSpendJournalEntry(dbTx, block, parent)
 			if err != nil {
 				return err
 			}
 
 			if int(ntx) != len(stxos) {
-				log.Infof("bad number of stxos calculated, got %v expected %v",
-					len(stxos), int(ntx))
+				fmt.Printf("bad number of stxos calculated at height %v, got %v expected %v\n",
+					i, len(stxos), int(ntx))
 			}
 		}
 
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	return &b, nil
+	return nil
 }
