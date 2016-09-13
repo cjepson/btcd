@@ -54,6 +54,10 @@ type StakeNode struct {
 	// nextWinners is the list of the next winners for this block.
 	nextWinners []*chainhash.Hash
 
+	// finalState is the calculated final state checksum from the live
+	// tickets pool.
+	finalState [6]byte
+
 	// params is the blockchain parameters.
 	params *chaincfg.Params
 }
@@ -122,7 +126,7 @@ func (sn *StakeNode) Winners() []*chainhash.Hash {
 // location in the blockchain as the blockchain itself. This function also
 // checks to ensure that the database has not failed the upgrade process and
 // reports the current version.
-func LoadBestNode(dbTx database.Tx, height uint32, blockHash *chainhash.Hash, params *chaincfg.Params) (*StakeNode, error) {
+func LoadBestNode(dbTx database.Tx, height uint32, blockHash *chainhash.Hash, header *wire.BlockHeader, params *chaincfg.Params) (*StakeNode, error) {
 	info, err := ticketdb.DbFetchDatabaseInfo(dbTx)
 	if err != nil {
 		return nil, err
@@ -183,6 +187,26 @@ func LoadBestNode(dbTx database.Tx, height uint32, blockHash *chainhash.Hash, pa
 		node.nextWinners[i] = &state.NextWinners[i]
 	}
 
+	// Calculate the final state from the block header.
+	stateBuffer := make([]byte, 0,
+		(node.params.TicketsPerBlock+1)*chainhash.HashSize)
+	for _, ticketHash := range node.nextWinners {
+		stateBuffer = append(stateBuffer, ticketHash[:]...)
+	}
+	hB, err := header.Bytes()
+	if err != nil {
+		return nil, err
+	}
+	prng := NewHash256PRNG(hB)
+	_, err = FindTicketIdxs(int64(node.liveTickets.Len()),
+		int(node.params.TicketsPerBlock), prng)
+	if err != nil {
+		return nil, err
+	}
+	lastHash := prng.StateHash()
+	stateBuffer = append(stateBuffer, lastHash[:]...)
+	copy(node.finalState[:], chainhash.HashFuncB(stateBuffer)[0:6])
+
 	log.Infof("Loaded stake database version %v", info.Version)
 
 	return node, nil
@@ -229,17 +253,17 @@ func connectStakeNode(node *StakeNode, header *wire.BlockHeader, ticketsSpentInB
 		liveTickets:          node.liveTickets,
 		missedTickets:        node.missedTickets,
 		revokedTickets:       node.revokedTickets,
-		databaseUndoUpdate:   nil,
-		databaseBlockTickets: nil,
+		databaseUndoUpdate:   make(UndoTicketDataSlice, 0),
+		databaseBlockTickets: make(ticketdb.TicketHashes, 0),
+		nextWinners:          make([]*chainhash.Hash, 0),
 		params:               node.params,
 	}
-	undoData := make(UndoTicketDataSlice, 0)
 
 	// Iterate through all possible winners and construct the undo data,
 	// updating the live and missed ticket treaps as necessary.
 	for _, ticket := range node.nextWinners {
 		k := tickettreap.Key(*ticket)
-		v := node.liveTickets.Get(tickettreap.Key(*ticket))
+		v := connectedNode.liveTickets.Get(tickettreap.Key(*ticket))
 		if v == nil {
 			return nil, stakeRuleError(ErrMissingTicket, fmt.Sprintf(
 				"ticket %v was supposed to be in the live ticket "+
@@ -259,37 +283,95 @@ func connectStakeNode(node *StakeNode, header *wire.BlockHeader, ticketsSpentInB
 			connectedNode.missedTickets = connectedNode.missedTickets.Put(k, v)
 		}
 
-		undoData = append(undoData, &ticketdb.UndoTicketData{
-			TicketHash:   *ticket,
-			TicketHeight: v.Height,
-			Missed:       !wasSpent,
-			Revoked:      false,
-			Expired:      false,
-			Spent:        wasSpent,
-		})
-
+		// This data MUST be ordered correctly so that when the block is
+		// undone, the final state checksum can be recalculated correctly.
+		connectedNode.databaseUndoUpdate =
+			append(connectedNode.databaseUndoUpdate, &ticketdb.UndoTicketData{
+				TicketHash:   *ticket,
+				TicketHeight: v.Height,
+				Missed:       !wasSpent,
+				Revoked:      false,
+				Spent:        wasSpent,
+			})
 	}
 
-	// Find all expiring tickets and drop them as well.
+	// Find the expiring tickets and drop them as well. We already know what
+	// the winners are from the cached information in the previous block, so
+	// no drop the results of that here.
+	toExpireHeight := connectedNode.height -
+		uint32(connectedNode.params.TicketExpiry)
+	expired := connectedNode.liveTickets.FetchExpired(toExpireHeight)
+	for _, treapKey := range expired {
+		v := connectedNode.liveTickets.Get(*treapKey)
+		connectedNode.liveTickets.Delete(*treapKey)
+		ticketHash := chainhash.Hash(*treapKey)
+
+		connectedNode.databaseUndoUpdate =
+			append(connectedNode.databaseUndoUpdate, &ticketdb.UndoTicketData{
+				TicketHash:   ticketHash,
+				TicketHeight: v.Height,
+				Missed:       true,
+				Revoked:      false,
+				Spent:        false,
+			})
+	}
+
+	// Process all the revocations, moving them from the missed to the
+	// revoked treap and recording them in the undo data.
+	for _, revokedTicket := range revokedTickets {
+		v := connectedNode.liveTickets.Get(tickettreap.Key(*revokedTicket))
+		connectedNode.liveTickets.Delete(tickettreap.Key(*revokedTicket))
+
+		connectedNode.databaseUndoUpdate =
+			append(connectedNode.databaseUndoUpdate, &ticketdb.UndoTicketData{
+				TicketHash:   *revokedTicket,
+				TicketHeight: v.Height,
+				Missed:       true,
+				Revoked:      true,
+				Spent:        false,
+			})
+	}
+
+	// Add all the new tickets.
+	for _, newTicket := range newTickets {
+		node.databaseBlockTickets = append(node.databaseBlockTickets, newTicket)
+		k := tickettreap.Key(*newTicket)
+		v := &tickettreap.Value{Height: connectedNode.height}
+		connectedNode.liveTickets.Put(k, v)
+
+		connectedNode.databaseUndoUpdate =
+			append(connectedNode.databaseUndoUpdate, &ticketdb.UndoTicketData{
+				TicketHash:   *newTicket,
+				TicketHeight: v.Height,
+				Missed:       false,
+				Revoked:      false,
+				Spent:        false,
+			})
+	}
 
 	// Find the next set of winners.
-	/*
-		hB, err := header.Bytes()
-		if err != nil {
-			return nil, stakeRuleError(ErrMemoryCorruption, "block header failed to "+
-				"serialize")
-		}
-		prng := NewHash256PRNG(hB)
-		ts, err := stake.FindTicketIdxs(int64(len(sortedTickets167)),
-			int(simNetParams.TicketsPerBlock), prng)
-		if err != nil {
-			return stakeRuleError(ErrFindTicketIdxs, "failure on FindTicketIdxs")
-		}
-		for _, idx := range ts {
-			ticketsToSpendIn167 =
-				append(ticketsToSpendIn167, sortedTickets167[idx].SStxHash)
-		}
-	*/
+	hB, err := header.Bytes()
+	if err != nil {
+		return nil, err
+	}
+	prng := NewHash256PRNG(hB)
+	idxs, err := FindTicketIdxs(int64(connectedNode.liveTickets.Len()),
+		int(connectedNode.params.TicketsPerBlock), prng)
+	if err != nil {
+		return nil, err
+	}
+
+	stateBuffer := make([]byte, 0,
+		(connectedNode.params.TicketsPerBlock+1)*chainhash.HashSize)
+	nextWinnersKeys := connectedNode.liveTickets.FetchWinners(idxs)
+	for _, treapKey := range nextWinnersKeys {
+		ticketHash := chainhash.Hash(*treapKey)
+		connectedNode.nextWinners = append(connectedNode.nextWinners, &ticketHash)
+		stateBuffer = append(stateBuffer, ticketHash[:]...)
+	}
+	lastHash := prng.StateHash()
+	stateBuffer = append(stateBuffer, lastHash[:]...)
+	copy(connectedNode.finalState[:], chainhash.HashFuncB(stateBuffer)[0:6])
 
 	return connectedNode, nil
 }
@@ -298,7 +380,7 @@ func connectStakeNode(node *StakeNode, header *wire.BlockHeader, ticketsSpentInB
 // state of the parent node. The database transaction should be included if the
 // UndoTicketDataSlice or tickets are nil in order to look up the undo data or
 // tickets from the database.
-func disconnectStakeNode(node *StakeNode, parentUtds UndoTicketDataSlice, parentTickets []*chainhash.Hash, dbTx database.Tx) (*StakeNode, error) {
+func disconnectStakeNode(node *StakeNode, parentHeader *wire.BlockHeader, parentUtds UndoTicketDataSlice, parentTickets []*chainhash.Hash, dbTx database.Tx) (*StakeNode, error) {
 	// The undo ticket slice is normally stored in memory for the most
 	// recent blocks and the sidechain, but it may be the case that it
 	// is missing because it's in the mainchain and very old (thus
@@ -332,6 +414,8 @@ func disconnectStakeNode(node *StakeNode, parentUtds UndoTicketDataSlice, parent
 		params:               node.params,
 	}
 	nextWinners := make([]*chainhash.Hash, 0)
+	stateBuffer := make([]byte, 0,
+		(node.params.TicketsPerBlock+1)*chainhash.HashSize)
 	for _, undo := range node.databaseUndoUpdate {
 		k := tickettreap.Key(undo.TicketHash)
 		v := &tickettreap.Value{Height: undo.TicketHeight}
@@ -339,7 +423,7 @@ func disconnectStakeNode(node *StakeNode, parentUtds UndoTicketDataSlice, parent
 		switch {
 		// All flags are unset; this is a newly added ticket.
 		// Remove it from the list of live tickets.
-		case !undo.Missed && !undo.Revoked && !undo.Expired && !undo.Spent:
+		case !undo.Missed && !undo.Revoked && !undo.Spent:
 			restoredNode.liveTickets = restoredNode.liveTickets.Delete(k)
 
 		// The ticket was missed and revoked. It needs to
@@ -351,9 +435,14 @@ func disconnectStakeNode(node *StakeNode, parentUtds UndoTicketDataSlice, parent
 
 		// The ticket was missed and was previously live.
 		// Remove it from the missed tickets bucket and
-		// move it to the live tickets bucket.
+		// move it to the live tickets bucket. Note that
+		// these should be sorted such that the winning
+		// tickets are skimmed first in order to restore
+		// the final state checksum, meaning that expired
+		// tickets that were missed will come last.
 		case undo.Missed && !undo.Revoked:
 			nextWinners = append(nextWinners, &undo.TicketHash)
+			stateBuffer = append(stateBuffer, undo.TicketHash[:]...)
 			restoredNode.missedTickets = restoredNode.missedTickets.Delete(k)
 			restoredNode.liveTickets = restoredNode.liveTickets.Put(k, v)
 
@@ -361,18 +450,37 @@ func disconnectStakeNode(node *StakeNode, parentUtds UndoTicketDataSlice, parent
 		// tickets treap.
 		case undo.Spent:
 			nextWinners = append(nextWinners, &undo.TicketHash)
+			stateBuffer = append(stateBuffer, undo.TicketHash[:]...)
 			restoredNode.liveTickets = restoredNode.liveTickets.Put(k, v)
+
+		default:
+			return nil, stakeRuleError(ErrMemoryCorruption, "unknown ticket "+
+				"state in undo data")
 		}
 	}
 	restoredNode.nextWinners = nextWinners
+
+	phB, err := parentHeader.Bytes()
+	if err != nil {
+		return nil, err
+	}
+	prng := NewHash256PRNG(phB)
+	_, err = FindTicketIdxs(int64(restoredNode.liveTickets.Len()),
+		int(node.params.TicketsPerBlock), prng)
+	if err != nil {
+		return nil, err
+	}
+	lastHash := prng.StateHash()
+	stateBuffer = append(stateBuffer, lastHash[:]...)
+	copy(restoredNode.finalState[:], chainhash.HashFuncB(stateBuffer)[0:6])
 
 	return restoredNode, nil
 }
 
 // DisconnectNode disconnects a stake node from the node and returns a pointer
 // to the stake node of the parent.
-func (sn *StakeNode) DisconnectNode(parentUtds UndoTicketDataSlice, parentTickets []*chainhash.Hash, dbTx database.Tx) (*StakeNode, error) {
-	return disconnectStakeNode(sn, parentUtds, parentTickets, dbTx)
+func (sn *StakeNode) DisconnectNode(parentHeader *wire.BlockHeader, parentUtds UndoTicketDataSlice, parentTickets []*chainhash.Hash, dbTx database.Tx) (*StakeNode, error) {
+	return disconnectStakeNode(sn, parentHeader, parentUtds, parentTickets, dbTx)
 }
 
 // WriteBestNode writes the best node to the database under an atomic database

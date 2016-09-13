@@ -75,8 +75,14 @@ type blockNode struct {
 	// header is the full block header.
 	header wire.BlockHeader
 
-	// voteBits are the VoteBits for the stake voters.
-	stakeNode stake.StakeNode
+	// stakeNode contains all the consensus information required for the
+	// staking system. The node also caches information required to add or
+	// remove stake nodes, so that the stake node itself may be pruneable
+	// to save memory while maintaining high throughput efficiency for the
+	// evaluation of sidechains.
+	stakeNode     *stake.StakeNode
+	newTickets    []*chainhash.Hash
+	stakeUndoData stake.UndoTicketDataSlice
 }
 
 // newBlockNode returns a new block node for the given block header.  It is

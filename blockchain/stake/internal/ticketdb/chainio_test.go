@@ -230,7 +230,6 @@ func TestBlockUndoDataSerializing(t *testing.T) {
 					TicketHeight: 123456,
 					Missed:       true,
 					Revoked:      false,
-					Expired:      true,
 					Spent:        false,
 				},
 				&UndoTicketData{
@@ -238,11 +237,10 @@ func TestBlockUndoDataSerializing(t *testing.T) {
 					TicketHeight: 122222,
 					Missed:       false,
 					Revoked:      true,
-					Expired:      false,
 					Spent:        true,
 				},
 			},
-			serialized: hexToBytes("0ce8d4ef4dd7cd8d62dfded9d4edb0a774ae6a41929a74da23109e8f11139c8740e20100054a6c419a1e25c85327115c4ace586decddfe2990ed8f3d4d801871158338501d6edd01000a"),
+			serialized: hexToBytes("0ce8d4ef4dd7cd8d62dfded9d4edb0a774ae6a41929a74da23109e8f11139c8740e20100014a6c419a1e25c85327115c4ace586decddfe2990ed8f3d4d801871158338501d6edd010006"),
 		},
 	}
 

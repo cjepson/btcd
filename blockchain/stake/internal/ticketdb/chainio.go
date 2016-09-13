@@ -51,8 +51,8 @@ const (
 //     k: ticket hash
 //     v: height
 //
-// 3. Expired
-//     Expired tickets bucket, for all tickets that are expired.
+// 3. Revoked
+//     Revoked tickets bucket, for all tickets that are Revoked.
 //
 //     k: ticket hash
 //     v: height
@@ -342,20 +342,20 @@ func DbPutBestState(dbTx database.Tx, bcs BestChainState) error {
 }
 
 // UndoTicketData is the data for any ticket that has been spent, missed, or
-// expired at some new height.  It is used to roll back the database in the
+// revoked at some new height.  It is used to roll back the database in the
 // event of reorganizations or determining if a side chain block is valid.
 // The last 3 are encoded as a single byte of flags.
 // The flags describe a particular state for the ticket:
-//  1. Missed is set, but Expired is not (0000 0001 or 0000 00101). The ticket
+//  1. Missed is set, but revoked and spent are not (0000 0001). The ticket
 //      was selected in the lottery at this block height but missed, or the
 //      ticket became too old and was missed. The ticket is being moved to the
 //      missed ticket bucket from the live ticket bucket.
-//  2. Missed and revoked are set (0000 0011 or 0000 0111). The ticket was
-//      missed previously at a block before this one and was revoked, and
-//      as such is being moved to the revoked ticket bucket from the missed
-//      ticket bucket.
-//  3. Spent is set. The ticket has been spent and is removed from the
-//      live ticket bucket.
+//  2. Missed and revoked are set (0000 0011). The ticket was missed
+//      previously at a block before this one and was revoked, and
+//      as such is being moved to the revoked ticket bucket from the
+//      missed ticket bucket.
+//  3. Spent is set (0000 0100). The ticket has been spent and is removed
+//      from the live ticket bucket.
 //  4. No flags are set. The ticket was newly added to the live ticket
 //      bucket this block as a maturing ticket.
 type UndoTicketData struct {
@@ -363,7 +363,6 @@ type UndoTicketData struct {
 	TicketHeight uint32
 	Missed       bool
 	Revoked      bool
-	Expired      bool
 	Spent        bool
 }
 
@@ -372,7 +371,7 @@ const undoTicketDataSize = 37
 
 // undoBitFlagsToByte converts the bools of the UndoTicketData struct into a
 // series of bitflags in a single byte.
-func undoBitFlagsToByte(missed, revoked, expired, spent bool) byte {
+func undoBitFlagsToByte(missed, revoked, spent bool) byte {
 	var b byte
 	if missed {
 		b |= 1 << 0
@@ -380,24 +379,20 @@ func undoBitFlagsToByte(missed, revoked, expired, spent bool) byte {
 	if revoked {
 		b |= 1 << 1
 	}
-	if expired {
-		b |= 1 << 2
-	}
 	if spent {
-		b |= 1 << 3
+		b |= 1 << 2
 	}
 
 	return b
 }
 
 // undoBitFlagsFromByte converts a byte into its relevant flags.
-func undoBitFlagsFromByte(b byte) (bool, bool, bool, bool) {
+func undoBitFlagsFromByte(b byte) (bool, bool, bool) {
 	missed := b&(1<<0) > 0
 	revoked := b&(1<<1) > 0
-	expired := b&(1<<2) > 0
-	spent := b&(1<<3) > 0
+	spent := b&(1<<2) > 0
 
-	return missed, revoked, expired, spent
+	return missed, revoked, spent
 }
 
 // serializeBlockUndoData serializes an entire list of relevant tickets for
@@ -410,8 +405,7 @@ func serializeBlockUndoData(utds []*UndoTicketData) []byte {
 		offset += chainhash.HashSize
 		dbnamespace.ByteOrder.PutUint32(b[offset:offset+4], utd.TicketHeight)
 		offset += 4
-		b[offset] = undoBitFlagsToByte(utd.Missed, utd.Revoked, utd.Expired,
-			utd.Spent)
+		b[offset] = undoBitFlagsToByte(utd.Missed, utd.Revoked, utd.Spent)
 		offset += 1
 	}
 
@@ -447,7 +441,7 @@ func deserializeBlockUndoData(b []byte) ([]*UndoTicketData, error) {
 		height := dbnamespace.ByteOrder.Uint32(b[offset : offset+4])
 		offset += 4
 
-		missed, revoked, expired, spent := undoBitFlagsFromByte(b[offset])
+		missed, revoked, spent := undoBitFlagsFromByte(b[offset])
 		offset += 1
 
 		utds[i] = &UndoTicketData{
@@ -455,7 +449,6 @@ func deserializeBlockUndoData(b []byte) ([]*UndoTicketData, error) {
 			TicketHeight: height,
 			Missed:       missed,
 			Revoked:      revoked,
-			Expired:      expired,
 			Spent:        spent,
 		}
 	}

@@ -353,7 +353,7 @@ func (t *Immutable) ForEach(fn func(k Key, v *Value) bool) {
 
 // FetchWinnersAndExpired is a ticket database specific function which iterates
 // over the entire treap and finds winners at selected indexes and all tickets
-// whose height is less than or equal to the passed height. There are returned
+// whose height is less than or equal to the passed height. These are returned
 // as slices of pointers to keys, which can be recast as []*chainhash.Hash.
 func (t *Immutable) FetchWinnersAndExpired(idxs []int, height uint32) ([]*Key, []*Key) {
 	if idxs == nil {
@@ -385,6 +385,54 @@ func (t *Immutable) FetchWinnersAndExpired(idxs []int, height uint32) ([]*Key, [
 	})
 
 	return winners, expired
+}
+
+// FetchWinners is a ticket database specific function which iterates over the
+// entire treap and finds winners at selected indexes. These are returned
+// as a slice of pointers to keys, which can be recast as []*chainhash.Hash.
+func (t *Immutable) FetchWinners(idxs []int) []*Key {
+	if idxs == nil {
+		return nil
+	}
+
+	sortedIdxs := sort.IntSlice(idxs)
+	sort.Sort(sortedIdxs)
+
+	// TODO buffer winners according to the TicketsPerBlock value from
+	// chaincfg?
+	idx := 0
+	winners := make([]*Key, 0)
+	winnerIdx := 0
+	t.ForEach(func(k Key, v *Value) bool {
+		if idx == sortedIdxs[winnerIdx] {
+			winners = append(winners, &k)
+			if winnerIdx+1 < len(sortedIdxs) {
+				winnerIdx++
+			}
+		}
+
+		idx++
+		return true
+	})
+
+	return winners
+}
+
+// FetchWinners is a ticket database specific function which iterates over the
+// entire treap and finds tickets that are equal or less than the given height.
+// These are returned as a slice of pointers to keys, which can be recast as
+// []*chainhash.Hash.
+func (t *Immutable) FetchExpired(height uint32) []*Key {
+	expired := make([]*Key, 0)
+	t.ForEach(func(k Key, v *Value) bool {
+		if v.Height <= height {
+			expired = append(expired, &k)
+		}
+
+		return true
+	})
+
+	return expired
 }
 
 // NewImmutable returns a new empty immutable treap ready for use.  See the
