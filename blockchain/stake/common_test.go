@@ -4,6 +4,7 @@
 
 package stake_test
 
+/*
 import (
 	"fmt"
 	"os"
@@ -127,3 +128,4 @@ func chainSetup(dbName string, params *chaincfg.Params) (*blockchain.BlockChain,
 
 	return chain, teardown, nil
 }
+*/

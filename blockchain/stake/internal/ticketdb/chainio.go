@@ -166,7 +166,7 @@ func DbPutDatabaseInfo(dbTx database.Tx, dbi *DatabaseInfo) error {
 	val := serializeDatabaseInfo(dbi)
 
 	// Store the current database info into the database.
-	return subsidyBucket.Put(dbnamespace.StakeDbInfoBucketName, val)
+	return subsidyBucket.Put(dbnamespace.StakeDbInfoBucketName, val[:])
 }
 
 // deserializeDatabaseInfo deserializes a database information struct.
@@ -484,7 +484,7 @@ func DbPutBlockUndoData(dbTx database.Tx, height uint32, utds []*UndoTicketData)
 	dbnamespace.ByteOrder.PutUint32(k, height)
 	v := serializeBlockUndoData(utds)
 
-	return bucket.Put(k, v)
+	return bucket.Put(k[:], v[:])
 }
 
 // DbDropBlockUndoData drops block undo data from the database at a given height.
@@ -574,7 +574,7 @@ func DbPutNewTickets(dbTx database.Tx, height uint32, ths TicketHashes) error {
 	dbnamespace.ByteOrder.PutUint32(k, height)
 	v := serializeTicketHashes(ths)
 
-	return bucket.Put(k, v)
+	return bucket.Put(k[:], v[:])
 }
 
 // DbDropNewTickets drops new tickets for a mainchain block data at some height.
@@ -603,7 +603,7 @@ func DbPutTicket(dbTx database.Tx, ticketBucket []byte, hash *chainhash.Hash, he
 	v := make([]byte, 4)
 	dbnamespace.ByteOrder.PutUint32(v, height)
 
-	return bucket.Put(k, v)
+	return bucket.Put(k[:], v[:])
 }
 
 // DbLoadAllTickets loads all the live tickets from the database into a treap.
@@ -631,4 +631,61 @@ func DbLoadAllTickets(dbTx database.Tx, ticketBucket []byte) (*tickettreap.Immut
 	}
 
 	return treap, nil
+}
+
+// DbCreate initializes all the buckets required for the database and stores
+// the current database version information.
+func DbCreate(dbTx database.Tx) error {
+	meta := dbTx.Metadata()
+
+	// Create the bucket that houses information about the database's
+	// creation and version.
+	_, err := meta.CreateBucket(dbnamespace.StakeDbInfoBucketName)
+	if err != nil {
+		return err
+	}
+
+	dbInfo := &DatabaseInfo{
+		Version:        currentDatabaseVersion,
+		Date:           time.Now(),
+		UpgradeStarted: false,
+	}
+	err = DbPutDatabaseInfo(dbTx, dbInfo)
+	if err != nil {
+		return err
+	}
+
+	// Create the bucket that houses the live tickets of the best node.
+	_, err = meta.CreateBucket(dbnamespace.LiveTicketsBucketName)
+	if err != nil {
+		return err
+	}
+
+	// Create the bucket that houses the missed tickets of the best node.
+	_, err = meta.CreateBucket(dbnamespace.MissedTicketsBucketName)
+	if err != nil {
+		return err
+	}
+
+	// Create the bucket that houses the revoked tickets of the best node.
+	_, err = meta.CreateBucket(dbnamespace.RevokedTicketsBucketName)
+	if err != nil {
+		return err
+	}
+
+	// Create the bucket that houses block undo data for stake states on
+	// the main chain.
+	_, err = meta.CreateBucket(dbnamespace.StakeBlockUndoDataBucketName)
+	if err != nil {
+		return err
+	}
+
+	// Create the bucket that houses the tickets that were added with
+	// this block into the main chain.
+	_, err = meta.CreateBucket(dbnamespace.TicketsInBlockBucketName)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

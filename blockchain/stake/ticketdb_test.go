@@ -8,24 +8,26 @@ import (
 	"bytes"
 	"compress/bzip2"
 	"encoding/gob"
-	"fmt"
+	//	"fmt"
 	"math/big"
 	"os"
 	"path/filepath"
-	"reflect"
-	"sort"
+	//	"reflect"
+	//	"sort"
 	"testing"
 	"time"
 
-	"github.com/decred/dcrd/blockchain"
+	//"github.com/decred/dcrd/blockchain"
 	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg"
 	"github.com/decred/dcrd/chaincfg/chainhash"
 	"github.com/decred/dcrd/database"
+	_ "github.com/decred/dcrd/database/ffldb"
 	"github.com/decred/dcrd/wire"
 	"github.com/decred/dcrutil"
 )
 
+/*
 // cloneTicketDB makes a deep copy of a ticket DB by
 // serializing it to a gob and then deserializing it
 // into an empty container.
@@ -57,19 +59,74 @@ func hashInSlice(h *chainhash.Hash, list []*chainhash.Hash) bool {
 
 	return false
 }
+*/
+
+const (
+	// testDbType is the database backend type to use for the tests.
+	testDbType = "ffldb"
+
+	// testDbRoot is the root directory used to create all test databases.
+	testDbRoot = "testdbs"
+)
+
+func ticketsInBlock(bl *dcrutil.Block) []*chainhash.Hash {
+	tickets := make([]*chainhash.Hash, 0)
+	for _, stx := range bl.STransactions() {
+		if stake.DetermineTxType(stx) == stake.TxTypeSStx {
+			tickets = append(tickets, stx.Sha())
+		}
+	}
+
+	return tickets
+}
+
+func ticketsSpentInBlock(bl *dcrutil.Block) []*chainhash.Hash {
+	tickets := make([]*chainhash.Hash, 0)
+	for _, stx := range bl.STransactions() {
+		if stake.DetermineTxType(stx) == stake.TxTypeSSGen {
+			tickets = append(tickets, &stx.MsgTx().TxIn[1].PreviousOutPoint.Hash)
+		}
+	}
+
+	return tickets
+}
+
+func votesInBlock(bl *dcrutil.Block) []*chainhash.Hash {
+	votes := make([]*chainhash.Hash, 0)
+	for _, stx := range bl.STransactions() {
+		if stake.DetermineTxType(stx) == stake.TxTypeSSGen {
+			votes = append(votes, stx.Sha())
+		}
+	}
+
+	return votes
+}
+
+func revokedTicketsInBlock(bl *dcrutil.Block) []*chainhash.Hash {
+	tickets := make([]*chainhash.Hash, 0)
+	for _, stx := range bl.STransactions() {
+		if stake.DetermineTxType(stx) == stake.TxTypeSSRtx {
+			tickets = append(tickets, &stx.MsgTx().TxIn[0].PreviousOutPoint.Hash)
+		}
+	}
+
+	return tickets
+}
 
 func TestTicketDB(t *testing.T) {
 	// Declare some useful variables
 	testBCHeight := int64(168)
 
 	// Set up a blockchain
-	chain, teardownFunc, err := chainSetup("ticketdbunittests",
-		simNetParams)
-	if err != nil {
-		t.Errorf("Failed to setup chain instance: %v", err)
-		return
-	}
-	defer teardownFunc()
+	/*
+		chain, teardownFunc, err := chainSetup("ticketdbunittests",
+			simNetParams)
+		if err != nil {
+			t.Errorf("Failed to setup chain instance: %v", err)
+			return
+		}
+		defer teardownFunc()
+	*/
 
 	filename := filepath.Join("..", "/../blockchain/testdata", "blocks0to168.bz2")
 	fi, err := os.Open(filename)
@@ -82,19 +139,73 @@ func TestTicketDB(t *testing.T) {
 
 	// Create decoder from the buffer and a map to store the data
 	bcDecoder := gob.NewDecoder(bcBuf)
-	testBlockchain := make(map[int64][]byte)
+	testBlockchainBytes := make(map[int64][]byte)
 
 	// Decode the blockchain into the map
-	if err := bcDecoder.Decode(&testBlockchain); err != nil {
+	if err := bcDecoder.Decode(&testBlockchainBytes); err != nil {
 		t.Errorf("error decoding test blockchain")
 	}
+	testBlockchain := make(map[int64]*dcrutil.Block, len(testBlockchainBytes))
+	for k, v := range testBlockchainBytes {
+		bl, err := dcrutil.NewBlockFromBytes(v)
+		if err != nil {
+			t.Fatalf("couldn't decode block")
+		}
+
+		testBlockchain[k] = bl
+	}
+
+	// Create a new database to store the accepted blocks into.
+	dbName := "ffldb_staketest"
+	dbPath := filepath.Join(testDbRoot, dbName)
+	_ = os.RemoveAll(dbPath)
+	testDb, err := database.Create(testDbType, dbPath, simNetParams.Net)
+	if err != nil {
+		t.Fatalf("error creating db: %v", err)
+	}
+
+	// Setup a teardown function for cleaning up.  This function is
+	// returned to the caller to be invoked when it is done testing.
+	defer os.RemoveAll(dbPath)
+	defer os.RemoveAll(testDbRoot)
+	defer testDb.Close()
 
 	// Load the genesis block
-	chain.DB().View(func(dbTx database.Tx) error {
+	var bestNode *stake.StakeNode
+	err = testDb.Update(func(dbTx database.Tx) error {
+		var errLocal error
+		bestNode, errLocal = stake.InitDatabaseState(dbTx, simNetParams)
+		if errLocal != nil {
+			return errLocal
+		}
 
+		return nil
 	})
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
 
-	/*
+	for i := int64(1); i <= testBCHeight; i++ {
+		t.Errorf("try to add height %v", i)
+
+		block := testBlockchain[i]
+		ticketsToAdd := make([]*chainhash.Hash, 0)
+		if i >= simNetParams.StakeEnabledHeight {
+			matureHeight := (i - int64(simNetParams.TicketMaturity))
+			// t.Errorf("Mature height %v, missed %v", matureHeight, bestNode.LiveTickets())
+			ticketsToAdd = ticketsInBlock(testBlockchain[matureHeight])
+		}
+		header := block.MsgBlock().Header
+
+		bestNode, err = bestNode.ConnectNode(&header, ticketsSpentInBlock(block),
+			revokedTicketsInBlock(block), ticketsToAdd)
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+	}
+}
+
+/*
 		timeSource := blockchain.NewMedianTime()
 		var CopyOfMapsAtBlock50, CopyOfMapsAtBlock168 stake.TicketMaps
 		var ticketsToSpendIn167 []chainhash.Hash
@@ -288,8 +399,9 @@ func TestTicketDB(t *testing.T) {
 		os.Remove("./ticketdb_test.ver")
 		os.Remove("testdata/testtmdb")
 		os.Remove("testdata")
-	*/
+
 }
+*/
 
 // --------------------------------------------------------------------------------
 // TESTING VARIABLES BEGIN HERE
