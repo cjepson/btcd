@@ -413,8 +413,12 @@ func serializeBlockUndoData(utds []*UndoTicketData) []byte {
 }
 
 // deserializeBlockUndoData deserializes a list of UndoTicketData for an entire
-// block.
+// block. Empty but non-nil slices are deserialized empty.
 func deserializeBlockUndoData(b []byte) ([]*UndoTicketData, error) {
+	if b != nil && len(b) == 0 {
+		return make([]*UndoTicketData, 0), nil
+	}
+
 	if len(b) < undoTicketDataSize {
 		return nil, ticketDBError(ErrUndoDataShortRead, "short read when "+
 			"deserializing block undo data")
@@ -472,7 +476,7 @@ func DbFetchBlockUndoData(dbTx database.Tx, height uint32) ([]*UndoTicketData, e
 	return deserializeBlockUndoData(v)
 }
 
-// DbPutBlockUndoData inserts block undo data into the database.
+// DbPutBlockUndoData inserts block undo data into the database for a given height.
 func DbPutBlockUndoData(dbTx database.Tx, height uint32, utds []*UndoTicketData) error {
 	meta := dbTx.Metadata()
 	bucket := meta.Bucket(dbnamespace.StakeBlockUndoDataBucketName)
@@ -481,6 +485,16 @@ func DbPutBlockUndoData(dbTx database.Tx, height uint32, utds []*UndoTicketData)
 	v := serializeBlockUndoData(utds)
 
 	return bucket.Put(k, v)
+}
+
+// DbDropBlockUndoData drops block undo data from the database at a given height.
+func DbDropBlockUndoData(dbTx database.Tx, height uint32) error {
+	meta := dbTx.Metadata()
+	bucket := meta.Bucket(dbnamespace.StakeBlockUndoDataBucketName)
+	k := make([]byte, 4)
+	dbnamespace.ByteOrder.PutUint32(k, height)
+
+	return bucket.Delete(k)
 }
 
 // TicketHashes is a list of ticket hashes that will mature in TicketMaturity
@@ -499,8 +513,13 @@ func serializeTicketHashes(ths TicketHashes) []byte {
 	return b
 }
 
-// deserializeTicketHashes deserializes a list of ticket hashes.
+// deserializeTicketHashes deserializes a list of ticket hashes. Empty but
+// non-nil slices are deserialized empty.
 func deserializeTicketHashes(b []byte) (TicketHashes, error) {
+	if b != nil && len(b) == 0 {
+		return make(TicketHashes, 0), nil
+	}
+
 	if len(b) < chainhash.HashSize {
 		return nil, ticketDBError(ErrTicketHashesShortRead, "short read when "+
 			"deserializing ticket hashes")
@@ -556,6 +575,16 @@ func DbPutNewTickets(dbTx database.Tx, height uint32, ths TicketHashes) error {
 	v := serializeTicketHashes(ths)
 
 	return bucket.Put(k, v)
+}
+
+// DbDropNewTickets drops new tickets for a mainchain block data at some height.
+func DbDropNewTickets(dbTx database.Tx, height uint32) error {
+	meta := dbTx.Metadata()
+	bucket := meta.Bucket(dbnamespace.StakeBlockUndoDataBucketName)
+	k := make([]byte, 4)
+	dbnamespace.ByteOrder.PutUint32(k, height)
+
+	return bucket.Delete(k)
 }
 
 // DbDeleteTicket removes a ticket from one of the ticket database buckets.
