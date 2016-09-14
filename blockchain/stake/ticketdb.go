@@ -133,6 +133,11 @@ func (sn *StakeNode) Winners() []*chainhash.Hash {
 	return sn.nextWinners
 }
 
+// Height returns the final state lottery checksum of the node.
+func (sn *StakeNode) FinalState() [6]byte {
+	return sn.finalState
+}
+
 // Height returns the height of the node.
 func (sn *StakeNode) Height() uint32 {
 	return sn.height
@@ -468,8 +473,10 @@ func connectStakeNode(node *StakeNode, header *wire.BlockHeader, ticketsSpentInB
 			ticketHash := chainhash.Hash(*treapKey)
 			connectedNode.nextWinners = append(connectedNode.nextWinners,
 				&ticketHash)
+			fmt.Printf("stateBuffer adding hash %x\n", ticketHash[:])
 			stateBuffer = append(stateBuffer, ticketHash[:]...)
 		}
+		fmt.Printf("stateBuffer done %x\n", stateBuffer[:])
 		lastHash := prng.StateHash()
 		stateBuffer = append(stateBuffer, lastHash[:]...)
 		copy(connectedNode.finalState[:], chainhash.HashFuncB(stateBuffer)[0:6])

@@ -1162,7 +1162,7 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block,
 	// to be handled correctly in the near future.
 	if node.height >= b.chainParams.StakeEnabledHeight {
 		spentAndMissedTickets, newTickets, _, err :=
-			b.tmdb.InsertBlock(block, parent)
+			b..InsertBlock(block, parent)
 		if err != nil {
 			return err
 		}

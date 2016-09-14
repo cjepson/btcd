@@ -186,6 +186,10 @@ func TestTicketDB(t *testing.T) {
 				t.Errorf("bad number of live tickets: want %v, got %v",
 					header.PoolSize, len(bestNode.LiveTickets()))
 			}
+			if header.FinalState != bestNode.FinalState() {
+				t.Errorf("bad final state: want %x, got %x",
+					header.FinalState, bestNode.FinalState())
+			}
 
 			// In memory addition test.
 			bestNode, err = bestNode.ConnectNode(&header,
