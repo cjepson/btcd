@@ -9,17 +9,13 @@ import (
 	"compress/bzip2"
 	"encoding/gob"
 	"fmt"
-	//	"fmt"
 	"math/big"
 	"os"
 	"path/filepath"
 	"reflect"
-	//	"reflect"
-	//	"sort"
 	"testing"
 	"time"
 
-	//"github.com/decred/dcrd/blockchain"
 	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg"
 	"github.com/decred/dcrd/chaincfg/chainhash"
@@ -28,40 +24,6 @@ import (
 	"github.com/decred/dcrd/wire"
 	"github.com/decred/dcrutil"
 )
-
-/*
-// cloneTicketDB makes a deep copy of a ticket DB by
-// serializing it to a gob and then deserializing it
-// into an empty container.
-func cloneTicketDB(tmdb *stake.TicketDB) (stake.TicketMaps, error) {
-	mapsPointer := tmdb.DumpMapsPointer()
-	mapsBytes, err := mapsPointer.GobEncode()
-	if err != nil {
-		return stake.TicketMaps{},
-			fmt.Errorf("clone db error: could not serialize ticketMaps")
-	}
-
-	var mapsCopy stake.TicketMaps
-	if err := mapsCopy.GobDecode(mapsBytes); err != nil {
-		return stake.TicketMaps{},
-			fmt.Errorf("clone db error: could not deserialize " +
-				"ticketMaps")
-	}
-
-	return mapsCopy, nil
-}
-
-// hashInSlice returns whether a hash exists in a slice or not.
-func hashInSlice(h *chainhash.Hash, list []*chainhash.Hash) bool {
-	for _, hash := range list {
-		if h.IsEqual(hash) {
-			return true
-		}
-	}
-
-	return false
-}
-*/
 
 const (
 	// testDbType is the database backend type to use for the tests.
@@ -115,6 +77,8 @@ func revokedTicketsInBlock(bl *dcrutil.Block) []*chainhash.Hash {
 	return tickets
 }
 
+// nodesEqual does a cursory test to ensure that data returned from the API
+// for any given node is equivalent.
 func nodesEqual(a *stake.StakeNode, b *stake.StakeNode) error {
 	if !reflect.DeepEqual(a.LiveTickets(), b.LiveTickets()) {
 		return fmt.Errorf("live tickets were not equal between nodes; "+
@@ -147,18 +111,6 @@ func nodesEqual(a *stake.StakeNode, b *stake.StakeNode) error {
 func TestTicketDB(t *testing.T) {
 	// Declare some useful variables
 	testBCHeight := int64(168)
-
-	// Set up a blockchain
-	/*
-		chain, teardownFunc, err := chainSetup("ticketdbunittests",
-			simNetParams)
-		if err != nil {
-			t.Errorf("Failed to setup chain instance: %v", err)
-			return
-		}
-		defer teardownFunc()
-	*/
-
 	filename := filepath.Join("..", "/../blockchain/testdata", "blocks0to168.bz2")
 	fi, err := os.Open(filename)
 	bcStream := bzip2.NewReader(fi)
@@ -186,7 +138,7 @@ func TestTicketDB(t *testing.T) {
 		testBlockchain[k] = bl
 	}
 
-	// Create a new database to store the accepted blocks into.
+	// Create a new database to store the accepted stake node data into.
 	dbName := "ffldb_staketest"
 	dbPath := filepath.Join(testDbRoot, dbName)
 	_ = os.RemoveAll(dbPath)
@@ -195,13 +147,12 @@ func TestTicketDB(t *testing.T) {
 		t.Fatalf("error creating db: %v", err)
 	}
 
-	// Setup a teardown function for cleaning up.  This function is
-	// returned to the caller to be invoked when it is done testing.
+	// Setup a teardown.
 	defer os.RemoveAll(dbPath)
 	defer os.RemoveAll(testDbRoot)
 	defer testDb.Close()
 
-	// Load the genesis block
+	// Load the genesis block.
 	var bestNode *stake.StakeNode
 	err = testDb.Update(func(dbTx database.Tx) error {
 		var errLocal error
@@ -216,28 +167,61 @@ func TestTicketDB(t *testing.T) {
 		t.Fatalf(err.Error())
 	}
 
+	// Cache all of our nodes so that we can check them when we start
+	// disconnecting and going backwards through the blockchain.
 	stakeNodesForward := make([]*stake.StakeNode, testBCHeight+1)
+	loadedNodesForward := make([]*stake.StakeNode, testBCHeight+1)
 	stakeNodesForward[0] = bestNode
-	for i := int64(1); i <= testBCHeight; i++ {
-		block := testBlockchain[i]
-		ticketsToAdd := make([]*chainhash.Hash, 0)
-		if i >= simNetParams.StakeEnabledHeight {
-			matureHeight := (i - int64(simNetParams.TicketMaturity))
-			ticketsToAdd = ticketsInBlock(testBlockchain[matureHeight])
-		}
-		header := block.MsgBlock().Header
-		if int(header.PoolSize) != len(bestNode.LiveTickets()) {
-			t.Errorf("bad number of live tickets: want %v, got %v",
-				header.PoolSize, len(bestNode.LiveTickets()))
+	loadedNodesForward[0] = bestNode
+	err = testDb.Update(func(dbTx database.Tx) error {
+		for i := int64(1); i <= testBCHeight; i++ {
+			block := testBlockchain[i]
+			ticketsToAdd := make([]*chainhash.Hash, 0)
+			if i >= simNetParams.StakeEnabledHeight {
+				matureHeight := (i - int64(simNetParams.TicketMaturity))
+				ticketsToAdd = ticketsInBlock(testBlockchain[matureHeight])
+			}
+			header := block.MsgBlock().Header
+			if int(header.PoolSize) != len(bestNode.LiveTickets()) {
+				t.Errorf("bad number of live tickets: want %v, got %v",
+					header.PoolSize, len(bestNode.LiveTickets()))
+			}
+
+			// In memory addition test.
+			bestNode, err = bestNode.ConnectNode(&header,
+				ticketsSpentInBlock(block), revokedTicketsInBlock(block),
+				ticketsToAdd)
+			if err != nil {
+				return fmt.Errorf("couldn't connect node: %v", err.Error())
+			}
+
+			// Write the new node to db.
+			stakeNodesForward[i] = bestNode
+			err := stake.WriteConnectedBestNode(dbTx, bestNode, block.Sha())
+			if err != nil {
+				return fmt.Errorf("failure writing the best node: %v",
+					err.Error())
+			}
+
+			// Reload the node from DB and make sure it's the same.
+			loadedNode, err := stake.LoadBestNode(dbTx, bestNode.Height(),
+				block.Sha(), &header, simNetParams)
+			if err != nil {
+				return fmt.Errorf("failed to load the best node: %v",
+					err.Error())
+			}
+			err = nodesEqual(loadedNode, bestNode)
+			if err != nil {
+				return fmt.Errorf("loaded best node was not same as "+
+					"in memory best node: %v", err.Error())
+			}
+			loadedNodesForward[i] = loadedNode
 		}
 
-		bestNode, err = bestNode.ConnectNode(&header, ticketsSpentInBlock(block),
-			revokedTicketsInBlock(block), ticketsToAdd)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
-
-		stakeNodesForward[i] = bestNode
+		return nil
+	})
+	if err != nil {
+		t.Fatalf(err.Error())
 	}
 
 	stakeNodesBackward := make([]*stake.StakeNode, testBCHeight+1)
@@ -251,7 +235,9 @@ func TestTicketDB(t *testing.T) {
 		}
 		header := parentBlock.MsgBlock().Header
 		blockUndoData := stakeNodesForward[i-1].UndoData()
+		formerBestNode := bestNode
 
+		// In memory disconnection test.
 		bestNode, err = bestNode.DisconnectNode(&header, blockUndoData,
 			ticketsToAdd, nil)
 		if err != nil {
@@ -260,211 +246,76 @@ func TestTicketDB(t *testing.T) {
 
 		err = nodesEqual(bestNode, stakeNodesForward[i-1])
 		if err != nil {
-			t.Errorf("non-equiv stake nodes: %v", err.Error())
+			t.Fatalf("non-equiv stake nodes: %v", err.Error())
 		}
 
+		// Try again using the database instead of the in memory
+		// data to disconnect the node, too.
+		var bestNodeUsingDB *stake.StakeNode
+		err = testDb.View(func(dbTx database.Tx) error {
+			bestNodeUsingDB, err = formerBestNode.DisconnectNode(&header, nil,
+				nil, dbTx)
+			if err != nil {
+				return err
+			}
+
+			return nil
+		})
+		if err != nil {
+			t.Errorf("couldn't disconnect using the database: %v",
+				err.Error())
+		}
+		err = nodesEqual(bestNode, bestNodeUsingDB)
+		if err != nil {
+			t.Errorf("non-equiv stake nodes using db when disconnecting: %v",
+				err.Error())
+		}
+
+		// Write the new best node to the database.
 		stakeNodesBackward[i-1] = bestNode
+		err = testDb.Update(func(dbTx database.Tx) error {
+			stakeNodesForward[i] = bestNode
+			err := stake.WriteDisconnectedBestNode(dbTx, bestNode,
+				parentBlock.Sha(), formerBestNode.UndoData())
+			if err != nil {
+				return fmt.Errorf("failure writing the best node: %v",
+					err.Error())
+			}
+
+			return nil
+		})
+		if err != nil {
+			t.Errorf("%s", err.Error())
+		}
+
+		// Check the best node against the loaded best node from
+		// the database after.
+		err = testDb.View(func(dbTx database.Tx) error {
+			loadedNode, err := stake.LoadBestNode(dbTx, bestNode.Height(),
+				parentBlock.Sha(), &header, simNetParams)
+			if err != nil {
+				return fmt.Errorf("failed to load the best node: %v",
+					err.Error())
+			}
+			err = nodesEqual(loadedNode, bestNode)
+			if err != nil {
+				return fmt.Errorf("loaded best node was not same as "+
+					"in memory best node: %v", err.Error())
+			}
+			err = nodesEqual(loadedNode, loadedNodesForward[i-1])
+			if err != nil {
+				return fmt.Errorf("loaded best node was not same as "+
+					"in memory best node: %v", err.Error())
+			}
+
+			return nil
+		})
+		if err != nil {
+			t.Errorf("%s", err.Error())
+		}
 	}
 
 }
-
-/*
-		timeSource := blockchain.NewMedianTime()
-		var CopyOfMapsAtBlock50, CopyOfMapsAtBlock168 stake.TicketMaps
-		var ticketsToSpendIn167 []chainhash.Hash
-		var sortedTickets167 []*stake.TicketData
-
-		for i := int64(0); i <= testBCHeight; i++ {
-			if i == 0 {
-				continue
-			}
-			block, err := dcrutil.NewBlockFromBytes(testBlockchain[i])
-			if err != nil {
-				t.Fatalf("block deserialization error on block %v", i)
-			}
-			block.SetHeight(i)
-			_, _, err = chain.ProcessBlock(block, timeSource, blockchain.BFNone)
-			if err != nil {
-				t.Fatalf("failed to process block %v: %v", i, err)
-			}
-
-			if i == 50 {
-				// Create snapshot of tmdb at block 50
-				CopyOfMapsAtBlock50, err = cloneTicketDB(chain.TMDB())
-				if err != nil {
-					t.Errorf("db cloning at block 50 failure! %v", err)
-				}
-			}
-
-			// Test to make sure that ticket selection is working correctly.
-			if i == 167 {
-				// Sort the entire list of tickets lexicographically by sorting
-				// each bucket and then appending it to the list. Then store it
-				// to use in the next block.
-				totalTickets := 0
-				sortedSlice := make([]*stake.TicketData, 0)
-				for i := 0; i < stake.BucketsSize; i++ {
-					tix, err := chain.TMDB().DumpLiveTickets(uint8(i))
-					if err != nil {
-						t.Errorf("error dumping live tickets")
-					}
-					mapLen := len(tix)
-					totalTickets += mapLen
-					tempTdSlice := stake.NewTicketDataSlice(mapLen)
-					itr := 0 // Iterator
-					for _, td := range tix {
-						tempTdSlice[itr] = td
-						itr++
-					}
-					sort.Sort(tempTdSlice)
-					sortedSlice = append(sortedSlice, tempTdSlice...)
-				}
-				sortedTickets167 = sortedSlice
-			}
-
-			if i == 168 {
-				parentBlock, err := dcrutil.NewBlockFromBytes(testBlockchain[i-1])
-				if err != nil {
-					t.Errorf("block deserialization error on block %v", i-1)
-				}
-				pbhB, err := parentBlock.MsgBlock().Header.Bytes()
-				if err != nil {
-					t.Errorf("block header serialization error")
-				}
-				prng := stake.NewHash256PRNG(pbhB)
-				ts, err := stake.FindTicketIdxs(int64(len(sortedTickets167)),
-					int(simNetParams.TicketsPerBlock), prng)
-				if err != nil {
-					t.Errorf("failure on FindTicketIdxs")
-				}
-				for _, idx := range ts {
-					ticketsToSpendIn167 =
-						append(ticketsToSpendIn167, sortedTickets167[idx].SStxHash)
-				}
-
-				// Make sure that the tickets that were supposed to be spent or
-				// missed were.
-				spentTix, err := chain.TMDB().DumpSpentTickets(i)
-				if err != nil {
-					t.Errorf("DumpSpentTickets failure")
-				}
-				for _, h := range ticketsToSpendIn167 {
-					if _, ok := spentTix[h]; !ok {
-						t.Errorf("missing ticket %v that should have been missed "+
-							"or spent in block %v", h, i)
-					}
-				}
-
-				// Create snapshot of tmdb at block 168
-				CopyOfMapsAtBlock168, err = cloneTicketDB(chain.TMDB())
-				if err != nil {
-					t.Errorf("db cloning at block 168 failure! %v", err)
-				}
-			}
-		}
-
-		// Remove five blocks from HEAD~1
-		_, _, _, err = chain.TMDB().RemoveBlockToHeight(50)
-		if err != nil {
-			t.Errorf("error: %v", err)
-		}
-
-		// Test if the roll back was symmetric to the earlier snapshot
-		if !reflect.DeepEqual(chain.TMDB().DumpMapsPointer(), CopyOfMapsAtBlock50) {
-			t.Errorf("The td did not restore to a previous block height correctly!")
-		}
-
-		// Test rescanning a ticket db
-		err = chain.TMDB().RescanTicketDB()
-		if err != nil {
-			t.Errorf("rescanticketdb err: %v", err.Error())
-		}
-
-		// Remove all blocks and rescan too
-		_, _, _, err =
-			chain.TMDB().RemoveBlockToHeight(simNetParams.StakeEnabledHeight)
-		if err != nil {
-			t.Errorf("error: %v", err)
-		}
-		err = chain.TMDB().RescanTicketDB()
-		if err != nil {
-			t.Errorf("rescanticketdb err: %v", err.Error())
-		}
-
-		// Test if the db file storage was symmetric to the earlier snapshot
-		if !reflect.DeepEqual(chain.TMDB().DumpMapsPointer(), CopyOfMapsAtBlock168) {
-			t.Errorf("The td did not rescan to HEAD correctly!")
-		}
-
-		err = os.Mkdir("testdata/", os.FileMode(0700))
-		if err != nil {
-			t.Error(err)
-		}
-
-		// Store the ticket db to disk
-		err = chain.TMDB().Store("testdata/", "testtmdb")
-		if err != nil {
-			t.Errorf("error: %v", err)
-		}
-
-		var tmdb2 stake.TicketDB
-		err = tmdb2.LoadTicketDBs("testdata/", "testtmdb", simNetParams, chain.DB())
-		if err != nil {
-			t.Errorf("error: %v", err)
-		}
-
-		// Test if the db file storage was symmetric to previously rescanned one
-		if !reflect.DeepEqual(chain.TMDB().DumpMapsPointer(), tmdb2.DumpMapsPointer()) {
-			t.Errorf("The td did not rescan to a previous block height correctly!")
-		}
-
-		tmdb2.Close()
-
-		// Test dumping missing tickets from block 152
-		missedIn152, _ := chainhash.NewHashFromStr(
-			"84f7f866b0af1cc278cb8e0b2b76024a07542512c76487c83628c14c650de4fa")
-
-		chain.TMDB().RemoveBlockToHeight(152)
-
-		missedTix, err := chain.TMDB().DumpMissedTickets()
-		if err != nil {
-			t.Errorf("err dumping missed tix: %v", err.Error())
-		}
-
-		if _, exists := missedTix[*missedIn152]; !exists {
-			t.Errorf("couldn't finding missed tx 1 %v in tmdb @ block 152!",
-				missedIn152)
-		}
-
-		chain.TMDB().RescanTicketDB()
-
-		// Make sure that the revoked map contains the revoked tx
-		revokedSlice := []*chainhash.Hash{missedIn152}
-
-		revokedTix, err := chain.TMDB().DumpRevokedTickets()
-		if err != nil {
-			t.Errorf("err dumping missed tix: %v", err.Error())
-		}
-
-		if len(revokedTix) != 1 {
-			t.Errorf("revoked ticket map is wrong len, got %v, want %v",
-				len(revokedTix), 1)
-		}
-
-		_, wasMissedIn152 := revokedTix[*revokedSlice[0]]
-		ticketsRevoked := wasMissedIn152
-		if !ticketsRevoked {
-			t.Errorf("revoked ticket map did not include tickets missed in " +
-				"block 152 and later revoked")
-		}
-
-		os.RemoveAll("ticketdb_test")
-		os.Remove("./ticketdb_test.ver")
-		os.Remove("testdata/testtmdb")
-		os.Remove("testdata")
-
-}
-*/
 
 // --------------------------------------------------------------------------------
 // TESTING VARIABLES BEGIN HERE

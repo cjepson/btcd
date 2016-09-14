@@ -470,7 +470,7 @@ func DbFetchBlockUndoData(dbTx database.Tx, height uint32) ([]*UndoTicketData, e
 	v := bucket.Get(k)
 	if v == nil {
 		return nil, ticketDBError(ErrMissingKey,
-			"missing key for block undo data")
+			fmt.Sprintf("missing key %v for block undo data", height))
 	}
 
 	return deserializeBlockUndoData(v)
@@ -559,7 +559,7 @@ func DbFetchNewTickets(dbTx database.Tx, height uint32) (TicketHashes, error) {
 	v := bucket.Get(k)
 	if v == nil {
 		return nil, ticketDBError(ErrMissingKey,
-			"missing key for new tickets")
+			fmt.Sprintf("missing key %v for new tickets", height))
 	}
 
 	return deserializeTicketHashes(v)
@@ -569,7 +569,7 @@ func DbFetchNewTickets(dbTx database.Tx, height uint32) (TicketHashes, error) {
 // database.
 func DbPutNewTickets(dbTx database.Tx, height uint32, ths TicketHashes) error {
 	meta := dbTx.Metadata()
-	bucket := meta.Bucket(dbnamespace.StakeBlockUndoDataBucketName)
+	bucket := meta.Bucket(dbnamespace.TicketsInBlockBucketName)
 	k := make([]byte, 4)
 	dbnamespace.ByteOrder.PutUint32(k, height)
 	v := serializeTicketHashes(ths)
@@ -580,7 +580,7 @@ func DbPutNewTickets(dbTx database.Tx, height uint32, ths TicketHashes) error {
 // DbDropNewTickets drops new tickets for a mainchain block data at some height.
 func DbDropNewTickets(dbTx database.Tx, height uint32) error {
 	meta := dbTx.Metadata()
-	bucket := meta.Bucket(dbnamespace.StakeBlockUndoDataBucketName)
+	bucket := meta.Bucket(dbnamespace.TicketsInBlockBucketName)
 	k := make([]byte, 4)
 	dbnamespace.ByteOrder.PutUint32(k, height)
 
