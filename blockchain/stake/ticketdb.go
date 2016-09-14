@@ -454,6 +454,7 @@ func connectStakeNode(node *StakeNode, header *wire.BlockHeader, ticketsSpentInB
 	// winners at the block before StakeEnabledHeight.
 	if connectedNode.height >=
 		uint32(connectedNode.params.StakeValidationHeight-1) {
+		fmt.Printf("calculate winners for height %v\n", connectedNode.height)
 		// Find the next set of winners.
 		hB, err := header.Bytes()
 		if err != nil {
