@@ -756,35 +756,11 @@ func (b *BlockChain) getPrevNodeFromNode(node *blockNode) (*blockNode, error) {
 	return prevBlockNode, err
 }
 
-// GetNodeAtHeightFromTopNode goes backwards through a node until it a reaches
-// the node with a desired block height; it returns this block. The benefit is
-// this works for both the main chain and the side chain.
-func (b *BlockChain) getNodeAtHeightFromTopNode(node *blockNode,
-	toTraverse int64) (*blockNode, error) {
-	oldNode := node
-	var err error
-
-	for i := 0; i < int(toTraverse); i++ {
-		// Get the previous block node.
-		oldNode, err = b.getPrevNodeFromNode(oldNode)
-		if err != nil {
-			return nil, err
-		}
-
-		if oldNode == nil {
-			return nil, fmt.Errorf("unable to obtain previous node; " +
-				"ancestor is genesis block")
-		}
-	}
-
-	return oldNode, nil
-}
-
-// getBlockFromHash searches the internal chain block stores and the database in
+// fetchBlockFromHash searches the internal chain block stores and the database in
 // an attempt to find the block. If it finds the block, it returns it.
 //
 // This function is NOT safe for concurrent access.
-func (b *BlockChain) getBlockFromHash(hash *chainhash.Hash) (*dcrutil.Block,
+func (b *BlockChain) fetchBlockFromHash(hash *chainhash.Hash) (*dcrutil.Block,
 	error) {
 	// Check side chain block cache
 	b.blockCacheLock.RLock()
@@ -826,18 +802,19 @@ func (b *BlockChain) getBlockFromHash(hash *chainhash.Hash) (*dcrutil.Block,
 		"side chain cache, orphan cache, and main chain db", hash)
 }
 
-// GetBlockFromHash is the generalized and exported version of getBlockFromHash.
-func (b *BlockChain) GetBlockFromHash(hash *chainhash.Hash) (*dcrutil.Block,
+// FetchBlockFromHash is the generalized and exported version of
+// fetchBlockFromHash. It is safe for concurrent access.
+func (b *BlockChain) FetchBlockFromHash(hash *chainhash.Hash) (*dcrutil.Block,
 	error) {
 	b.chainLock.RLock()
 	defer b.chainLock.RUnlock()
-	return b.getBlockFromHash(hash)
+	return b.fetchBlockFromHash(hash)
 }
 
 // GetTopBlock returns the current block at HEAD on the blockchain. Needed
 // for mining in the daemon.
 func (b *BlockChain) GetTopBlock() (dcrutil.Block, error) {
-	block, err := b.getBlockFromHash(b.bestNode.hash)
+	block, err := b.fetchBlockFromHash(b.bestNode.hash)
 	return *block, err
 }
 
@@ -1129,7 +1106,7 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block,
 	}
 
 	// Sanity check the correct number of stxos are provided.
-	parent, err := b.getBlockFromHash(node.parent.hash)
+	parent, err := b.fetchBlockFromHash(node.parent.hash)
 	if err != nil {
 		return err
 	}
@@ -1161,29 +1138,26 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block,
 	// into DB fails, the two database will be on different HEADs. This needs
 	// to be handled correctly in the near future.
 	if node.height >= b.chainParams.StakeEnabledHeight {
-		spentAndMissedTickets, newTickets, _, err :=
-			b..InsertBlock(block, parent)
-		if err != nil {
-			return err
-		}
-
+		// TODO notifications
 		nextStakeDiff, err := b.calcNextRequiredStakeDifficulty(node)
 		if err != nil {
 			return err
 		}
+
+		empty := make([]*chainhash.Hash, 0)
 
 		// Notify of spent and missed tickets
 		b.sendNotification(NTSpentAndMissedTickets,
 			&TicketNotificationsData{*node.hash,
 				node.height,
 				nextStakeDiff,
-				spentAndMissedTickets})
+				empty})
 		// Notify of new tickets
 		b.sendNotification(NTNewTickets,
 			&TicketNotificationsData{*node.hash,
 				node.height,
 				nextStakeDiff,
-				newTickets})
+				empty})
 	}
 
 	// Atomically insert info into the database.
@@ -1222,6 +1196,12 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block,
 			return err
 		}
 
+		// Insert the block into the stake database.
+		err = stake.WriteConnectedBestNode(dbTx, node.stakeNode, node.hash)
+		if err != nil {
+			return err
+		}
+
 		// Allow the index manager to call each of the currently active
 		// optional indexes with the block being connected so they can
 		// update themselves accordingly.
@@ -1235,16 +1215,6 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block,
 		return nil
 	})
 	if err != nil {
-		log.Errorf("Failed to insert block %v: %s", node.hash, err.Error())
-
-		// Attempt to restore TicketDb if this fails.
-		if node.height >= b.chainParams.StakeEnabledHeight {
-			_, _, _, errRemove := b.tmdb.RemoveBlockToHeight(node.height - 1)
-			if errRemove != nil {
-				return errRemove
-			}
-		}
-
 		return err
 	}
 
@@ -1309,25 +1279,13 @@ func (b *BlockChain) disconnectBlock(node *blockNode, block *dcrutil.Block,
 	// accessing node.parent directly as it will dynamically create previous
 	// block nodes as needed.  This helps allow only the pieces of the chain
 	// that are needed to remain in memory.
-
-	// Remove from ticket database.
-	maturityHeight := int64(b.chainParams.TicketMaturity) +
-		int64(b.chainParams.CoinbaseMaturity)
-	if node.height-1 >= maturityHeight {
-		_, _, _, err := b.tmdb.RemoveBlockToHeight(node.height - 1)
-		if err != nil {
-			return err
-		}
-	}
-
-	// if we're above the point in which the stake db is enabled.
 	prevNode, err := b.getPrevNodeFromNode(node)
 	if err != nil {
 		return err
 	}
 
 	// Load the previous block since some details for it are needed below.
-	parent, err := b.getBlockFromHash(prevNode.hash)
+	parent, err := b.fetchBlockFromHash(prevNode.hash)
 	if err != nil {
 		return err
 	}
@@ -1377,6 +1335,11 @@ func (b *BlockChain) disconnectBlock(node *blockNode, block *dcrutil.Block,
 		// Update the transaction spend journal by removing the record
 		// that contains all txos spent by the block .
 		err = dbRemoveSpendJournalEntry(dbTx, block.Sha())
+		if err != nil {
+			return err
+		}
+
+		err = stake.WriteDisconnectedBestNode(dbTx, node.parent.stakeNode)
 		if err != nil {
 			return err
 		}
@@ -1524,11 +1487,11 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 		var block *dcrutil.Block
 		var parent *dcrutil.Block
 		var err error
-		block, err = b.getBlockFromHash(n.hash)
+		block, err = b.fetchBlockFromHash(n.hash)
 		if err != nil {
 			return err
 		}
-		parent, err = b.getBlockFromHash(&n.header.PrevBlock)
+		parent, err = b.fetchBlockFromHash(&n.header.PrevBlock)
 		if err != nil {
 			return err
 		}
@@ -1628,7 +1591,7 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 	for i, e := 0, detachNodes.Front(); e != nil; i, e = i+1, e.Next() {
 		n := e.Value.(*blockNode)
 		block := detachBlocks[i]
-		parent, err := b.getBlockFromHash(&n.header.PrevBlock)
+		parent, err := b.fetchBlockFromHash(&n.header.PrevBlock)
 		if err != nil {
 			return err
 		}
@@ -1662,7 +1625,7 @@ func (b *BlockChain) reorganizeChain(detachNodes, attachNodes *list.List,
 		block := b.blockCache[*n.hash]
 		b.blockCacheLock.RUnlock()
 
-		parent, err := b.getBlockFromHash(&n.header.PrevBlock)
+		parent, err := b.fetchBlockFromHash(&n.header.PrevBlock)
 		if err != nil {
 			return err
 		}
@@ -1736,7 +1699,7 @@ func (b *BlockChain) forceHeadReorganization(formerBest chainhash.Hash,
 			"common parent for forced reorg")
 	}
 
-	newBestBlock, err := b.getBlockFromHash(&newBest)
+	newBestBlock, err := b.fetchBlockFromHash(&newBest)
 	if err != nil {
 		return err
 	}
@@ -1746,11 +1709,11 @@ func (b *BlockChain) forceHeadReorganization(formerBest chainhash.Hash,
 	view.SetBestHash(&b.bestNode.header.PrevBlock)
 	view.SetStakeViewpoint(ViewpointPrevValidInitial)
 
-	formerBestBlock, err := b.getBlockFromHash(&formerBest)
+	formerBestBlock, err := b.fetchBlockFromHash(&formerBest)
 	if err != nil {
 		return err
 	}
-	commonParentBlock, err := b.getBlockFromHash(formerBestNode.parent.hash)
+	commonParentBlock, err := b.fetchBlockFromHash(formerBestNode.parent.hash)
 	if err != nil {
 		return err
 	}
@@ -1833,7 +1796,7 @@ func (b *BlockChain) connectBestChain(node *blockNode, block *dcrutil.Block,
 		// Fetch the best block, now the parent, to be able to
 		// connect the txTreeRegular if needed.
 		// TODO optimize by not fetching if not needed?
-		parent, err := b.getBlockFromHash(&node.header.PrevBlock)
+		parent, err := b.fetchBlockFromHash(&node.header.PrevBlock)
 		if err != nil {
 			return false, err
 		}

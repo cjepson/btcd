@@ -355,6 +355,7 @@ func (t *Immutable) ForEach(fn func(k Key, v *Value) bool) {
 // over the entire treap and finds winners at selected indexes and all tickets
 // whose height is less than or equal to the passed height. These are returned
 // as slices of pointers to keys, which can be recast as []*chainhash.Hash.
+// This is only used for benchmarking and is not consensus compatible.
 func (t *Immutable) FetchWinnersAndExpired(idxs []int, height uint32) ([]*Key, []*Key) {
 	if idxs == nil {
 		return nil, nil
@@ -390,22 +391,55 @@ func (t *Immutable) FetchWinnersAndExpired(idxs []int, height uint32) ([]*Key, [
 // FetchWinners is a ticket database specific function which iterates over the
 // entire treap and finds winners at selected indexes. These are returned
 // as a slice of pointers to keys, which can be recast as []*chainhash.Hash.
+// Importantly, it maintains the list of winners in the same order as specified
+// in the original idxs passed to the function.
 func (t *Immutable) FetchWinners(idxs []int) []*Key {
 	if idxs == nil {
 		return nil
 	}
 
+	// maxInt returns the maximum integer from a list of integers.
+	maxInt := func(idxs []int) int {
+		max := 0
+		for _, i := range idxs {
+			if i > max {
+				max = i
+			}
+		}
+		return max
+	}
+	max := maxInt(idxs)
+
+	originalIdxs := make([]int, len(idxs))
+	copy(originalIdxs[:], idxs[:])
 	sortedIdxs := sort.IntSlice(idxs)
 	sort.Sort(sortedIdxs)
 
-	// TODO buffer winners according to the TicketsPerBlock value from
-	// chaincfg?
+	// originalIdx returns the original index of the lucky
+	// number in the idxs slice, so that the order is correct.
+	originalIdx := func(idx int) int {
+		for i := range originalIdxs {
+			if idx == originalIdxs[i] {
+				return i
+			}
+		}
+
+		// This will cause a panic. It should never, ever
+		// happen because the investigated index will always
+		// be in the original indexes.
+		return -1
+	}
+
 	idx := 0
-	winners := make([]*Key, 0)
 	winnerIdx := 0
+	winners := make([]*Key, len(idxs))
 	t.ForEach(func(k Key, v *Value) bool {
+		if idx > max {
+			return false
+		}
+
 		if idx == sortedIdxs[winnerIdx] {
-			winners = append(winners, &k)
+			winners[originalIdx(idx)] = &k
 			if winnerIdx+1 < len(sortedIdxs) {
 				winnerIdx++
 			}

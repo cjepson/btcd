@@ -454,7 +454,6 @@ func connectStakeNode(node *StakeNode, header *wire.BlockHeader, ticketsSpentInB
 	// winners at the block before StakeEnabledHeight.
 	if connectedNode.height >=
 		uint32(connectedNode.params.StakeValidationHeight-1) {
-		fmt.Printf("calculate winners for height %v\n", connectedNode.height)
 		// Find the next set of winners.
 		hB, err := header.Bytes()
 		if err != nil {
@@ -474,10 +473,8 @@ func connectStakeNode(node *StakeNode, header *wire.BlockHeader, ticketsSpentInB
 			ticketHash := chainhash.Hash(*treapKey)
 			connectedNode.nextWinners = append(connectedNode.nextWinners,
 				&ticketHash)
-			fmt.Printf("stateBuffer adding hash %x\n", ticketHash[:])
 			stateBuffer = append(stateBuffer, ticketHash[:]...)
 		}
-		fmt.Printf("stateBuffer done %x\n", stateBuffer[:])
 		lastHash := prng.StateHash()
 		stateBuffer = append(stateBuffer, lastHash[:]...)
 		copy(connectedNode.finalState[:], chainhash.HashFuncB(stateBuffer)[0:6])

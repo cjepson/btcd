@@ -1436,7 +1436,7 @@ func (b *BlockChain) initChainState() error {
 		node.workSum = state.workSum
 		b.bestNode = node
 		b.root = node
-		
+
 		// Restore the stake node from the database.
 		stake.InitializeBestNode()
 
@@ -1650,7 +1650,7 @@ func (b *BlockChain) BlockByHeight(blockHeight int64) (*dcrutil.Block, error) {
 //
 // This function is safe for concurrent access.
 func (b *BlockChain) BlockByHash(hash *chainhash.Hash) (*dcrutil.Block, error) {
-	return b.getBlockFromHash(hash)
+	return b.fetchBlockFromHash(hash)
 }
 
 // HeightRange returns a range of block hashes for the given start and end

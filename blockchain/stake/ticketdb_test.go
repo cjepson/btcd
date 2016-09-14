@@ -104,6 +104,10 @@ func nodesEqual(a *stake.StakeNode, b *stake.StakeNode) error {
 		return fmt.Errorf("winners were not equal between nodes; "+
 			"a: %v, b: %v", len(a.Winners()), len(b.Winners()))
 	}
+	if a.FinalState() != b.FinalState() {
+		return fmt.Errorf("final state were not equal between nodes; "+
+			"a: %x, b: %x", a.FinalState(), b.FinalState())
+	}
 
 	return nil
 }
