@@ -114,10 +114,29 @@ func (sn *StakeNode) MissedTickets() []*chainhash.Hash {
 	return tickets
 }
 
+// RevokedTickets returns the list of revoked tickets for this stake node.
+func (sn *StakeNode) RevokedTickets() []*chainhash.Hash {
+	tickets := make([]*chainhash.Hash, sn.revokedTickets.Len())
+	i := 0
+	sn.revokedTickets.ForEach(func(k tickettreap.Key, v *tickettreap.Value) bool {
+		h := chainhash.Hash(k)
+		tickets[i] = &h
+		i++
+		return true
+	})
+
+	return tickets
+}
+
 // Winners returns the current list of winners for this stake node, which
 // can vote on this node.
 func (sn *StakeNode) Winners() []*chainhash.Hash {
 	return sn.nextWinners
+}
+
+// Height returns the height of the node.
+func (sn *StakeNode) Height() uint32 {
+	return sn.height
 }
 
 // genesisNode returns a pointer to the initialized ticket database for the
@@ -362,8 +381,11 @@ func connectStakeNode(node *StakeNode, header *wire.BlockHeader, ticketsSpentInB
 		// Find the expiring tickets and drop them as well. We already know what
 		// the winners are from the cached information in the previous block, so
 		// no drop the results of that here.
-		toExpireHeight := connectedNode.height -
-			uint32(connectedNode.params.TicketExpiry)
+		toExpireHeight := uint32(0)
+		if connectedNode.height > uint32(connectedNode.params.TicketExpiry) {
+			toExpireHeight = connectedNode.height -
+				uint32(connectedNode.params.TicketExpiry)
+		}
 		expired := connectedNode.liveTickets.FetchExpired(toExpireHeight)
 		for _, treapKey := range expired {
 			v := connectedNode.liveTickets.Get(*treapKey)
@@ -373,9 +395,12 @@ func connectStakeNode(node *StakeNode, header *wire.BlockHeader, ticketsSpentInB
 						"bucket to expire", chainhash.Hash(*treapKey)))
 			}
 
-			connectedNode.liveTickets.Delete(*treapKey)
-			ticketHash := chainhash.Hash(*treapKey)
+			connectedNode.liveTickets =
+				connectedNode.liveTickets.Delete(*treapKey)
+			connectedNode.missedTickets =
+				connectedNode.missedTickets.Put(*treapKey, v)
 
+			ticketHash := chainhash.Hash(*treapKey)
 			connectedNode.databaseUndoUpdate =
 				append(connectedNode.databaseUndoUpdate, &ticketdb.UndoTicketData{
 					TicketHash:   ticketHash,
@@ -391,13 +416,15 @@ func connectStakeNode(node *StakeNode, header *wire.BlockHeader, ticketsSpentInB
 		for _, revokedTicket := range revokedTickets {
 			v := connectedNode.missedTickets.Get(tickettreap.Key(*revokedTicket))
 			if v == nil {
-				fmt.Printf("missed size %v", connectedNode.missedTickets.Len())
+				// fmt.Printf("missed size %v", connectedNode.missedTickets.Len())
 				return nil, stakeRuleError(ErrMissingTicket, fmt.Sprintf(
 					"could not find missed ticket %v in the missed tickets "+
 						"bucket to revoke", revokedTicket))
 			}
 
-			connectedNode.liveTickets.Delete(tickettreap.Key(*revokedTicket))
+			connectedNode.missedTickets =
+				connectedNode.missedTickets.Delete(
+					tickettreap.Key(*revokedTicket))
 
 			connectedNode.databaseUndoUpdate =
 				append(connectedNode.databaseUndoUpdate, &ticketdb.UndoTicketData{
@@ -424,6 +451,9 @@ func connectStakeNode(node *StakeNode, header *wire.BlockHeader, ticketsSpentInB
 				Revoked:      false,
 				Spent:        false,
 			})
+
+		// jc := connectedNode.databaseUndoUpdate[len(connectedNode.databaseUndoUpdate)-1]
+		// fmt.Printf("add ticket with %v %v %v\n", jc.Missed, jc.Revoked, jc.Spent)
 	}
 
 	// The first block voted on is at StakeEnabledHeight, so begin calculating
@@ -436,7 +466,6 @@ func connectStakeNode(node *StakeNode, header *wire.BlockHeader, ticketsSpentInB
 			return nil, err
 		}
 		prng := NewHash256PRNG(hB)
-		fmt.Printf("%v\n", int64(connectedNode.liveTickets.Len()))
 		idxs, err := FindTicketIdxs(int64(connectedNode.liveTickets.Len()),
 			int(connectedNode.params.TicketsPerBlock), prng)
 		if err != nil {
@@ -477,6 +506,8 @@ func disconnectStakeNode(node *StakeNode, parentHeader *wire.BlockHeader, parent
 		return genesisNode(node.params), nil
 	}
 
+	//fmt.Printf("undo len in disconnect %v\n", len(parentUtds))
+
 	// The undo ticket slice is normally stored in memory for the most
 	// recent blocks and the sidechain, but it may be the case that it
 	// is missing because it's in the mainchain and very old (thus
@@ -516,11 +547,13 @@ func disconnectStakeNode(node *StakeNode, parentHeader *wire.BlockHeader, parent
 	for _, undo := range node.databaseUndoUpdate {
 		k := tickettreap.Key(undo.TicketHash)
 		v := &tickettreap.Value{Height: undo.TicketHeight}
+		//fmt.Printf("missed %v revoked %v spent %v\n", undo.Missed, undo.Revoked, undo.Spent)
 
 		switch {
 		// All flags are unset; this is a newly added ticket.
 		// Remove it from the list of live tickets.
 		case !undo.Missed && !undo.Revoked && !undo.Spent:
+			//fmt.Printf("Remove mastured ticket %v\n", undo.TicketHash)
 			restoredNode.liveTickets = restoredNode.liveTickets.Delete(k)
 
 		// The ticket was missed and revoked. It needs to
@@ -563,7 +596,7 @@ func disconnectStakeNode(node *StakeNode, parentHeader *wire.BlockHeader, parent
 		}
 	}
 
-	if node.height >= uint32(node.params.StakeEnabledHeight) {
+	if node.height >= uint32(node.params.StakeValidationHeight) {
 		phB, err := parentHeader.Bytes()
 		if err != nil {
 			return nil, err
@@ -572,6 +605,7 @@ func disconnectStakeNode(node *StakeNode, parentHeader *wire.BlockHeader, parent
 		_, err = FindTicketIdxs(int64(restoredNode.liveTickets.Len()),
 			int(node.params.TicketsPerBlock), prng)
 		if err != nil {
+			panic(fmt.Sprintf("%v", node.height))
 			return nil, err
 		}
 		lastHash := prng.StateHash()

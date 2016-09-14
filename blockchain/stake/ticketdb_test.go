@@ -8,10 +8,12 @@ import (
 	"bytes"
 	"compress/bzip2"
 	"encoding/gob"
+	"fmt"
 	//	"fmt"
 	"math/big"
 	"os"
 	"path/filepath"
+	"reflect"
 	//	"reflect"
 	//	"sort"
 	"testing"
@@ -113,6 +115,35 @@ func revokedTicketsInBlock(bl *dcrutil.Block) []*chainhash.Hash {
 	return tickets
 }
 
+func nodesEqual(a *stake.StakeNode, b *stake.StakeNode) error {
+	if !reflect.DeepEqual(a.LiveTickets(), b.LiveTickets()) {
+		return fmt.Errorf("live tickets were not equal between nodes; "+
+			"a: %v, b: %v", len(a.LiveTickets()), len(b.LiveTickets()))
+	}
+	if !reflect.DeepEqual(a.MissedTickets(), b.MissedTickets()) {
+		return fmt.Errorf("missed tickets were not equal between nodes; "+
+			"a: %v, b: %v", len(a.MissedTickets()), len(b.MissedTickets()))
+	}
+	if !reflect.DeepEqual(a.RevokedTickets(), b.RevokedTickets()) {
+		return fmt.Errorf("revoked tickets were not equal between nodes; "+
+			"a: %v, b: %v", len(a.RevokedTickets()), len(b.RevokedTickets()))
+	}
+	if !reflect.DeepEqual(a.NewTickets(), b.NewTickets()) {
+		return fmt.Errorf("new tickets were not equal between nodes; "+
+			"a: %v, b: %v", len(a.NewTickets()), len(b.NewTickets()))
+	}
+	if !reflect.DeepEqual(a.UndoData(), b.UndoData()) {
+		return fmt.Errorf("undo data were not equal between nodes; "+
+			"a: %v, b: %v", len(a.UndoData()), len(b.UndoData()))
+	}
+	if !reflect.DeepEqual(a.Winners(), b.Winners()) {
+		return fmt.Errorf("winners were not equal between nodes; "+
+			"a: %v, b: %v", len(a.Winners()), len(b.Winners()))
+	}
+
+	return nil
+}
+
 func TestTicketDB(t *testing.T) {
 	// Declare some useful variables
 	testBCHeight := int64(168)
@@ -185,24 +216,56 @@ func TestTicketDB(t *testing.T) {
 		t.Fatalf(err.Error())
 	}
 
+	stakeNodesForward := make([]*stake.StakeNode, testBCHeight+1)
+	stakeNodesForward[0] = bestNode
 	for i := int64(1); i <= testBCHeight; i++ {
-		t.Errorf("try to add height %v", i)
-
 		block := testBlockchain[i]
 		ticketsToAdd := make([]*chainhash.Hash, 0)
 		if i >= simNetParams.StakeEnabledHeight {
 			matureHeight := (i - int64(simNetParams.TicketMaturity))
-			// t.Errorf("Mature height %v, missed %v", matureHeight, bestNode.LiveTickets())
 			ticketsToAdd = ticketsInBlock(testBlockchain[matureHeight])
 		}
 		header := block.MsgBlock().Header
+		if int(header.PoolSize) != len(bestNode.LiveTickets()) {
+			t.Errorf("bad number of live tickets: want %v, got %v",
+				header.PoolSize, len(bestNode.LiveTickets()))
+		}
 
 		bestNode, err = bestNode.ConnectNode(&header, ticketsSpentInBlock(block),
 			revokedTicketsInBlock(block), ticketsToAdd)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
+
+		stakeNodesForward[i] = bestNode
 	}
+
+	stakeNodesBackward := make([]*stake.StakeNode, testBCHeight+1)
+	stakeNodesBackward[testBCHeight] = bestNode
+	for i := testBCHeight; i >= int64(1); i-- {
+		parentBlock := testBlockchain[i-1]
+		ticketsToAdd := make([]*chainhash.Hash, 0)
+		if i >= simNetParams.StakeEnabledHeight {
+			matureHeight := (i - 1 - int64(simNetParams.TicketMaturity))
+			ticketsToAdd = ticketsInBlock(testBlockchain[matureHeight])
+		}
+		header := parentBlock.MsgBlock().Header
+		blockUndoData := stakeNodesForward[i-1].UndoData()
+
+		bestNode, err = bestNode.DisconnectNode(&header, blockUndoData,
+			ticketsToAdd, nil)
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+
+		err = nodesEqual(bestNode, stakeNodesForward[i-1])
+		if err != nil {
+			t.Errorf("non-equiv stake nodes: %v", err.Error())
+		}
+
+		stakeNodesBackward[i-1] = bestNode
+	}
+
 }
 
 /*
