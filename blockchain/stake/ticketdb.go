@@ -289,7 +289,7 @@ func LoadBestNode(dbTx database.Tx, height uint32, blockHash *chainhash.Hash, he
 			return nil, err
 		}
 		prng := NewHash256PRNG(hB)
-		_, err = FindTicketIdxs(int64(node.liveTickets.Len()),
+		_, err = findTicketIdxs(int64(node.liveTickets.Len()),
 			int(node.params.TicketsPerBlock), prng)
 		if err != nil {
 			return nil, err
@@ -380,7 +380,7 @@ func connectStakeNode(node *StakeNode, header *wire.BlockHeader, ticketsSpentInB
 			toExpireHeight = connectedNode.height -
 				uint32(connectedNode.params.TicketExpiry)
 		}
-		expired := connectedNode.liveTickets.FetchExpired(toExpireHeight)
+		expired := fetchExpired(toExpireHeight, connectedNode.liveTickets)
 		for _, treapKey := range expired {
 			v := connectedNode.liveTickets.Get(*treapKey)
 			if v == nil {
@@ -460,7 +460,7 @@ func connectStakeNode(node *StakeNode, header *wire.BlockHeader, ticketsSpentInB
 			return nil, err
 		}
 		prng := NewHash256PRNG(hB)
-		idxs, err := FindTicketIdxs(int64(connectedNode.liveTickets.Len()),
+		idxs, err := findTicketIdxs(int64(connectedNode.liveTickets.Len()),
 			int(connectedNode.params.TicketsPerBlock), prng)
 		if err != nil {
 			return nil, err
@@ -468,7 +468,11 @@ func connectStakeNode(node *StakeNode, header *wire.BlockHeader, ticketsSpentInB
 
 		stateBuffer := make([]byte, 0,
 			(connectedNode.params.TicketsPerBlock+1)*chainhash.HashSize)
-		nextWinnersKeys := connectedNode.liveTickets.FetchWinners(idxs)
+		nextWinnersKeys, err := fetchWinners(idxs, connectedNode.liveTickets)
+		if err != nil {
+			return nil, err
+		}
+
 		for _, treapKey := range nextWinnersKeys {
 			ticketHash := chainhash.Hash(*treapKey)
 			connectedNode.nextWinners = append(connectedNode.nextWinners,
@@ -595,7 +599,7 @@ func disconnectStakeNode(node *StakeNode, parentHeader *wire.BlockHeader, parent
 			return nil, err
 		}
 		prng := NewHash256PRNG(phB)
-		_, err = FindTicketIdxs(int64(restoredNode.liveTickets.Len()),
+		_, err = findTicketIdxs(int64(restoredNode.liveTickets.Len()),
 			int(node.params.TicketsPerBlock), prng)
 		if err != nil {
 			panic(fmt.Sprintf("%v", node.height))

@@ -32,7 +32,7 @@ func (b *BlockChain) nodeAtHeightFromTopNode(node *blockNode,
 	return oldNode, nil
 }
 
-func fetchWinningTicketsForNode(node *blockNode) ([]*chainhash.Hash, error) {
+func fetchNewTicketsForNode(node *blockNode) ([]*chainhash.Hash, error) {
 	// Calculate block number for where new tickets matured from and retrieve
 	// this block from db.
 	matureNode, err := b.nodeAtHeightFromTopNode(node, tM)
