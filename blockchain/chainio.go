@@ -1273,7 +1273,8 @@ func (b *BlockChain) createChainState() error {
 	// node and the best node.
 	genesisBlock := dcrutil.NewBlock(b.chainParams.GenesisBlock)
 	header := &genesisBlock.MsgBlock().Header
-	node := newBlockNode(header, genesisBlock.Sha(), 0, []uint16{})
+	node := newBlockNode(header, genesisBlock.Sha(), 0, []*chainhash.Hash{},
+		[]*chainhash.Hash{})
 	node.inMainChain = true
 	b.bestNode = node
 	b.root = node
@@ -1346,6 +1347,13 @@ func (b *BlockChain) createChainState() error {
 
 		// Store the current best chain state into the database.
 		err = dbPutBestState(dbTx, b.stateSnapshot, b.bestNode.workSum)
+		if err != nil {
+			return err
+		}
+
+		// Initialize the stake buckets in the database, along with
+		// the best state for the stake database.
+		b.bestNode.stakeNode, err = stake.InitDatabaseState(dbTx, b.chainParams)
 		if err != nil {
 			return err
 		}
@@ -1428,17 +1436,22 @@ func (b *BlockChain) initChainState() error {
 		// Create a new node and set it as both the root node and the
 		// best node.  The preceding nodes will be loaded on demand as
 		// needed.
-		// TODO CJ Get vote bits from db
 		header := &block.Header
 		node := newBlockNode(header, &state.hash, int64(state.height),
-			[]uint16{})
+			ticketsSpentInBlock(dcrutil.NewBlock(&block)),
+			ticketsRevokedInBlock(dcrutil.NewBlock(&block)))
 		node.inMainChain = true
 		node.workSum = state.workSum
+		node.stakeNode, err = stake.LoadBestNode(dbTx, uint32(node.height),
+			node.hash, &node.header, b.chainParams)
+		if err != nil {
+			return err
+		}
+		node.stakeUndoData = node.stakeNode.UndoData()
+		node.newTickets = node.stakeNode.NewTickets()
+
 		b.bestNode = node
 		b.root = node
-
-		// Restore the stake node from the database.
-		stake.InitializeBestNode()
 
 		// Add the new node to the indices for faster lookups.
 		prevHash := &node.header.PrevBlock

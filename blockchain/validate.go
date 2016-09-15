@@ -7,7 +7,6 @@ package blockchain
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"math"
 	"math/big"
@@ -762,9 +761,7 @@ func (b *BlockChain) checkDupTxs(txSet []*dcrutil.Tx,
 // checks go through in processBlock, however if a block has demonstrable PoW it
 // seems unlikely that it will have stake errors (because the miner is then just
 // wasting hash power).
-func (b *BlockChain) CheckBlockStakeSanity(tixStore TicketStore,
-	stakeValidationHeight int64, node *blockNode, block *dcrutil.Block,
-	parent *dcrutil.Block, chainParams *chaincfg.Params) error {
+func (b *BlockChain) CheckBlockStakeSanity(stakeValidationHeight int64, node *blockNode, block *dcrutil.Block, parent *dcrutil.Block, chainParams *chaincfg.Params) error {
 
 	// Setup variables.
 	stakeTransactions := block.STransactions()
@@ -781,6 +778,11 @@ func (b *BlockChain) CheckBlockStakeSanity(tixStore TicketStore,
 		dcrutil.BlockValid)
 
 	stakeEnabledHeight := chainParams.StakeEnabledHeight
+
+	parentStakeNode, err := b.fetchStakeNode(node.parent)
+	if err != nil {
+		return err
+	}
 
 	// Do some preliminary checks on each stake transaction to ensure they
 	// are sane before continuing.
@@ -875,19 +877,12 @@ func (b *BlockChain) CheckBlockStakeSanity(tixStore TicketStore,
 		}
 
 		// Check the ticket pool size.
-		_, calcPoolSize, _, err := b.getWinningTicketsInclStore(node, tixStore)
-		if err != nil {
-			log.Tracef("failed to retrieve poolsize for stake "+
-				"consensus: %v", err.Error())
-			return err
-		}
-
-		if calcPoolSize != poolSize {
+		if parentStakeNode.PoolSize() != poolSize {
 			errStr := fmt.Sprintf("Error in stake consensus: the poolsize "+
 				"in block %v was %v, however we expected %v",
 				node.hash,
 				poolSize,
-				calcPoolSize)
+				parentStakeNode.PoolSize())
 			return ruleError(ErrPoolSize, errStr)
 		}
 
@@ -941,19 +936,15 @@ func (b *BlockChain) CheckBlockStakeSanity(tixStore TicketStore,
 	// 1. Retrieve an emulated ticket database of SStxMemMaps from both the
 	//     ticket database and the ticket store.
 	ticketsWhichCouldBeUsed := make(map[chainhash.Hash]struct{}, ticketsPerBlock)
-	ticketSlice, calcPoolSize, finalStateCalc, err :=
-		b.getWinningTicketsInclStore(node, tixStore)
-	if err != nil {
-		errStr := fmt.Sprintf("unexpected getWinningTicketsInclStore error: %v",
-			err.Error())
-		return errors.New(errStr)
-	}
+	ticketSlice := parentStakeNode.Winners()
+	calcPoolSize := parentStakeNode.PoolSize()
+	finalStateCalc := parentStakeNode.FinalState()
 
 	// 2. Obtain the tickets which could have been used on the block for votes
 	//     and then check below to make sure that these were indeed the tickets
 	//     used.
 	for _, ticketHash := range ticketSlice {
-		ticketsWhichCouldBeUsed[ticketHash] = struct{}{}
+		ticketsWhichCouldBeUsed[*ticketHash] = struct{}{}
 		// Fetch utxo details for all of the transactions in this block.
 		// Typically, there will not be any utxos for any of the transactions.
 	}
@@ -1047,18 +1038,6 @@ func (b *BlockChain) CheckBlockStakeSanity(tixStore TicketStore,
 	//     revocations.
 	// 4. Check for revocation overflows.
 	numSSRtxTx := 0
-
-	missedTickets, err := b.GenerateMissedTickets(tixStore)
-	if err != nil {
-		h := block.Sha()
-		str := fmt.Sprintf("Failed to generate missed tickets data "+
-			"for block %v, height %v! Error given: %v",
-			h,
-			block.Height(),
-			err.Error())
-		return errors.New(str)
-	}
-
 	for _, staketx := range stakeTransactions {
 		if is, _ := stake.IsSSRtx(staketx); is {
 			numSSRtxTx++
@@ -1070,7 +1049,7 @@ func (b *BlockChain) CheckBlockStakeSanity(tixStore TicketStore,
 
 			ticketMissed := false
 
-			if _, exists := missedTickets[sstxHash]; exists {
+			if parentStakeNode.ExistsMissedTicket(&sstxHash) {
 				ticketMissed = true
 			}
 
@@ -2200,7 +2179,7 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 	// allowed a block that is no longer valid.  However, since the
 	// implementation only currently uses memory for the side chain blocks,
 	// it isn't currently necessary.
-	parentBlock, err := b.getBlockFromHash(&node.header.PrevBlock)
+	parentBlock, err := b.fetchBlockFromHash(&node.header.PrevBlock)
 	if err != nil {
 		return ruleError(ErrMissingParent, err.Error())
 	}
@@ -2226,21 +2205,8 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 		return err
 	}
 
-	// Check to ensure consensus via the PoS ticketing system versus the
-	// informations stored in the header.
-	ticketStore, err := b.fetchTicketStore(node.parent)
-	if err != nil {
-		log.Tracef("Failed to generate ticket store for incoming "+
-			"node %v; error given: %v", node.hash, err)
-		return err
-	}
-
-	err = b.CheckBlockStakeSanity(ticketStore,
-		b.chainParams.StakeValidationHeight,
-		node,
-		block,
-		parentBlock,
-		b.chainParams)
+	err = b.CheckBlockStakeSanity(b.chainParams.StakeValidationHeight, node,
+		block, parentBlock, b.chainParams)
 	if err != nil {
 		log.Tracef("CheckBlockStakeSanity failed for incoming "+
 			"node %v; error given: %v", node.hash, err)
@@ -2414,9 +2380,8 @@ func (b *BlockChain) CheckConnectBlock(block *dcrutil.Block) error {
 		return ruleError(ErrMissingParent, err.Error())
 	}
 
-	var voteBitsStake []uint16
 	newNode := newBlockNode(&block.MsgBlock().Header, block.Sha(),
-		block.Height(), voteBitsStake)
+		block.Height(), ticketsSpentInBlock(block), ticketsRevokedInBlock(block))
 	newNode.parent = prevNode
 	newNode.workSum.Add(prevNode.workSum, newNode.workSum)
 	if prevNode != nil {
@@ -2438,7 +2403,7 @@ func (b *BlockChain) CheckConnectBlock(block *dcrutil.Block) error {
 	// transactions and spend information for the blocks which would be
 	// disconnected during a reorganize to the point of view of the
 	// node just before the requested node.
-	detachNodes, attachNodes := b.getReorganizeNodes(prevNode)
+	detachNodes, attachNodes, err := b.getReorganizeNodes(prevNode)
 	if err != nil {
 		return err
 	}
@@ -2449,12 +2414,12 @@ func (b *BlockChain) CheckConnectBlock(block *dcrutil.Block) error {
 	var stxos []spentTxOut
 	for e := detachNodes.Front(); e != nil; e = e.Next() {
 		n := e.Value.(*blockNode)
-		block, err := b.getBlockFromHash(n.hash)
+		block, err := b.fetchBlockFromHash(n.hash)
 		if err != nil {
 			return err
 		}
 
-		parent, err := b.getBlockFromHash(&n.header.PrevBlock)
+		parent, err := b.fetchBlockFromHash(&n.header.PrevBlock)
 		if err != nil {
 			return err
 		}
@@ -2497,7 +2462,7 @@ func (b *BlockChain) CheckConnectBlock(block *dcrutil.Block) error {
 				n.hash)
 		}
 
-		parent, err := b.getBlockFromHash(&n.header.PrevBlock)
+		parent, err := b.fetchBlockFromHash(&n.header.PrevBlock)
 		if err != nil {
 			return err
 		}

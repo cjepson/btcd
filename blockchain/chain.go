@@ -31,7 +31,7 @@ const (
 	// in memory in order to perform all necessary validation.  It is used
 	// to determine when it's safe to prune nodes from memory without
 	// causing constant dynamic reloading.
-	minMemoryNodes = 4096
+	minMemoryNodes = 8 //4096
 
 	// searchDepth is the distance in blocks to search down the blockchain
 	// to find some parent.
@@ -80,25 +80,28 @@ type blockNode struct {
 	// remove stake nodes, so that the stake node itself may be pruneable
 	// to save memory while maintaining high throughput efficiency for the
 	// evaluation of sidechains.
-	stakeNode     *stake.StakeNode
-	newTickets    []*chainhash.Hash
-	stakeUndoData stake.UndoTicketDataSlice
+	stakeNode      *stake.StakeNode
+	newTickets     []*chainhash.Hash
+	stakeUndoData  stake.UndoTicketDataSlice
+	ticketsSpent   []*chainhash.Hash
+	ticketsRevoked []*chainhash.Hash
 }
 
 // newBlockNode returns a new block node for the given block header.  It is
 // completely disconnected from the chain and the workSum value is just the work
 // for the passed block.  The work sum is updated accordingly when the node is
 // inserted into a chain.
-func newBlockNode(blockHeader *wire.BlockHeader, blockSha *chainhash.Hash,
-	height int64, voteBits []uint16) *blockNode {
+func newBlockNode(blockHeader *wire.BlockHeader, blockSha *chainhash.Hash, height int64, ticketsSpent []*chainhash.Hash, ticketsRevoked []*chainhash.Hash) *blockNode {
 	// Make a copy of the hash so the node doesn't keep a reference to part
 	// of the full block/block header preventing it from being garbage
 	// collected.
 	node := blockNode{
-		hash:    blockSha,
-		workSum: CalcWork(blockHeader.Bits),
-		height:  height,
-		header:  *blockHeader,
+		hash:           blockSha,
+		workSum:        CalcWork(blockHeader.Bits),
+		height:         height,
+		header:         *blockHeader,
+		ticketsSpent:   ticketsSpent,
+		ticketsRevoked: ticketsRevoked,
 	}
 	return &node
 }
@@ -349,7 +352,6 @@ func (b *BlockChain) CheckLiveTickets(hashes []*chainhash.Hash) []bool {
 	sn := b.bestNode.stakeNode
 	b.chainLock.Unlock()
 
-	var err error
 	existsSlice := make([]bool, len(hashes))
 	for i, hash := range hashes {
 		existsSlice[i] = sn.ExistsLiveTicket(hash)
@@ -588,14 +590,14 @@ func (b *BlockChain) GetGeneration(hash chainhash.Hash) ([]chainhash.Hash, error
 // The database transaction may be read-only.
 func (b *BlockChain) loadBlockNode(dbTx database.Tx,
 	hash *chainhash.Hash) (*blockNode, error) {
-	blockHeader, err := dbFetchHeaderByHash(dbTx, hash)
+	block, err := dbFetchBlockByHash(dbTx, hash)
 	if err != nil {
 		return nil, err
 	}
 
-	var voteBitsStake []uint16
-	node := newBlockNode(blockHeader, hash,
-		int64(blockHeader.Height), voteBitsStake)
+	blockHeader := block.MsgBlock().Header
+	node := newBlockNode(&blockHeader, hash, int64(blockHeader.Height),
+		ticketsSpentInBlock(block), ticketsRevokedInBlock(block))
 	node.inMainChain = true
 	prevHash := &blockHeader.PrevBlock
 
@@ -626,11 +628,22 @@ func (b *BlockChain) loadBlockNode(dbTx database.Tx,
 			b.root = node
 		}
 	} else {
-		// Case 3 -- The node doesn't have a parent and is not the
-		// parent of another node.  This means an arbitrary orphan block
-		// is trying to be loaded which is not allowed.
-		str := "loadBlockNode: attempt to insert orphan block %v"
-		return nil, AssertError(fmt.Sprintf(str, hash))
+		// Case 3 -- The node doesn't have a parent in the node cache
+		// and is not the parent of another node.  This means an arbitrary
+		// orphan block is trying to be loaded which is not allowed.
+		// Before we return, check and make sure there isn't a parent
+		// further down the line in the blockchain to which the block
+		// could be attached, for example if the node had been pruned from
+		// the index.
+		foundParent, err := b.findNode(&node.header.PrevBlock)
+		if err == nil {
+			node.workSum = node.workSum.Add(foundParent.workSum, node.workSum)
+			foundParent.children = append(foundParent.children, node)
+			node.parent = foundParent
+		} else {
+			str := "loadBlockNode: attempt to insert orphan block %v"
+			return nil, AssertError(fmt.Sprintf(str, hash))
+		}
 	}
 
 	// Add the new node to the indices for faster lookups.
@@ -666,10 +679,10 @@ func (b *BlockChain) findNode(nodeHash *chainhash.Hash) (*blockNode, error) {
 					break
 				}
 
+				last := foundPrev.header.PrevBlock
 				foundPrev = foundPrev.parent
 				if foundPrev == nil {
-					parent, err := b.loadBlockNode(dbTx,
-						&foundPrev.header.PrevBlock)
+					parent, err := b.loadBlockNode(dbTx, &last)
 					if err != nil {
 						return err
 					}
@@ -1017,12 +1030,12 @@ func (b *BlockChain) CalcPastMedianTime() (time.Time, error) {
 // passed node is not on a side chain.
 //
 // This function MUST be called with the chain state lock held (for reads).
-func (b *BlockChain) getReorganizeNodes(node *blockNode) (*list.List, *list.List) {
+func (b *BlockChain) getReorganizeNodes(node *blockNode) (*list.List, *list.List, error) {
 	// Nothing to detach or attach if there is no node.
 	attachNodes := list.New()
 	detachNodes := list.New()
 	if node == nil {
-		return detachNodes, attachNodes
+		return detachNodes, attachNodes, nil
 	}
 
 	// Find the fork point (if any) adding each block to the list of nodes
@@ -1031,6 +1044,23 @@ func (b *BlockChain) getReorganizeNodes(node *blockNode) (*list.List, *list.List
 	// later.
 	ancestor := node
 	for ; ancestor.parent != nil; ancestor = ancestor.parent {
+		/*
+			fmt.Printf("ancestor hash %v, ancestor parent hash %v\n", ancestor.hash, ancestor.parent.hash)
+			if ancestor.inMainChain {
+				break
+			}
+
+			ancestor = ancestor.parent
+			if ancestor == nil {
+				var err error
+				ancestor, err = b.findNode(&ancestor.header.PrevBlock)
+				if err != nil {
+					return nil, nil, err
+				}
+			}
+
+			fmt.Printf("append %v to add\n", ancestor.hash)
+			attachNodes.PushFront(ancestor)*/
 		if ancestor.inMainChain {
 			break
 		}
@@ -1046,14 +1076,24 @@ func (b *BlockChain) getReorganizeNodes(node *blockNode) (*list.List, *list.List
 	// Start from the end of the main chain and work backwards until the
 	// common ancestor adding each block to the list of nodes to detach from
 	// the main chain.
-	for n := b.bestNode; n != nil && n.parent != nil; n = n.parent {
+	for n := b.bestNode; n != nil; n = n.parent {
+		if n.parent == nil {
+			var err error
+			n.parent, err = b.findNode(&n.header.PrevBlock)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+
 		if n.hash.IsEqual(ancestor.hash) {
 			break
 		}
+
+		fmt.Printf("append %v to remove\n", n.hash)
 		detachNodes.PushBack(n)
 	}
 
-	return detachNodes, attachNodes
+	return detachNodes, attachNodes, nil
 }
 
 // pushMainChainBlockCache pushes a block onto the main chain block cache,
@@ -1133,6 +1173,15 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block,
 	state := newBestState(node, blockSize, numTxns, curTotalTxns+numTxns,
 		curTotalSubsidy+subsidy)
 
+	// Get the stake node for this node, filling in any data that
+	// may have yet to have been filled in. In all cases this
+	// should simply give a pointer to data already prepared, but
+	// run this anyway to be safe.
+	stakeNode, err := b.fetchStakeNode(node)
+	if err != nil {
+		return err
+	}
+
 	// Insert block into ticket database if we're the point where tickets begin to
 	// mature. Note that if the block is inserted into tmdb and then insertion
 	// into DB fails, the two database will be on different HEADs. This needs
@@ -1197,7 +1246,7 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block,
 		}
 
 		// Insert the block into the stake database.
-		err = stake.WriteConnectedBestNode(dbTx, node.stakeNode, node.hash)
+		err = stake.WriteConnectedBestNode(dbTx, stakeNode, node.hash)
 		if err != nil {
 			return err
 		}
@@ -1310,6 +1359,17 @@ func (b *BlockChain) disconnectBlock(node *blockNode, block *dcrutil.Block,
 	state := newBestState(prevNode, parentBlockSize, numTxns, newTotalTxns,
 		newTotalSubsidy)
 
+	// Prepare the information required to update the stake database
+	// contents.
+	childStakeNode, err := b.fetchStakeNode(node)
+	if err != nil {
+		return err
+	}
+	parentStakeNode, err := b.fetchStakeNode(node.parent)
+	if err != nil {
+		return err
+	}
+
 	err = b.db.Update(func(dbTx database.Tx) error {
 		// Update best block state.
 		err := dbPutBestState(dbTx, state, node.workSum)
@@ -1339,7 +1399,8 @@ func (b *BlockChain) disconnectBlock(node *blockNode, block *dcrutil.Block,
 			return err
 		}
 
-		err = stake.WriteDisconnectedBestNode(dbTx, node.parent.stakeNode)
+		err = stake.WriteDisconnectedBestNode(dbTx, parentStakeNode,
+			node.parent.hash, childStakeNode.UndoData())
 		if err != nil {
 			return err
 		}
@@ -1752,7 +1813,7 @@ func (b *BlockChain) forceHeadReorganization(formerBest chainhash.Hash,
 		return err
 	}
 
-	attach, detach := b.getReorganizeNodes(newBestNode)
+	attach, detach, err := b.getReorganizeNodes(newBestNode)
 	if err != nil {
 		return err
 	}
@@ -1945,14 +2006,17 @@ func (b *BlockChain) connectBestChain(node *blockNode, block *dcrutil.Block,
 	// blocks that form the (now) old fork from the main chain, and attach
 	// the blocks that form the new chain to the main chain starting at the
 	// common ancenstor (the point where the chain forked).
-	detachNodes, attachNodes := b.getReorganizeNodes(node)
+	detachNodes, attachNodes, err := b.getReorganizeNodes(node)
+	if err != nil {
+		return false, err
+	}
 
 	// Reorganize the chain.
 	if !dryRun {
 		log.Infof("REORGANIZE: Block %v is causing a reorganize.",
 			node.hash)
 	}
-	err := b.reorganizeChain(detachNodes, attachNodes, flags)
+	err = b.reorganizeChain(detachNodes, attachNodes, flags)
 	if err != nil {
 		return false, err
 	}
@@ -2104,6 +2168,8 @@ func New(config *Config) (*BlockChain, error) {
 	if err := b.initChainState(); err != nil {
 		return nil, err
 	}
+
+	fmt.Printf("STAKE NODE BEST %v\n", b.bestNode.stakeNode.Height())
 
 	// Initialize and catch up all of the currently active optional indexes
 	// as needed.

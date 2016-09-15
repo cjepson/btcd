@@ -93,6 +93,11 @@ func (sn *StakeNode) LiveTickets() []*chainhash.Hash {
 	return tickets
 }
 
+// PoolSize returns the size of the live ticket pool.
+func (sn *StakeNode) PoolSize() int {
+	return sn.liveTickets.Len()
+}
+
 // ExistsMissedTicket returns whether or not a ticket exists in the missed
 // ticket treap for this stake node.
 func (sn *StakeNode) ExistsMissedTicket(ticket *chainhash.Hash) bool {
@@ -321,6 +326,10 @@ func hashInSlice(h *chainhash.Hash, list []*chainhash.Hash) bool {
 // returned after subsequent modification of the parent node's immutable
 // data.
 func connectStakeNode(node *StakeNode, header *wire.BlockHeader, ticketsSpentInBlock, revokedTickets, newTickets []*chainhash.Hash) (*StakeNode, error) {
+	if node == nil {
+		return nil, fmt.Errorf("missing stake node pointer input when connecting")
+	}
+
 	connectedNode := &StakeNode{
 		height:               node.height + 1,
 		liveTickets:          node.liveTickets,
@@ -504,6 +513,11 @@ func disconnectStakeNode(node *StakeNode, parentHeader *wire.BlockHeader, parent
 		return genesisNode(node.params), nil
 	}
 
+	if node == nil {
+		return nil, fmt.Errorf("missing stake node pointer input when " +
+			"disconnecting")
+	}
+
 	// The undo ticket slice is normally stored in memory for the most
 	// recent blocks and the sidechain, but it may be the case that it
 	// is missing because it's in the mainchain and very old (thus
@@ -602,7 +616,6 @@ func disconnectStakeNode(node *StakeNode, parentHeader *wire.BlockHeader, parent
 		_, err = findTicketIdxs(int64(restoredNode.liveTickets.Len()),
 			int(node.params.TicketsPerBlock), prng)
 		if err != nil {
-			panic(fmt.Sprintf("%v", node.height))
 			return nil, err
 		}
 		lastHash := prng.StateHash()
