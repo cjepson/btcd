@@ -204,7 +204,6 @@ type server struct {
 	nat                  NAT
 	db                   database.DB
 	timeSource           blockchain.MedianTimeSource
-	tmdb                 *stake.TicketDB
 	services             wire.ServiceFlag
 
 	// The following fields are used for optional indexes.  They will be nil

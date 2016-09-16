@@ -233,35 +233,6 @@ type forceReorganizationMsg struct {
 	reply      chan forceReorganizationResponse
 }
 
-// getLotterDataResponse is a response sent to the reply channel of a
-// getLotteryDataMsg query.
-type getLotterDataResponse struct {
-	finalState     [6]byte
-	poolSize       uint32
-	winningTickets []chainhash.Hash
-	err            error
-}
-
-// getLotteryDataMsg is a message type to be sent across the message
-// channel for requesting lottery data about some block.
-type getLotteryDataMsg struct {
-	hash  chainhash.Hash
-	reply chan getLotterDataResponse
-}
-
-// checkMissedTicketsResponse is a response sent to the reply channel of a
-// checkMissedTicketsMsg query.
-type checkMissedTicketsResponse struct {
-	missedTickets map[chainhash.Hash]bool
-}
-
-// checkMissedTicketsMsg is a message type to be sent across the message
-// channel used for checking whether or not a list of tickets has been missed.
-type checkMissedTicketsMsg struct {
-	tickets []chainhash.Hash
-	reply   chan checkMissedTicketsResponse
-}
-
 // getTopBlockResponse is a response to the request for the block at HEAD of the
 // blockchain. We need to be able to obtain this from blockChain for mining
 // purposes.
@@ -320,81 +291,12 @@ type isCurrentMsg struct {
 	reply chan bool
 }
 
-// missedTicketsMsg handles a request for the list of currently missed tickets
-// from the ticket database.
-type missedTicketsMsg struct {
-	reply chan missedTicketsResponse
-}
-
-// missedTicketsResponse is a response sent to the reply channel of a
-// ticketBucketsMsg.
-type missedTicketsResponse struct {
-	Tickets stake.SStxMemMap
-	err     error
-}
-
 // pauseMsg is a message type to be sent across the message channel for
 // pausing the block manager.  This effectively provides the caller with
 // exclusive access over the manager until a receive is performed on the
 // unpause channel.
 type pauseMsg struct {
 	unpause <-chan struct{}
-}
-
-// ticketsForAddressMsg handles a request for obtaining all the current
-// tickets corresponding to some address.
-type ticketsForAddressMsg struct {
-	Address dcrutil.Address
-	reply   chan ticketsForAddressResponse
-}
-
-// ticketsForAddressResponse is a response to the reply channel of a
-// ticketsForAddressMsg.
-type ticketsForAddressResponse struct {
-	Tickets []chainhash.Hash
-	err     error
-}
-
-// existsLiveTicketMsg handles a request for obtaining whether or not a
-// ticket exists in the live tickets map of the blockchain stake database.
-type existsLiveTicketMsg struct {
-	hash  *chainhash.Hash
-	reply chan existsLiveTicketResponse
-}
-
-// existsLiveTicketResponse is a response to the reply channel of a
-// existsLiveTicketMsg.
-type existsLiveTicketResponse struct {
-	Exists bool
-	err    error
-}
-
-// existsLiveTicketsMsg handles a request for obtaining whether or not a ticket
-// from a slice of tickets exists in the live tickets map of the blockchain stake
-// database.
-type existsLiveTicketsMsg struct {
-	hashes []*chainhash.Hash
-	reply  chan existsLiveTicketsResponse
-}
-
-// existsLiveTicketsResponse is a response to the reply channel of a
-// existsLiveTicketsMsg.
-type existsLiveTicketsResponse struct {
-	Exists []bool
-	err    error
-}
-
-// liveTicketsMsg handles a request for obtaining the current ticket hashes
-// in the live ticket pool.
-type liveTicketsMsg struct {
-	reply chan liveTicketsResponse
-}
-
-// liveTicketsResponse is a response to the reply channel of a
-// liveTicketsMsg.
-type liveTicketsResponse struct {
-	Live []*chainhash.Hash
-	err  error
 }
 
 // getCurrentTemplateMsg handles a request for the current mining block template.

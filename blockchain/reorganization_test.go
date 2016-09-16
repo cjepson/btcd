@@ -373,7 +373,7 @@ func TestReorganization(t *testing.T) {
 	reorgTestLong(t)
 
 	// This can take a while, do not enable it by default.
-	// reorgTestShort(t)
+	reorgTestShort(t)
 
 	reorgTestForced(t)
 }

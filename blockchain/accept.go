@@ -239,6 +239,7 @@ func (b *BlockChain) maybeAcceptBlock(block *dcrutil.Block,
 	// Prune block nodes which are no longer needed before creating
 	// a new node.
 	if !dryRun {
+		// fmt.Printf("block height %v, best height %v\n", blockHeight, b.bestNode.height)
 		err = b.pruneBlockNodes()
 		if err != nil {
 			return false, err

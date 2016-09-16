@@ -31,7 +31,7 @@ const (
 	// in memory in order to perform all necessary validation.  It is used
 	// to determine when it's safe to prune nodes from memory without
 	// causing constant dynamic reloading.
-	minMemoryNodes = 8 //4096
+	minMemoryNodes = 4096
 
 	// searchDepth is the distance in blocks to search down the blockchain
 	// to find some parent.
@@ -906,9 +906,13 @@ func (b *BlockChain) pruneBlockNodes() error {
 	// the dependency index, and remove it from the node index.
 	for e := deleteNodes.Front(); e != nil; e = e.Next() {
 		node := e.Value.(*blockNode)
-		err := b.removeBlockNode(node)
-		if err != nil {
-			return err
+		// Do not attempt to prune if the node should already have been pruned,
+		// for example if you're adding an old side chain block.
+		if node.height > b.bestNode.height-minMemoryNodes {
+			err := b.removeBlockNode(node)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -1044,23 +1048,6 @@ func (b *BlockChain) getReorganizeNodes(node *blockNode) (*list.List, *list.List
 	// later.
 	ancestor := node
 	for ; ancestor.parent != nil; ancestor = ancestor.parent {
-		/*
-			fmt.Printf("ancestor hash %v, ancestor parent hash %v\n", ancestor.hash, ancestor.parent.hash)
-			if ancestor.inMainChain {
-				break
-			}
-
-			ancestor = ancestor.parent
-			if ancestor == nil {
-				var err error
-				ancestor, err = b.findNode(&ancestor.header.PrevBlock)
-				if err != nil {
-					return nil, nil, err
-				}
-			}
-
-			fmt.Printf("append %v to add\n", ancestor.hash)
-			attachNodes.PushFront(ancestor)*/
 		if ancestor.inMainChain {
 			break
 		}
@@ -1089,7 +1076,6 @@ func (b *BlockChain) getReorganizeNodes(node *blockNode) (*list.List, *list.List
 			break
 		}
 
-		fmt.Printf("append %v to remove\n", n.hash)
 		detachNodes.PushBack(n)
 	}
 
@@ -2169,7 +2155,7 @@ func New(config *Config) (*BlockChain, error) {
 		return nil, err
 	}
 
-	fmt.Printf("STAKE NODE BEST %v\n", b.bestNode.stakeNode.Height())
+	//fmt.Printf("STAKE NODE BEST %v\n", b.bestNode.stakeNode.Height())
 
 	// Initialize and catch up all of the currently active optional indexes
 	// as needed.
