@@ -33,7 +33,12 @@ func (b *BlockChain) nodeAtHeightFromTopNode(node *blockNode,
 	return oldNode, nil
 }
 
-// fetchNewTicketsForNode
+// fetchNewTicketsForNode fetches the list of newly maturing tickets for a
+// given node by traversing backwards through its parents until it finds the
+// block that contains the original tickets to mature.
+//
+// This function is NOT safe for concurrent access and must be called with
+// the chainLock held for writes.
 func (b *BlockChain) fetchNewTicketsForNode(node *blockNode) ([]*chainhash.Hash, error) {
 	//
 	if node.height < b.chainParams.StakeEnabledHeight {
@@ -49,7 +54,7 @@ func (b *BlockChain) fetchNewTicketsForNode(node *blockNode) ([]*chainhash.Hash,
 	}
 
 	// Calculate block number for where new tickets matured from and retrieve
-	// this block from db.
+	// this block from DB or in memory if it's a sidechain.
 	matureNode, err := b.nodeAtHeightFromTopNode(node,
 		int64(b.chainParams.TicketMaturity))
 	if err != nil {
@@ -61,8 +66,6 @@ func (b *BlockChain) fetchNewTicketsForNode(node *blockNode) ([]*chainhash.Hash,
 		return nil, errBlock
 	}
 
-	// Store pointers to empty ticket data in the ticket store and mark them as
-	// non-existing.
 	tickets := []*chainhash.Hash{}
 	for _, stx := range matureBlock.STransactions() {
 		if is, _ := stake.IsSStx(stx); is {
@@ -85,7 +88,7 @@ func (b *BlockChain) fetchNewTicketsForNode(node *blockNode) ([]*chainhash.Hash,
 // as it does so, until the final stake node of interest is populated with the
 // correct data.
 //
-// This function MUST be called with the chain state lock held (for reads).
+// This function MUST be called with the chain state lock held (for writes).
 func (b *BlockChain) fetchStakeNode(node *blockNode) (*stake.StakeNode, error) {
 	// If we already have the stake node fetched, returned the cached result.
 	// Stake nodes are immutable.
@@ -117,30 +120,31 @@ func (b *BlockChain) fetchStakeNode(node *blockNode) (*stake.StakeNode, error) {
 
 	// We need to generate a path to the stake node and restore it
 	// it through the entire path.  The bestNode stake node must
-	// always be filled in, so assume it is safe to being working
+	// always be filled in, so assume it is safe to begin working
 	// backwards from there.
-	//fmt.Printf("GET STAKE NODE FOR %v %v (parent %v %v)(current best %v, %v)\n", node.height, node.hash, node.parent.height, node.parent.hash, b.bestNode.height, b.bestNode.hash)
 	detachNodes, attachNodes, err := b.getReorganizeNodes(node)
 	if err != nil {
 		return nil, err
 	}
-	//fmt.Printf("DETACHNODES %v (len %v)\n", detachNodes, detachNodes.Len())
-	currentChild := b.bestNode
+	current := b.bestNode
+
+	// Move backwards through the main chain, undoing the ticket
+	// treaps for each block. The database is passed because the
+	// undo data and new tickets data for each block may not yet
+	// be filled in and may require the database to look up.
 	err = b.db.View(func(dbTx database.Tx) error {
 		for e := detachNodes.Front(); e != nil; e = e.Next() {
 			n := e.Value.(*blockNode)
-			//fmt.Printf("disconnecting node %v %v\n", n.height, n.hash)
 			var errLocal error
 			if n.stakeNode == nil {
 				n.stakeNode, errLocal =
-					currentChild.stakeNode.DisconnectNode(&n.header,
+					current.stakeNode.DisconnectNode(&n.header,
 						n.stakeUndoData, n.newTickets, dbTx)
 			}
 			if errLocal != nil {
 				return errLocal
 			}
-			currentChild = n
-			//fmt.Printf("CURRENT CHILD %v %v %v, CHILD PARENY %v %v\n", currentChild.height, currentChild.stakeNode.Height(), currentChild.hash, currentChild.parent.height, currentChild.parent.hash)
+			current = n
 		}
 
 		return nil
@@ -153,44 +157,42 @@ func (b *BlockChain) fetchStakeNode(node *blockNode) (*stake.StakeNode, error) {
 	// point.
 	err = b.db.View(func(dbTx database.Tx) error {
 		var errLocal error
-		if currentChild.parent.stakeNode == nil {
-			currentChild.parent.stakeNode, errLocal =
-				currentChild.stakeNode.DisconnectNode(&currentChild.header,
-					currentChild.stakeUndoData, currentChild.newTickets, dbTx)
+		if current.parent.stakeNode == nil {
+			current.parent.stakeNode, errLocal =
+				current.stakeNode.DisconnectNode(&current.header,
+					current.stakeUndoData, current.newTickets, dbTx)
 		}
 		if errLocal != nil {
 			return errLocal
 		}
 
-		currentChild = currentChild.parent
+		current = current.parent
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 
+	// The node is at a fork point in the block chain, so just return
+	// this stake node.
 	if attachNodes.Len() == 0 {
-		if *currentChild.hash != *node.hash ||
-			currentChild.height != node.height {
+		if *current.hash != *node.hash ||
+			current.height != node.height {
 			return nil, AssertError("failed to restore stake node to " +
 				"fork point when fetching")
 		}
 
-		return currentChild.stakeNode, nil
+		return current.stakeNode, nil
 	}
 
 	// The requested node is on a side chain, so we need to apply the
 	// transactions and spend information from each of the nodes to attach.
 	// Not that side chain ticket data and undo data is always stored
 	// in memory, so there is not need to use the database here.
-	mostRecentlyConnected := currentChild
-	//fmt.Printf("mostRecentlyConnected currentChild %v %v %v\n", mostRecentlyConnected.height, mostRecentlyConnected.stakeNode.Height(), mostRecentlyConnected.hash)
 	for e := attachNodes.Front(); e != nil; e = e.Next() {
 		n := e.Value.(*blockNode)
-		//fmt.Printf("connecting node %v %v, cur child %v %v\n", n.height, n.hash, mostRecentlyConnected.height, mostRecentlyConnected.hash)
 
 		if n.stakeNode == nil {
-			//fmt.Printf("FILL IN STAKE NODE CONNECT FOR %v %v\n", n.height, n.hash)
 			if n.newTickets == nil {
 				n.newTickets, err = b.fetchNewTicketsForNode(n)
 				if err != nil {
@@ -198,35 +200,15 @@ func (b *BlockChain) fetchStakeNode(node *blockNode) (*stake.StakeNode, error) {
 				}
 			}
 
-			n.stakeNode, err = mostRecentlyConnected.stakeNode.ConnectNode(&n.header,
+			n.stakeNode, err = current.stakeNode.ConnectNode(&n.header,
 				n.ticketsSpent, n.ticketsRevoked, n.newTickets)
 			if err != nil {
 				return nil, err
 			}
 		}
 
-		mostRecentlyConnected = n
+		current = n
 	}
 
-	/*
-		// Connect the final block we wish to add.
-		if node.newTickets == nil {
-			node.newTickets, err = b.fetchNewTicketsForNode(node)
-			if err != nil {
-				return nil, err
-			}
-		}
-		fmt.Printf("MOST RECENT %v %v %v\n", mostRecentlyConnected.height, mostRecentlyConnected.hash, mostRecentlyConnected.stakeNode)
-		node.stakeNode, err =
-			mostRecentlyConnected.stakeNode.ConnectNode(&node.header,
-				node.ticketsSpent, node.ticketsRevoked, node.newTickets)
-		if err != nil {
-			return nil, err
-		}
-
-
-	*/
-	//fmt.Printf("FINAL RETURNED STAKE NODE %v %v %v\n", mostRecentlyConnected.stakeNode.Height(), mostRecentlyConnected.height, mostRecentlyConnected.hash)
-
-	return mostRecentlyConnected.stakeNode, nil
+	return current.stakeNode, nil
 }

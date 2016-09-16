@@ -2374,6 +2374,9 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 //
 // This function is safe for concurrent access.
 func (b *BlockChain) CheckConnectBlock(block *dcrutil.Block) error {
+	b.chainLock.Lock()
+	defer b.chainLock.Unlock()
+
 	parentHash := block.MsgBlock().Header.PrevBlock
 	prevNode, err := b.findNode(&parentHash)
 	if err != nil {

@@ -30,12 +30,20 @@ const (
 	// minMemoryNodes is the minimum number of consecutive nodes needed
 	// in memory in order to perform all necessary validation.  It is used
 	// to determine when it's safe to prune nodes from memory without
-	// causing constant dynamic reloading.
-	minMemoryNodes = 4096
+	// causing constant dynamic reloading. This value should be larger than
+	// that for minMemoryStakeNodes.
+	minMemoryNodes = 2880
+
+	// minMemoryStakeNodes is the maximum height to keep stake nodes
+	// in memory for in their respective nodes. Beyond this height,
+	// they will need to be manually recalculated. This value should
+	// be at least the stake retarget interval.
+	minMemoryStakeNodes = 288
 
 	// searchDepth is the distance in blocks to search down the blockchain
-	// to find some parent.
-	searchDepth = 2048
+	// to find some parent. Reorganizations longer than this disance may
+	// fail.
+	searchDepth = 2880
 )
 
 // blockNode represents a block within the block chain and is primarily used to
@@ -65,13 +73,6 @@ type blockNode struct {
 	// ancestor when switching chains.
 	inMainChain bool
 
-	// outputAmtsTotal is amount of fees in the tx tree regular of the parent plus
-	// the value of the coinbase, which may or may not be given to the child node
-	// depending on the voters. Doesn't get set until you actually attempt to
-	// connect the block and calculate the fees/reward for it.
-	// DECRED TODO: Is this actually used anywhere? If not prune it.
-	outputAmtsTotal int64
-
 	// header is the full block header.
 	header wire.BlockHeader
 
@@ -80,6 +81,7 @@ type blockNode struct {
 	// remove stake nodes, so that the stake node itself may be pruneable
 	// to save memory while maintaining high throughput efficiency for the
 	// evaluation of sidechains.
+	stakeDataLock  sync.Mutex
 	stakeNode      *stake.StakeNode
 	newTickets     []*chainhash.Hash
 	stakeUndoData  stake.UndoTicketDataSlice
@@ -258,9 +260,9 @@ func (b *BlockChain) DisableVerify(disable bool) {
 //
 // This function is safe for concurrent access.
 func (b *BlockChain) TotalSubsidy() int64 {
-	b.chainLock.Lock()
+	b.chainLock.RLock()
 	ts := b.BestSnapshot().TotalSubsidy
-	b.chainLock.Unlock()
+	b.chainLock.RUnlock()
 
 	return ts
 }
@@ -270,124 +272,6 @@ func (b *BlockChain) TotalSubsidy() int64 {
 // This function is safe for concurrent access.
 func (b *BlockChain) FetchSubsidyCache() *SubsidyCache {
 	return b.subsidyCache
-}
-
-// LiveTickets returns all currently live tickets from the stake database.
-//
-// This function is NOT safe for concurrent access.
-func (b *BlockChain) LiveTickets() ([]*chainhash.Hash, error) {
-	b.chainLock.Lock()
-	sn := b.bestNode.stakeNode
-	b.chainLock.Unlock()
-
-	return sn.LiveTickets(), nil
-}
-
-// MissedTickets returns all currently missed tickets from the stake database.
-//
-// This function is NOT safe for concurrent access.
-func (b *BlockChain) MissedTickets() ([]*chainhash.Hash, error) {
-	b.chainLock.Lock()
-	sn := b.bestNode.stakeNode
-	b.chainLock.Unlock()
-
-	return sn.MissedTickets(), nil
-}
-
-// TicketsWithAddress returns a slice of ticket hashes that are currently live
-// corresponding to the given address.
-//
-// This function is safe for concurrent access.
-func (b *BlockChain) TicketsWithAddress(address dcrutil.Address) ([]chainhash.Hash,
-	error) {
-	b.chainLock.Lock()
-	sn := b.bestNode.stakeNode
-	b.chainLock.Unlock()
-
-	tickets := sn.LiveTickets()
-
-	var ticketsWithAddr []chainhash.Hash
-	err := b.db.View(func(dbTx database.Tx) error {
-		var err error
-		for _, hash := range tickets {
-			utxo, err := dbFetchUtxoEntry(dbTx, hash)
-			if err != nil {
-				return err
-			}
-
-			_, addrs, _, err :=
-				txscript.ExtractPkScriptAddrs(txscript.DefaultScriptVersion,
-					utxo.PkScriptByIndex(0), b.chainParams)
-			if addrs[0].EncodeAddress() == address.EncodeAddress() {
-				ticketsWithAddr = append(ticketsWithAddr, *hash)
-			}
-		}
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return ticketsWithAddr, nil
-}
-
-// CheckLiveTicket returns whether or not a ticket exists in the live ticket
-// map of the stake database.
-//
-// This function is safe for concurrent access.
-func (b *BlockChain) CheckLiveTicket(hash *chainhash.Hash) bool {
-	b.chainLock.Lock()
-	sn := b.bestNode.stakeNode
-	b.chainLock.Unlock()
-
-	return sn.ExistsLiveTicket(hash)
-}
-
-// CheckLiveTickets returns whether or not a slice of tickets exist in the live
-// ticket map of the stake database.
-//
-// This function is safe for concurrent access.
-func (b *BlockChain) CheckLiveTickets(hashes []*chainhash.Hash) []bool {
-	b.chainLock.Lock()
-	sn := b.bestNode.stakeNode
-	b.chainLock.Unlock()
-
-	existsSlice := make([]bool, len(hashes))
-	for i, hash := range hashes {
-		existsSlice[i] = sn.ExistsLiveTicket(hash)
-	}
-
-	return existsSlice
-}
-
-// TicketPoolValue returns the current value of all the locked funds in the
-// ticket pool.
-//
-// This function is safe for concurrent access. All live tickets are at least
-// 256 blocks deep on mainnet, so the UTXO set should generally always have
-// the asked for transactions.
-func (b *BlockChain) TicketPoolValue() (dcrutil.Amount, error) {
-	b.chainLock.Lock()
-	sn := b.bestNode.stakeNode
-	b.chainLock.Unlock()
-
-	var amt int64
-	err := b.db.View(func(dbTx database.Tx) error {
-		var err error
-		for _, hash := range sn.LiveTickets() {
-			utxo, err := dbFetchUtxoEntry(dbTx, hash)
-			if err != nil {
-				return err
-			}
-
-			amt += utxo.sparseOutputs[0].amount
-		}
-		return err
-	})
-	if err != nil {
-		return 0, err
-	}
-	return dcrutil.Amount(amt), nil
 }
 
 // HaveBlock returns whether or not the chain instance has the block represented
@@ -918,6 +802,52 @@ func (b *BlockChain) pruneBlockNodes() error {
 
 	// Set the new root node.
 	b.root = newRootNode
+
+	return nil
+}
+
+// pruneStakeNodes removes references to old stake nodes which should no
+// longer be held in memory so as to keep the maximum memory usage down.
+// It proceeds from the bestNode back to the determined minimum height node,
+// finds all the relevant children, and then drops the the stake nodes from
+// them by assigning nil and allowing the memory to be recovered by GC.
+//
+// This function MUST be called with the chain state lock held (for writes).
+func (b *BlockChain) pruneStakeNodes() error {
+	// Find the height to prune to.
+	pruneToNode := b.bestNode
+	for i := int64(0); i < minMemoryStakeNodes-1 && pruneToNode != nil; i++ {
+		pruneToNode = pruneToNode.parent
+	}
+
+	// Nothing to do if there are not enough nodes.
+	if pruneToNode == nil || pruneToNode.parent == nil {
+		return nil
+	}
+
+	// Push the nodes to delete on a list in reverse order since it's easier
+	// to prune them going forwards than it is backwards.  This will
+	// typically end up being a single node since pruning is currently done
+	// just before each new node is created.  However, that might be tuned
+	// later to only prune at intervals, so the code needs to account for
+	// the possibility of multiple nodes.
+	deleteNodes := list.New()
+	for node := pruneToNode.parent; node != nil; node = node.parent {
+		deleteNodes.PushFront(node)
+	}
+
+	// Loop through each node to prune, unlink its children, remove it from
+	// the dependency index, and remove it from the node index.
+	for e := deleteNodes.Front(); e != nil; e = e.Next() {
+		node := e.Value.(*blockNode)
+		// Do not attempt to prune if the node should already have been pruned,
+		// for example if you're adding an old side chain block.
+		if node.height > b.bestNode.height-minMemoryNodes {
+			node.stakeNode = nil
+			node.stakeUndoData = nil
+			node.newTickets = nil
+		}
+	}
 
 	return nil
 }
@@ -2154,8 +2084,6 @@ func New(config *Config) (*BlockChain, error) {
 	if err := b.initChainState(); err != nil {
 		return nil, err
 	}
-
-	//fmt.Printf("STAKE NODE BEST %v\n", b.bestNode.stakeNode.Height())
 
 	// Initialize and catch up all of the currently active optional indexes
 	// as needed.

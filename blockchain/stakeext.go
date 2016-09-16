@@ -9,28 +9,30 @@ import (
 	"fmt"
 
 	"github.com/decred/dcrd/chaincfg/chainhash"
-	// "github.com/decred/dcrd/database"
+	"github.com/decred/dcrd/database"
+	"github.com/decred/dcrd/txscript"
+	"github.com/decred/dcrutil"
 )
 
-// NextWinningTickets returns the next tickets eligible for spending as SSGen
-// on the top block. It also returns the ticket pool size.
+// NextLotteryData returns the next tickets eligible for spending as SSGen
+// on the top block.  It also returns the ticket pool size and the PRNG
+// state checksum.
 //
 // This function is safe for concurrent access.
-func (b *BlockChain) NextWinningTickets() ([]*chainhash.Hash, int, [6]byte,
-	error) {
-	b.chainLock.Lock()
-	defer b.chainLock.Unlock()
+func (b *BlockChain) NextLotteryData() ([]*chainhash.Hash, int, [6]byte, error) {
+	b.chainLock.RLock()
+	defer b.chainLock.RUnlock()
 
 	return b.bestNode.stakeNode.Winners(), b.bestNode.stakeNode.PoolSize(),
 		b.bestNode.stakeNode.FinalState(), nil
 }
 
-// winningTicketsForNode is a helper function that returns winning tickets
-// along with the ticket pool size and transaction store for the given node.
+// lotteryDataForNode is a helper function that returns winning tickets
+// along with the ticket pool size and PRNG checksum for a given node.
 //
-// This function is NOT safe for concurrent access.
-func (b *BlockChain) winningTicketsForNode(node *blockNode) ([]*chainhash.Hash,
-	int, [6]byte, error) {
+// This function is NOT safe for concurrent access and MUST be called
+// with the chainLock held for writes.
+func (b *BlockChain) lotteryDataForNode(node *blockNode) ([]*chainhash.Hash, int, [6]byte, error) {
 	if node.height < b.chainParams.StakeEnabledHeight {
 		return []*chainhash.Hash{}, 0, [6]byte{}, nil
 	}
@@ -43,41 +45,160 @@ func (b *BlockChain) winningTicketsForNode(node *blockNode) ([]*chainhash.Hash,
 		b.bestNode.stakeNode.FinalState(), nil
 }
 
-// GetWinningTickets takes a node block hash and returns the next tickets
-// eligible for spending as SSGen.
+// lotteryDataForBlock takes a node block hash and returns the next tickets
+// eligible for voting, the number of tickets in the ticket pool, and the
+// final state of the PRNG.
 //
-// This function is safe for concurrent access.
-func (b *BlockChain) GetWinningTickets(nodeHash chainhash.Hash) ([]*chainhash.Hash,
-	int, [6]byte, error) {
-	b.chainLock.Lock()
-	defer b.chainLock.Unlock()
-
+// This function is NOT safe for concurrent access and must have the chainLock
+// held for write access.
+func (b *BlockChain) lotteryDataForBlock(hash *chainhash.Hash) ([]chainhash.Hash, int, [6]byte, error) {
 	var node *blockNode
-	if n, exists := b.index[nodeHash]; exists {
+	if n, exists := b.index[*hash]; exists {
 		node = n
 	} else {
-		node, _ = b.findNode(&nodeHash)
+		node, _ = b.findNode(hash)
 	}
 
 	if node == nil {
 		return nil, 0, [6]byte{}, fmt.Errorf("node doesn't exist")
 	}
 
-	winningTickets, poolSize, finalState, err :=
-		b.winningTicketsForNode(node)
+	winningTickets, poolSize, finalState, err := b.lotteryDataForNode(node)
 	if err != nil {
 		return nil, 0, [6]byte{}, err
 	}
+	winningTicketsValue := make([]chainhash.Hash, len(winningTickets))
+	for i, wt := range winningTickets {
+		winningTicketsValue[i] = *wt
+	}
 
-	return winningTickets, poolSize, finalState, nil
+	return winningTicketsValue, poolSize, finalState, nil
 }
 
-// GetMissedTickets returns a list of currently missed tickets.
+// LotteryDataForBlock returns lottery data for a given block in the block
+// chain, including side chain blocks.
 //
-// This function is safe for concurrent access.
-func (b *BlockChain) GetMissedTickets() []*chainhash.Hash {
+// It is safe for concurrent access.
+func (b *BlockChain) LotteryDataForBlock(hash *chainhash.Hash) ([]chainhash.Hash, int, [6]byte, error) {
 	b.chainLock.Lock()
 	defer b.chainLock.Unlock()
 
-	return b.bestNode.stakeNode.MissedTickets()
+	return b.lotteryDataForBlock(hash)
+}
+
+// LiveTickets returns all currently live tickets from the stake database.
+//
+// This function is NOT safe for concurrent access.
+func (b *BlockChain) LiveTickets() ([]*chainhash.Hash, error) {
+	b.chainLock.RLock()
+	sn := b.bestNode.stakeNode
+	b.chainLock.RUnlock()
+
+	return sn.LiveTickets(), nil
+}
+
+// MissedTickets returns all currently missed tickets from the stake database.
+//
+// This function is NOT safe for concurrent access.
+func (b *BlockChain) MissedTickets() ([]*chainhash.Hash, error) {
+	b.chainLock.RLock()
+	sn := b.bestNode.stakeNode
+	b.chainLock.RUnlock()
+
+	return sn.MissedTickets(), nil
+}
+
+// TicketsWithAddress returns a slice of ticket hashes that are currently live
+// corresponding to the given address.
+//
+// This function is safe for concurrent access.
+func (b *BlockChain) TicketsWithAddress(address dcrutil.Address) ([]chainhash.Hash, error) {
+	b.chainLock.RLock()
+	sn := b.bestNode.stakeNode
+	b.chainLock.RUnlock()
+
+	tickets := sn.LiveTickets()
+
+	var ticketsWithAddr []chainhash.Hash
+	err := b.db.View(func(dbTx database.Tx) error {
+		var err error
+		for _, hash := range tickets {
+			utxo, err := dbFetchUtxoEntry(dbTx, hash)
+			if err != nil {
+				return err
+			}
+
+			_, addrs, _, err :=
+				txscript.ExtractPkScriptAddrs(txscript.DefaultScriptVersion,
+					utxo.PkScriptByIndex(0), b.chainParams)
+			if addrs[0].EncodeAddress() == address.EncodeAddress() {
+				ticketsWithAddr = append(ticketsWithAddr, *hash)
+			}
+		}
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return ticketsWithAddr, nil
+}
+
+// CheckLiveTicket returns whether or not a ticket exists in the live ticket
+// treap of the best node.
+//
+// This function is safe for concurrent access.
+func (b *BlockChain) CheckLiveTicket(hash *chainhash.Hash) bool {
+	b.chainLock.RLock()
+	sn := b.bestNode.stakeNode
+	b.chainLock.RUnlock()
+
+	return sn.ExistsLiveTicket(hash)
+}
+
+// CheckLiveTickets returns whether or not a slice of tickets exist in the live
+// ticket treap of the best node.
+//
+// This function is safe for concurrent access.
+func (b *BlockChain) CheckLiveTickets(hashes []*chainhash.Hash) []bool {
+	b.chainLock.RLock()
+	sn := b.bestNode.stakeNode
+	b.chainLock.RUnlock()
+
+	existsSlice := make([]bool, len(hashes))
+	for i, hash := range hashes {
+		existsSlice[i] = sn.ExistsLiveTicket(hash)
+	}
+
+	return existsSlice
+}
+
+// TicketPoolValue returns the current value of all the locked funds in the
+// ticket pool.
+//
+// This function is safe for concurrent access. All live tickets are at least
+// 256 blocks deep on mainnet, so the UTXO set should generally always have
+// the asked for transactions.
+func (b *BlockChain) TicketPoolValue() (dcrutil.Amount, error) {
+	b.chainLock.RLock()
+	sn := b.bestNode.stakeNode
+	b.chainLock.RUnlock()
+
+	var amt int64
+	err := b.db.View(func(dbTx database.Tx) error {
+		var err error
+		for _, hash := range sn.LiveTickets() {
+			utxo, err := dbFetchUtxoEntry(dbTx, hash)
+			if err != nil {
+				return err
+			}
+
+			amt += utxo.sparseOutputs[0].amount
+		}
+		return err
+	})
+	if err != nil {
+		return 0, err
+	}
+	return dcrutil.Amount(amt), nil
 }
