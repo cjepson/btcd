@@ -96,8 +96,8 @@ func (b *BlockChain) fetchStakeNode(node *blockNode) (*stake.StakeNode, error) {
 		return node.stakeNode, nil
 	}
 
-	// If the parent stake node is cached, connect the stake node from
-	// there.
+	// If the parent stake node is cached, connect the stake node
+	// from there.
 	if node.parent != nil {
 		if node.stakeNode == nil && node.parent.stakeNode != nil {
 			var err error

@@ -1663,6 +1663,9 @@ func (b *BlockChain) BlockByHeight(blockHeight int64) (*dcrutil.Block, error) {
 //
 // This function is safe for concurrent access.
 func (b *BlockChain) BlockByHash(hash *chainhash.Hash) (*dcrutil.Block, error) {
+	b.chainLock.RLock()
+	defer b.chainLock.RUnlock()
+
 	return b.fetchBlockFromHash(hash)
 }
 

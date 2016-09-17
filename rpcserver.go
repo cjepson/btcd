@@ -1758,7 +1758,7 @@ func handleExistsLiveTicket(s *rpcServer, cmd interface{},
 		}
 	}
 
-	return s.server.blockManager.ExistsLiveTicket(hash)
+	return s.server.blockManager.chain.CheckLiveTicket(hash), nil
 }
 
 // handleExistsLiveTickets implements the existslivetickets command.
@@ -1798,10 +1798,7 @@ func handleExistsLiveTickets(s *rpcServer, cmd interface{},
 		}
 	}
 
-	exists, err := s.server.blockManager.ExistsLiveTickets(hashes)
-	if err != nil {
-		return nil, err
-	}
+	exists := s.server.blockManager.chain.CheckLiveTickets(hashes)
 	if len(exists) != hashesLen {
 		return nil, &dcrjson.RPCError{
 			Code: dcrjson.ErrRPCDatabase,
@@ -4364,7 +4361,7 @@ func handleHelp(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (inter
 
 // handleLiveTickets implements the livetickets command.
 func handleLiveTickets(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
-	lt, err := s.server.blockManager.LiveTickets()
+	lt, err := s.server.blockManager.chain.LiveTickets()
 	if err != nil {
 		return nil, err
 	}
@@ -4379,16 +4376,14 @@ func handleLiveTickets(s *rpcServer, cmd interface{}, closeChan <-chan struct{})
 
 // handleMissedTickets implements the missedtickets command.
 func handleMissedTickets(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
-	mt, err := s.server.blockManager.MissedTickets()
+	mt, err := s.server.blockManager.chain.MissedTickets()
 	if err != nil {
 		return nil, err
 	}
 
 	mtString := make([]string, len(mt), len(mt))
-	itr := 0
-	for hash := range mt {
-		mtString[itr] = hash.String()
-		itr++
+	for i, hash := range mt {
+		mtString[i] = hash.String()
 	}
 
 	return dcrjson.MissedTicketsResult{Tickets: mtString}, nil
@@ -4410,7 +4405,7 @@ func handlePing(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (inter
 // handleRebroadcastMissed implements the rebroadcastmissed command.
 func handleRebroadcastMissed(s *rpcServer, cmd interface{}, closeChan <-chan struct{}) (interface{}, error) {
 	hash, height := s.server.blockManager.chainState.Best()
-	mt, err := s.server.blockManager.MissedTickets()
+	mt, err := s.server.blockManager.chain.MissedTickets()
 	if err != nil {
 		return nil, err
 	}

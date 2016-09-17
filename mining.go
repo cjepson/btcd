@@ -1175,7 +1175,7 @@ func NewBlockTemplate(policy *mining.Policy, server *server,
 	for i, h := range chainState.winningTickets {
 		winningTickets[i] = h
 	}
-	missedTickets := make([]chainhash.Hash, len(chainState.missedTickets),
+	missedTickets := make([]*chainhash.Hash, len(chainState.missedTickets),
 		len(chainState.missedTickets))
 	for i, h := range chainState.missedTickets {
 		missedTickets[i] = h
@@ -1468,7 +1468,7 @@ mempoolLoop:
 		if isSSRtx {
 			ticketHash := &tx.MsgTx().TxIn[0].PreviousOutPoint.Hash
 
-			if !hashExistsInList(ticketHash, missedTickets) {
+			if !hashExistsInSlice(ticketHash, missedTickets) {
 				continue
 			}
 		}

@@ -367,7 +367,7 @@ type chainState struct {
 	nextPoolSize        uint32
 	nextStakeDifficulty int64
 	winningTickets      []chainhash.Hash
-	missedTickets       []chainhash.Hash
+	missedTickets       []*chainhash.Hash
 	curBlockHeader      *wire.BlockHeader
 	pastMedianTime      time.Time
 	pastMedianTimeErr   error
@@ -416,7 +416,7 @@ func (c *chainState) NextWinners() []chainhash.Hash {
 // CurrentlyMissed returns the eligible SStx hashes that can be revoked.
 //
 // This function is safe for concurrent access.
-func (c *chainState) CurrentlyMissed() []chainhash.Hash {
+func (c *chainState) CurrentlyMissed() []*chainhash.Hash {
 	c.Lock()
 	defer c.Unlock()
 
@@ -432,14 +432,6 @@ func (c *chainState) GetTopBlockHeader() *wire.BlockHeader {
 	defer c.Unlock()
 
 	return c.curBlockHeader
-}
-
-// BlockLotteryData refers to cached data that is generated when a block
-// is inserted, so that it doesn't later need to be recalculated.
-type BlockLotteryData struct {
-	ntfnData   *WinningTicketsNtfnData
-	poolSize   uint32
-	finalState [6]byte
 }
 
 // blockManager provides a concurrency safe block manager for handling all
@@ -465,14 +457,18 @@ type blockManager struct {
 	wg                  sync.WaitGroup
 	quit                chan struct{}
 
-	blockLotteryDataCache      map[chainhash.Hash]*BlockLotteryData
-	blockLotteryDataCacheMutex *sync.Mutex
-
 	// The following fields are used for headers-first mode.
 	headersFirstMode bool
 	headerList       *list.List
 	startHeader      *list.Element
 	nextCheckpoint   *chaincfg.Checkpoint
+
+	// lotteryDataBroadcastMutex is a mutex protecting the map
+	// that checks if block lottery data has been broadcasted
+	// yet for any given block, so notifications are never
+	// duplicated.
+	lotteryDataBroadcast      map[chainhash.Hash]struct{}
+	lotteryDataBroadcastMutex sync.Mutex
 
 	cachedCurrentTemplate *BlockTemplate
 	cachedParentTemplate  *BlockTemplate
@@ -505,7 +501,7 @@ func (b *blockManager) updateChainState(newestHash *chainhash.Hash,
 	poolSize uint32,
 	nextStakeDiff int64,
 	winningTickets []chainhash.Hash,
-	missedTickets []chainhash.Hash,
+	missedTickets []*chainhash.Hash,
 	curBlockHeader *wire.BlockHeader) {
 
 	b.chainState.Lock()
@@ -1192,44 +1188,27 @@ func (b *blockManager) handleBlockMsg(bmsg *blockMsg) {
 		// Query the DB for the winning SStx for the next top block if we've
 		// reached stake validation height. Broadcast them if this is the first
 		// time determining them.
-		b.blockLotteryDataCacheMutex.Lock()
-		broadcastWinners := false
-		lotteryData := new(BlockLotteryData)
+		winningTickets, poolSize, finalState, err :=
+			b.chain.LotteryDataForBlock(blockSha)
+		if err != nil && int64(bmsg.block.MsgBlock().Header.Height) >=
+			b.server.chainParams.StakeValidationHeight-1 {
+			bmgrLog.Errorf("Failed to get next winning tickets: %v", err)
 
-		_, exists := b.blockLotteryDataCache[*blockSha]
-		if !exists {
-			winningTickets, poolSize, finalState, err :=
-				b.chain.GetWinningTickets(*blockSha)
-			if err != nil && int64(bmsg.block.MsgBlock().Header.Height) >=
-				b.server.chainParams.StakeValidationHeight-1 {
-				bmgrLog.Errorf("Failed to get next winning tickets: %v", err)
-
-				code, reason := errToRejectErr(err)
-				bmsg.peer.PushRejectMsg(wire.CmdBlock, code, reason,
-					blockSha, false)
-				b.blockLotteryDataCacheMutex.Unlock()
-				return
-			}
-
-			winningTicketsNtfn := &WinningTicketsNtfnData{
-				*blockSha,
-				int64(bmsg.block.MsgBlock().Header.Height),
-				winningTickets}
-			lotteryData = &BlockLotteryData{
-				winningTicketsNtfn,
-				uint32(poolSize),
-				finalState,
-			}
-			b.blockLotteryDataCache[*blockSha] = lotteryData
-			broadcastWinners = true
-			b.blockLotteryDataCacheMutex.Unlock()
-		} else {
-			lotteryData, _ = b.blockLotteryDataCache[*blockSha]
-			b.blockLotteryDataCacheMutex.Unlock()
+			code, reason := errToRejectErr(err)
+			bmsg.peer.PushRejectMsg(wire.CmdBlock, code, reason,
+				blockSha, false)
+			return
 		}
-		if r != nil && broadcastWinners {
-			// Rebroadcast the existing data to WS clients.
-			r.ntfnMgr.NotifyWinningTickets(lotteryData.ntfnData)
+
+		winningTicketsNtfn := &WinningTicketsNtfnData{
+			BlockHash:   *blockSha,
+			BlockHeight: int64(bmsg.block.MsgBlock().Header.Height),
+			Tickets:     winningTickets}
+		b.lotteryDataBroadcastMutex.Lock()
+		_, beenNotified := b.lotteryDataBroadcast[*blockSha]
+		b.lotteryDataBroadcastMutex.Unlock()
+		if !beenNotified {
+			r.ntfnMgr.NotifyWinningTickets(winningTicketsNtfn)
 		}
 
 		if onMainChain {
@@ -1248,7 +1227,11 @@ func (b *blockManager) handleBlockMsg(bmsg *blockMsg) {
 			best := b.chain.BestSnapshot()
 
 			// Query the DB for the missed tickets for the next top block.
-			missedTickets := b.chain.GetMissedTickets()
+			missedTickets, err := b.chain.MissedTickets()
+			if err != nil {
+				bmgrLog.Warnf("Failed to get missed tickets "+
+					"for best block %v: %v", best.Hash, err)
+			}
 
 			// Retrieve the current block header.
 			curBlockHeader := b.chain.GetCurrentBlockHeader()
@@ -1273,9 +1256,8 @@ func (b *blockManager) handleBlockMsg(bmsg *blockMsg) {
 				b.server.txMemPool.PruneExpiredTx(best.Height)
 			}
 
-			b.updateChainState(best.Hash, best.Height,
-				lotteryData.finalState, lotteryData.poolSize,
-				nextStakeDiff, lotteryData.ntfnData.Tickets,
+			b.updateChainState(best.Hash, best.Height, finalState,
+				uint32(poolSize), nextStakeDiff, winningTickets,
 				missedTickets, curBlockHeader)
 
 			// Update this peer's latest block height, for future
@@ -1821,20 +1803,9 @@ out:
 					// side chain or have caused a reorg.
 					best := b.chain.BestSnapshot()
 
-					// Fetch the required lottery data from the cache;
-					// it must already be there.
-					b.blockLotteryDataCacheMutex.Lock()
-					lotteryData, exists := b.blockLotteryDataCache[*best.Hash]
-					if !exists {
-						b.blockLotteryDataCacheMutex.Unlock()
-						msg.reply <- forceReorganizationResponse{
-							err: fmt.Errorf("Failed to find lottery data in "+
-								"cache while attempting reorganize to block %v",
-								best.Hash),
-						}
-						continue
-					}
-					b.blockLotteryDataCacheMutex.Unlock()
+					// Fetch the required lottery data.
+					winningTickets, poolSize, finalState, err :=
+						b.chain.LotteryDataForBlock(best.Hash)
 
 					// Update registered websocket clients on the
 					// current stake difficulty.
@@ -1857,16 +1828,20 @@ out:
 						b.server.txMemPool.PruneExpiredTx(best.Height)
 					}
 
-					missedTickets := b.chain.GetMissedTickets()
+					missedTickets, err := b.chain.MissedTickets()
+					if err != nil {
+						bmgrLog.Warnf("Failed to get missed tickets"+
+							": %v", err)
+					}
 
 					curBlockHeader := b.chain.GetCurrentBlockHeader()
 
 					b.updateChainState(best.Hash,
 						best.Height,
-						lotteryData.finalState,
-						lotteryData.poolSize,
+						finalState,
+						uint32(poolSize),
 						nextStakeDiff,
-						lotteryData.ntfnData.Tickets,
+						winningTickets,
 						missedTickets,
 						curBlockHeader)
 				}
@@ -1876,7 +1851,7 @@ out:
 				}
 
 			case getBlockFromHashMsg:
-				b, err := b.chain.GetBlockFromHash(&msg.hash)
+				b, err := b.chain.FetchBlockFromHash(&msg.hash)
 				msg.reply <- getBlockFromHashResponse{
 					block: b,
 					err:   err,
@@ -1887,16 +1862,6 @@ out:
 				msg.reply <- getGenerationResponse{
 					hashes: g,
 					err:    err,
-				}
-
-			case getLotteryDataMsg:
-				winningTickets, poolSize, finalState, err :=
-					b.chain.GetWinningTickets(msg.hash)
-				msg.reply <- getLotterDataResponse{
-					finalState:     finalState,
-					poolSize:       uint32(poolSize),
-					winningTickets: winningTickets,
-					err:            err,
 				}
 
 			case getTopBlockMsg:
@@ -1920,49 +1885,37 @@ out:
 
 				// Get the winning tickets. If they've yet to be broadcasted,
 				// broadcast them.
-				b.blockLotteryDataCacheMutex.Lock()
-				broadcastWinners := false
-				lotteryData := new(BlockLotteryData)
-
-				_, exists := b.blockLotteryDataCache[*msg.block.Sha()]
-				if !exists {
-					winningTickets, poolSize, finalState, err :=
-						b.chain.GetWinningTickets(*msg.block.Sha())
-					if err != nil && int64(msg.block.MsgBlock().Header.Height) >=
-						b.server.chainParams.StakeValidationHeight-1 {
-						bmgrLog.Warnf("Stake failure in lottery tickets "+
-							"calculation: %v", err)
-						msg.reply <- processBlockResponse{
-							isOrphan: false,
-							err:      err,
-						}
-						b.blockLotteryDataCacheMutex.Unlock()
-						continue
+				b.lotteryDataBroadcastMutex.Lock()
+				_, beenNotified := b.lotteryDataBroadcast[*msg.block.Sha()]
+				b.lotteryDataBroadcastMutex.Unlock()
+				winningTickets, poolSize, finalState, err :=
+					b.chain.LotteryDataForBlock(msg.block.Sha())
+				if err != nil && int64(msg.block.MsgBlock().Header.Height) >=
+					b.server.chainParams.StakeValidationHeight-1 {
+					bmgrLog.Warnf("Stake failure in lottery tickets "+
+						"calculation: %v", err)
+					msg.reply <- processBlockResponse{
+						isOrphan: false,
+						err:      err,
 					}
+					continue
+				}
 
-					lotteryData.poolSize = uint32(poolSize)
-					lotteryData.finalState = finalState
-					lotteryData.ntfnData = &WinningTicketsNtfnData{
+				// Notify registered websocket clients of newly
+				// eligible tickets to vote on if needed.
+				r := b.server.rpcServer
+				if r != nil && !isOrphan && !beenNotified &&
+					(msg.block.Height() >=
+						b.server.chainParams.StakeValidationHeight-1) {
+					ntfnData := &WinningTicketsNtfnData{
 						*msg.block.Sha(),
 						int64(msg.block.MsgBlock().Header.Height),
 						winningTickets}
-					b.blockLotteryDataCache[*msg.block.Sha()] = lotteryData
-					broadcastWinners = true
-				} else {
-					lotteryData, _ = b.blockLotteryDataCache[*msg.block.Sha()]
+					r.ntfnMgr.NotifyWinningTickets(ntfnData)
+					b.lotteryDataBroadcastMutex.Lock()
+					b.lotteryDataBroadcast[*msg.block.Sha()] = struct{}{}
+					b.lotteryDataBroadcastMutex.Unlock()
 				}
-
-				r := b.server.rpcServer
-				if r != nil && !isOrphan && broadcastWinners &&
-					(msg.block.Height() >=
-						b.server.chainParams.StakeValidationHeight-1) {
-					// Notify registered websocket clients of newly
-					// eligible tickets to vote on.
-					if _, is := b.blockLotteryDataCache[*msg.block.Sha()]; !is {
-						r.ntfnMgr.NotifyWinningTickets(lotteryData.ntfnData)
-					}
-				}
-				b.blockLotteryDataCacheMutex.Unlock()
 
 				// If the block added to the main chain, then we need to
 				// update the tip locally on block manager.
@@ -1992,15 +1945,19 @@ out:
 							best.Height)
 					}
 
-					missedTickets := b.chain.GetMissedTickets()
+					missedTickets, err := b.chain.MissedTickets()
+					if err != nil {
+						bmgrLog.Warnf("Failed to get missing tickets for "+
+							"incoming block %v: %v", best.Hash, err)
+					}
 					curBlockHeader := b.chain.GetCurrentBlockHeader()
 
 					b.updateChainState(best.Hash,
 						best.Height,
-						lotteryData.finalState,
-						lotteryData.poolSize,
+						finalState,
+						uint32(poolSize),
 						nextStakeDiff,
-						lotteryData.ntfnData.Tickets,
+						winningTickets,
 						missedTickets,
 						curBlockHeader)
 				}
@@ -2029,44 +1986,9 @@ out:
 			case isCurrentMsg:
 				msg.reply <- b.current()
 
-			case missedTicketsMsg:
-				tickets, err := b.chain.MissedTickets()
-				msg.reply <- missedTicketsResponse{
-					Tickets: tickets,
-					err:     err,
-				}
-
 			case pauseMsg:
 				// Wait until the sender unpauses the manager.
 				<-msg.unpause
-
-			case ticketsForAddressMsg:
-				tickets, err := b.chain.TicketsWithAddress(msg.Address)
-				msg.reply <- ticketsForAddressResponse{
-					Tickets: tickets,
-					err:     err,
-				}
-
-			case existsLiveTicketMsg:
-				exists, err := b.chain.CheckLiveTicket(msg.hash)
-				msg.reply <- existsLiveTicketResponse{
-					Exists: exists,
-					err:    err,
-				}
-
-			case existsLiveTicketsMsg:
-				exists, err := b.chain.CheckLiveTickets(msg.hashes)
-				msg.reply <- existsLiveTicketsResponse{
-					Exists: exists,
-					err:    err,
-				}
-
-			case liveTicketsMsg:
-				live, err := b.chain.LiveTickets()
-				msg.reply <- liveTicketsResponse{
-					Live: live,
-					err:  err,
-				}
 
 			case getCurrentTemplateMsg:
 				cur := deepCopyBlockTemplate(b.cachedCurrentTemplate)
@@ -2132,35 +2054,30 @@ func (b *blockManager) handleNotifyMsg(notification *blockchain.Notification) {
 			r != nil {
 
 			hash := block.Sha()
-			b.blockLotteryDataCacheMutex.Lock()
-			lotteryData := new(BlockLotteryData)
+			b.lotteryDataBroadcastMutex.Lock()
+			_, beenNotified := b.lotteryDataBroadcast[*hash]
+			b.lotteryDataBroadcastMutex.Unlock()
 
-			_, exists := b.blockLotteryDataCache[*hash]
-			if !exists {
-				// Obtain the winning tickets for this block. handleNotifyMsg
-				// should be safe for concurrent access of things contained
-				// within blockchain.
-				wt, ps, fs, err := b.chain.GetWinningTickets(*hash)
-				if err != nil {
-					b.blockLotteryDataCacheMutex.Unlock()
-					bmgrLog.Errorf("Couldn't calculate winning tickets for "+
-						"accepted block %v: %v", block.Sha(), err.Error())
-				} else {
-					lotteryData.finalState = fs
-					lotteryData.poolSize = uint32(ps)
-
-					lotteryData.ntfnData = &WinningTicketsNtfnData{
-						*hash,
-						int64(block.MsgBlock().Header.Height),
-						wt}
-					b.blockLotteryDataCache[*hash] = lotteryData
-
-					// Notify registered websocket clients of newly
-					// eligible tickets to vote on.
-					r.ntfnMgr.NotifyWinningTickets(lotteryData.ntfnData)
-					b.blockLotteryDataCache[*hash] = lotteryData
-					b.blockLotteryDataCacheMutex.Unlock()
+			// Obtain the winning tickets for this block. handleNotifyMsg
+			// should be safe for concurrent access of things contained
+			// within blockchain.
+			wt, ps, fs, err := b.chain.LotteryDataForBlock(hash)
+			if err != nil {
+				bmgrLog.Errorf("Couldn't calculate winning tickets for "+
+					"accepted block %v: %v", block.Sha(), err.Error())
+			} else {
+				ntfnData := &WinningTicketsNtfnData{
+					BlockHash:   *hash,
+					BlockHeight: block.Height(),
+					Tickets:     wt,
 				}
+
+				// Notify registered websocket clients of newly
+				// eligible tickets to vote on.
+				r.ntfnMgr.NotifyWinningTickets(ntfnData)
+				b.lotteryDataBroadcastMutex.Lock()
+				b.lotteryDataBroadcast[*hash] = struct{}{}
+				b.lotteryDataBroadcastMutex.Unlock()
 			}
 		}
 
@@ -2646,20 +2563,6 @@ func (b *blockManager) GetBlockFromHash(h chainhash.Hash) (*dcrutil.Block, error
 	return response.block, response.err
 }
 
-// GetLotteryData returns the hashes of all the winning tickets for a given
-// orphan block along with the pool size and the final state. It is funneled
-// through the block manager since blockchain is not safe for concurrent access.
-func (b *blockManager) GetLotteryData(hash chainhash.Hash) ([]chainhash.Hash,
-	uint32, [6]byte, error) {
-	reply := make(chan getLotterDataResponse)
-	b.msgChan <- getLotteryDataMsg{
-		hash:  hash,
-		reply: reply}
-	response := <-reply
-	return response.winningTickets, response.poolSize, response.finalState,
-		response.err
-}
-
 // GetTopBlockFromChain obtains the current top block from HEAD of the blockchain.
 // Returns a pointer to the cached copy of the block in memory.
 func (b *blockManager) GetTopBlockFromChain() (*dcrutil.Block, error) {
@@ -2700,14 +2603,6 @@ func (b *blockManager) IsCurrent() bool {
 	return <-reply
 }
 
-// MissedTickets returns a slice of missed ticket hashes.
-func (b *blockManager) MissedTickets() (stake.SStxMemMap, error) {
-	reply := make(chan missedTicketsResponse)
-	b.msgChan <- missedTicketsMsg{reply: reply}
-	response := <-reply
-	return response.Tickets, response.err
-}
-
 // Pause pauses the block manager until the returned channel is closed.
 //
 // Note that while paused, all peer and block processing is halted.  The
@@ -2718,45 +2613,10 @@ func (b *blockManager) Pause() chan<- struct{} {
 	return c
 }
 
-// TicketsForAddress returns a list of ticket hashes owned by the address.
-func (b *blockManager) TicketsForAddress(address dcrutil.Address) (
-	[]chainhash.Hash, error) {
-	reply := make(chan ticketsForAddressResponse)
-	b.msgChan <- ticketsForAddressMsg{Address: address, reply: reply}
-	response := <-reply
-	return response.Tickets, response.err
-}
-
-// ExistsLiveTicket returns whether or not a ticket exists in the live tickets
-// database.
-func (b *blockManager) ExistsLiveTicket(hash *chainhash.Hash) (bool, error) {
-	reply := make(chan existsLiveTicketResponse)
-	b.msgChan <- existsLiveTicketMsg{hash: hash, reply: reply}
-	response := <-reply
-	return response.Exists, response.err
-}
-
-// ExistsLiveTickets returns whether or not tickets in a slice of tickets exist
-// in the live tickets database.
-func (b *blockManager) ExistsLiveTickets(hashes []*chainhash.Hash) ([]bool, error) {
-	reply := make(chan existsLiveTicketsResponse)
-	b.msgChan <- existsLiveTicketsMsg{hashes: hashes, reply: reply}
-	response := <-reply
-	return response.Exists, response.err
-}
-
 // TicketPoolValue returns the current value of the total stake in the ticket
 // pool.
 func (b *blockManager) TicketPoolValue() (dcrutil.Amount, error) {
 	return b.chain.TicketPoolValue()
-}
-
-// LiveTickets returns the live tickets currently in the staking pool.
-func (b *blockManager) LiveTickets() ([]*chainhash.Hash, error) {
-	reply := make(chan liveTicketsResponse)
-	b.msgChan <- liveTicketsMsg{reply: reply}
-	response := <-reply
-	return response.Live, response.err
 }
 
 // GetCurrentTemplate gets the current block template for mining.
@@ -2813,7 +2673,6 @@ func newBlockManager(s *server, indexManager blockchain.IndexManager) (*blockMan
 	var err error
 	bm.chain, err = blockchain.New(&blockchain.Config{
 		DB:            s.db,
-		TMDB:          s.tmdb,
 		ChainParams:   s.chainParams,
 		Notifications: bm.handleNotifyMsg,
 		SigCache:      s.sigCache,
@@ -2835,14 +2694,14 @@ func newBlockManager(s *server, indexManager blockchain.IndexManager) (*blockMan
 	}
 
 	// Query the DB for the current winning ticket data.
-	wt, ps, fs, err := bm.chain.GetWinningTickets(*best.Hash)
+	wt, ps, fs, err := bm.chain.LotteryDataForBlock(best.Hash)
 	if err != nil {
 		return nil, err
 	}
 
 	// Query the DB for the currently missed tickets.
-	missedTickets := bm.chain.GetMissedTickets()
-	if err != nil && best.Height >= bm.server.chainParams.StakeValidationHeight {
+	missedTickets, err := bm.chain.MissedTickets()
+	if err != nil {
 		return nil, err
 	}
 
@@ -2862,8 +2721,7 @@ func newBlockManager(s *server, indexManager blockchain.IndexManager) (*blockMan
 		missedTickets,
 		curBlockHeader)
 
-	bm.blockLotteryDataCacheMutex = new(sync.Mutex)
-	bm.blockLotteryDataCache = make(map[chainhash.Hash]*BlockLotteryData)
+	bm.lotteryDataBroadcast = make(map[chainhash.Hash]struct{})
 
 	return &bm, nil
 }
@@ -3016,38 +2874,4 @@ func dumpBlockChain(height int64, db database.DB) error {
 	}
 
 	return nil
-}
-
-// loadTicketDB opens the ticket database and returns a handle to it.
-func loadTicketDB(db database.DB,
-	chainParams *chaincfg.Params) (*stake.TicketDB, error) {
-	path := cfg.DataDir
-	filename := filepath.Join(path, "ticketdb.gob")
-
-	// Check to see if the tmdb exists on disk.
-	tmdbExists := true
-	if _, err := os.Stat(filename); os.IsNotExist(err) {
-		tmdbExists = false
-	}
-
-	var tmdb stake.TicketDB
-
-	if !tmdbExists {
-		// Load a blank copy of the ticket database and sync it.
-		err := tmdb.Initialize(chainParams, db)
-		return &tmdb, err
-	}
-	dcrdLog.Infof("Loading ticket database from disk")
-	err := tmdb.LoadTicketDBs(path,
-		"ticketdb.gob",
-		chainParams,
-		db)
-
-	if err != nil {
-		return nil, err
-	}
-	dcrdLog.Infof("Ticket DB loaded with top block height %v",
-		tmdb.GetTopBlock())
-
-	return &tmdb, nil
 }

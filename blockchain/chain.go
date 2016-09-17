@@ -40,9 +40,10 @@ const (
 	// be at least the stake retarget interval.
 	minMemoryStakeNodes = 288
 
-	// searchDepth is the distance in blocks to search down the blockchain
-	// to find some parent. Reorganizations longer than this disance may
-	// fail.
+	// searchDepth is the distance in block nodes to search down the
+	// blockchain to find some parent, loading block nodes from the
+	// database if necessary. Reorganizations longer than this disance
+	// may fail.
 	searchDepth = 2880
 )
 
@@ -539,6 +540,7 @@ func (b *BlockChain) loadBlockNode(dbTx database.Tx,
 
 // findNode finds the node scaling backwards from best chain or return an
 // error.
+//
 // This function MUST be called with the chain state lock held (for writes).
 func (b *BlockChain) findNode(nodeHash *chainhash.Hash) (*blockNode, error) {
 	var node *blockNode
