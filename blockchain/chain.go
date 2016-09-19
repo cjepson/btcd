@@ -1106,41 +1106,6 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block,
 		return err
 	}
 
-	// Insert block into ticket database if we're the point where tickets begin to
-	// mature. Note that if the block is inserted into tmdb and then insertion
-	// into DB fails, the two database will be on different HEADs. This needs
-	// to be handled correctly in the near future.
-	if node.height >= b.chainParams.StakeEnabledHeight {
-		// TODO notifications
-		nextStakeDiff, err := b.calcNextRequiredStakeDifficulty(node)
-		if err != nil {
-			return err
-		}
-
-		empty := make([]chainhash.Hash, 0)
-
-		// Notify of spent and missed tickets
-		b.sendNotification(NTSpentAndMissedTickets,
-			&TicketNotificationsData{
-				Hash:            node.hash,
-				Height:          node.height,
-				StakeDifficulty: nextStakeDiff,
-				TicketsSpent:    empty,
-				TicketsMissed:   empty,
-				TicketsNew:      empty,
-			})
-		// Notify of new tickets
-		b.sendNotification(NTNewTickets,
-			&TicketNotificationsData{
-				Hash:            node.hash,
-				Height:          node.height,
-				StakeDifficulty: nextStakeDiff,
-				TicketsSpent:    empty,
-				TicketsMissed:   empty,
-				TicketsNew:      empty,
-			})
-	}
-
 	// Atomically insert info into the database.
 	err = b.db.Update(func(dbTx database.Tx) error {
 		// Update best block state.
@@ -1221,6 +1186,37 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block,
 	b.stateSnapshot = state
 	b.stateLock.Unlock()
 
+	// Send stake notifications about the new block.
+	if node.height >= b.chainParams.StakeEnabledHeight {
+		nextStakeDiff, err := b.calcNextRequiredStakeDifficulty(node)
+		if err != nil {
+			return err
+		}
+
+		empty := make([]chainhash.Hash, 0)
+
+		// Notify of spent and missed tickets
+		b.sendNotification(NTSpentAndMissedTickets,
+			&TicketNotificationsData{
+				Hash:            node.hash,
+				Height:          node.height,
+				StakeDifficulty: nextStakeDiff,
+				TicketsSpent:    node.stakeNode.MissedByBlock(),
+				TicketsMissed:   node.stakeNode.SpentByBlock(),
+				TicketsNew:      empty,
+			})
+		// Notify of new tickets
+		b.sendNotification(NTNewTickets,
+			&TicketNotificationsData{
+				Hash:            node.hash,
+				Height:          node.height,
+				StakeDifficulty: nextStakeDiff,
+				TicketsSpent:    empty,
+				TicketsMissed:   empty,
+				TicketsNew:      node.stakeNode.NewTickets(),
+			})
+	}
+
 	// Assemble the current block and the parent into a slice.
 	blockAndParent := []*dcrutil.Block{block, parent}
 
@@ -1236,6 +1232,10 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block,
 	if b.chainParams.Name != chaincfg.SimNetParams.Name &&
 		node.height < b.chainParams.LatestCheckpointHeight() {
 		b.bestNode.parent.stakeNode = nil
+		b.bestNode.parent.stakeUndoData = nil
+		b.bestNode.parent.newTickets = nil
+		b.bestNode.parent.ticketsSpent = nil
+		b.bestNode.parent.ticketsRevoked = nil
 	}
 
 	b.pushMainChainBlockCache(block)
@@ -2114,6 +2114,11 @@ func New(config *Config) (*BlockChain, error) {
 		if err := config.IndexManager.Init(&b); err != nil {
 			return nil, err
 		}
+	}
+
+	// Apply any upgrades as needed.
+	if err := b.upgrade(); err != nil {
+		return nil, err
 	}
 
 	b.subsidyCache = NewSubsidyCache(b.bestNode.height, b.chainParams)

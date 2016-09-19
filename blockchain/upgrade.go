@@ -11,7 +11,12 @@ import (
 	"github.com/decred/dcrd/database"
 )
 
-// upgradeToVersion2 upgrades
+// refreshRateForV2Upgrade is the distance in blocks for the client to log
+// updates about the upgrade to version 2 from version 1.
+const refreshRateForV2Upgrade = 500
+
+// upgradeToVersion2 upgrades a version 1 blockchain to version 2, allowing
+// use of the new on-disk ticket database.
 func (b *BlockChain) upgradeToVersion2() error {
 	best := b.BestSnapshot()
 
@@ -47,6 +52,7 @@ func (b *BlockChain) upgradeToVersion2() error {
 				}
 			}
 
+			// Iteratively connect the stake nodes in memory.
 			header := block.MsgBlock().Header
 			bestStakeNode, errLocal = bestStakeNode.ConnectNode(header,
 				ticketsSpentInBlock(block), ticketsRevokedInBlock(block),
@@ -55,6 +61,14 @@ func (b *BlockChain) upgradeToVersion2() error {
 				return errLocal
 			}
 
+			// Write the top block stake node to the database.
+			errLocal = stake.WriteConnectedBestNode(dbTx, bestStakeNode,
+				*best.Hash)
+			if errLocal != nil {
+				return errLocal
+			}
+
+			// Write the best block node when we reach it.
 			if i == best.Height {
 				b.bestNode.stakeNode = bestStakeNode
 				b.bestNode.stakeUndoData = bestStakeNode.UndoData()
@@ -62,9 +76,16 @@ func (b *BlockChain) upgradeToVersion2() error {
 				b.bestNode.ticketsSpent = ticketsSpentInBlock(block)
 				b.bestNode.ticketsRevoked = ticketsRevokedInBlock(block)
 			}
+
+			if i%refreshRateForV2Upgrade == 0 {
+				log.Infof("Upgrade to new stake database has proceeded to "+
+					"block %v/%v", block.Height(), best.Height)
+			}
 		}
 
-		errLocal = stake.WriteConnectedBestNode(dbTx, bestStakeNode, *best.Hash)
+		// Write the new database version.
+		b.dbInfo.version = 2
+		errLocal = dbPutDatabaseInfo(dbTx, b.dbInfo)
 		if errLocal != nil {
 			return errLocal
 		}
@@ -73,6 +94,21 @@ func (b *BlockChain) upgradeToVersion2() error {
 	})
 	if err != nil {
 		return err
+	}
+
+	log.Infof("Upgrade to new stake database was successful!")
+
+	return nil
+}
+
+// upgrade applies all possible upgrades to the blockchain database iteratively,
+// updating old clients to the newest version.
+func (b *BlockChain) upgrade() error {
+	if b.dbInfo.version == 1 {
+		err := b.upgradeToVersion2()
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil

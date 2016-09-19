@@ -1200,6 +1200,7 @@ func (b *blockManager) handleBlockMsg(bmsg *blockMsg) {
 			return
 		}
 
+		// Push winning tickets notifications if we need to.
 		winningTicketsNtfn := &WinningTicketsNtfnData{
 			BlockHash:   *blockSha,
 			BlockHeight: int64(bmsg.block.MsgBlock().Header.Height),
@@ -1207,10 +1208,14 @@ func (b *blockManager) handleBlockMsg(bmsg *blockMsg) {
 		b.lotteryDataBroadcastMutex.Lock()
 		_, beenNotified := b.lotteryDataBroadcast[*blockSha]
 		b.lotteryDataBroadcastMutex.Unlock()
-		if !beenNotified &&
+		if !beenNotified && r != nil &&
 			int64(bmsg.block.MsgBlock().Header.Height) >
 				b.server.chainParams.LatestCheckpointHeight() {
 			r.ntfnMgr.NotifyWinningTickets(winningTicketsNtfn)
+
+			b.lotteryDataBroadcastMutex.Lock()
+			b.lotteryDataBroadcast[*blockSha] = struct{}{}
+			b.lotteryDataBroadcastMutex.Unlock()
 		}
 
 		if onMainChain {
@@ -1917,6 +1922,7 @@ out:
 						*msg.block.Sha(),
 						int64(msg.block.MsgBlock().Header.Height),
 						winningTickets}
+
 					r.ntfnMgr.NotifyWinningTickets(ntfnData)
 					b.lotteryDataBroadcastMutex.Lock()
 					b.lotteryDataBroadcast[*msg.block.Sha()] = struct{}{}

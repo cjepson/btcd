@@ -1393,14 +1393,14 @@ func (b *BlockChain) initChainState() error {
 		// of the database. In the future we can add upgrade path before this
 		// to ensure that the database is upgraded to the current version
 		// before hitting this.
-		if dbInfo.version != currentDatabaseVersion {
+		if dbInfo.version > currentDatabaseVersion {
 			return fmt.Errorf("The blockchain database's version is %v "+
 				"but the current version of the software is %v",
 				dbInfo.version, currentDatabaseVersion)
 		}
 
 		// Die here if we're not on the current compression version, too.
-		if dbInfo.compVer != currentCompressionVersion {
+		if dbInfo.compVer > currentCompressionVersion {
 			return fmt.Errorf("The blockchain database's compression "+
 				"version is %v but the current version of the software is %v",
 				dbInfo.version, currentDatabaseVersion)
@@ -1442,13 +1442,19 @@ func (b *BlockChain) initChainState() error {
 			ticketsRevokedInBlock(dcrutil.NewBlock(&block)))
 		node.inMainChain = true
 		node.workSum = state.workSum
-		node.stakeNode, err = stake.LoadBestNode(dbTx, uint32(node.height),
-			node.hash, node.header, b.chainParams)
-		if err != nil {
-			return err
+
+		// Exception for version 1 blockchains: skip loading the stake
+		// node, as the upgrade path handles ensuring this is correctly
+		// set.
+		if dbInfo.version >= 2 {
+			node.stakeNode, err = stake.LoadBestNode(dbTx, uint32(node.height),
+				node.hash, node.header, b.chainParams)
+			if err != nil {
+				return err
+			}
+			node.stakeUndoData = node.stakeNode.UndoData()
+			node.newTickets = node.stakeNode.NewTickets()
 		}
-		node.stakeUndoData = node.stakeNode.UndoData()
-		node.newTickets = node.stakeNode.NewTickets()
 
 		b.bestNode = node
 		b.root = node

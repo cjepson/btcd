@@ -73,8 +73,8 @@ func (sn *StakeNode) NewTickets() []chainhash.Hash {
 	return sn.databaseBlockTickets
 }
 
-// SpentInBlock returns the tickets that were spent in this block.
-func (sn *StakeNode) SpentInBlock() []chainhash.Hash {
+// SpentByBlock returns the tickets that were spent in this block.
+func (sn *StakeNode) SpentByBlock() []chainhash.Hash {
 	spent := make([]chainhash.Hash, 0)
 	for _, undo := range sn.databaseUndoUpdate {
 		if undo.Spent {
