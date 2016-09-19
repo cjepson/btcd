@@ -323,10 +323,10 @@ func mergeUtxoView(viewA *blockchain.UtxoViewpoint, viewB *blockchain.UtxoViewpo
 	}
 }
 
-// hashExistsInList checks if a hash exists in a list of hashes.
-func hashExistsInList(hash *chainhash.Hash, list []chainhash.Hash) bool {
-	for _, h := range list {
-		if hash.IsEqual(&h) {
+// hashExistsInList checks if a hash exists in a list of hash pointers.
+func hashInSlice(h chainhash.Hash, list []chainhash.Hash) bool {
+	for i := range list {
+		if h == list[i] {
 			return true
 		}
 	}
@@ -1175,10 +1175,10 @@ func NewBlockTemplate(policy *mining.Policy, server *server,
 	for i, h := range chainState.winningTickets {
 		winningTickets[i] = h
 	}
-	missedTickets := make([]*chainhash.Hash, len(chainState.missedTickets),
+	missedTickets := make([]chainhash.Hash, len(chainState.missedTickets),
 		len(chainState.missedTickets))
-	for i, h := range chainState.missedTickets {
-		missedTickets[i] = h
+	for i := range chainState.missedTickets {
+		missedTickets[i] = chainState.missedTickets[i]
 	}
 	chainState.Unlock()
 
@@ -1468,7 +1468,7 @@ mempoolLoop:
 		if isSSRtx {
 			ticketHash := &tx.MsgTx().TxIn[0].PreviousOutPoint.Hash
 
-			if !hashExistsInSlice(ticketHash, missedTickets) {
+			if !hashInSlice(*ticketHash, missedTickets) {
 				continue
 			}
 		}

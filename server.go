@@ -24,7 +24,6 @@ import (
 	"github.com/decred/dcrd/addrmgr"
 	"github.com/decred/dcrd/blockchain"
 	"github.com/decred/dcrd/blockchain/indexers"
-	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg"
 	"github.com/decred/dcrd/chaincfg/chainhash"
 	"github.com/decred/dcrd/database"
@@ -1134,7 +1133,7 @@ func (s *server) pushTxMsg(sp *serverPeer, sha *chainhash.Hash, doneChan chan<- 
 // pushBlockMsg sends a block message for the provided block hash to the
 // connected peer.  An error is returned if the block hash is not known.
 func (s *server) pushBlockMsg(sp *serverPeer, hash *chainhash.Hash, doneChan chan<- struct{}, waitChan <-chan struct{}) error {
-	block, err := sp.server.blockManager.chain.GetBlockFromHash(hash)
+	block, err := sp.server.blockManager.chain.FetchBlockFromHash(hash)
 	if err != nil {
 		peerLog.Tracef("Unable to fetch requested block hash %v: %v",
 			hash, err)
@@ -2412,7 +2411,7 @@ out:
 // newServer returns a new dcrd server configured to listen on addr for the
 // decred network type specified by chainParams.  Use start to begin accepting
 // connections from peers.
-func newServer(listenAddrs []string, db database.DB, tmdb *stake.TicketDB, chainParams *chaincfg.Params) (*server, error) {
+func newServer(listenAddrs []string, db database.DB, chainParams *chaincfg.Params) (*server, error) {
 
 	services := defaultServices
 	if cfg.NoPeerBloomFilters {
@@ -2562,7 +2561,6 @@ func newServer(listenAddrs []string, db database.DB, tmdb *stake.TicketDB, chain
 		peerHeightsUpdate:    make(chan updatePeerHeightsMsg),
 		nat:                  nat,
 		db:                   db,
-		tmdb:                 tmdb,
 		timeSource:           blockchain.NewMedianTime(),
 		services:             services,
 		sigCache:             txscript.NewSigCache(cfg.SigCacheMaxSize),

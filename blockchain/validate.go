@@ -944,7 +944,7 @@ func (b *BlockChain) CheckBlockStakeSanity(stakeValidationHeight int64, node *bl
 	//     and then check below to make sure that these were indeed the tickets
 	//     used.
 	for _, ticketHash := range ticketSlice {
-		ticketsWhichCouldBeUsed[*ticketHash] = struct{}{}
+		ticketsWhichCouldBeUsed[ticketHash] = struct{}{}
 		// Fetch utxo details for all of the transactions in this block.
 		// Typically, there will not be any utxos for any of the transactions.
 	}
@@ -1049,7 +1049,7 @@ func (b *BlockChain) CheckBlockStakeSanity(stakeValidationHeight int64, node *bl
 
 			ticketMissed := false
 
-			if parentStakeNode.ExistsMissedTicket(&sstxHash) {
+			if parentStakeNode.ExistsMissedTicket(sstxHash) {
 				ticketMissed = true
 			}
 
@@ -2359,7 +2359,7 @@ func (b *BlockChain) checkConnectBlock(node *blockNode, block *dcrutil.Block,
 
 	// Update the best hash for view to include this block since all of its
 	// transactions have been connected.
-	utxoView.SetBestHash(node.hash)
+	utxoView.SetBestHash(&node.hash)
 
 	return nil
 }
@@ -2395,9 +2395,9 @@ func (b *BlockChain) CheckConnectBlock(block *dcrutil.Block) error {
 	// If we are extending the main (best) chain with a new block,
 	// just use the ticket database we already have.
 	if b.bestNode == nil || (prevNode != nil &&
-		prevNode.hash.IsEqual(b.bestNode.hash)) {
+		prevNode.hash == b.bestNode.hash) {
 		view := NewUtxoViewpoint()
-		view.SetBestHash(prevNode.hash)
+		view.SetBestHash(&prevNode.hash)
 		return b.checkConnectBlock(newNode, block, view, nil)
 	}
 
@@ -2412,12 +2412,12 @@ func (b *BlockChain) CheckConnectBlock(block *dcrutil.Block) error {
 	}
 
 	view := NewUtxoViewpoint()
-	view.SetBestHash(b.bestNode.hash)
+	view.SetBestHash(&b.bestNode.hash)
 	view.SetStakeViewpoint(ViewpointPrevValidInitial)
 	var stxos []spentTxOut
 	for e := detachNodes.Front(); e != nil; e = e.Next() {
 		n := e.Value.(*blockNode)
-		block, err := b.fetchBlockFromHash(n.hash)
+		block, err := b.fetchBlockFromHash(&n.hash)
 		if err != nil {
 			return err
 		}
@@ -2458,7 +2458,7 @@ func (b *BlockChain) CheckConnectBlock(block *dcrutil.Block) error {
 	// transactions and spend information from each of the nodes to attach.
 	for e := attachNodes.Front(); e != nil; e = e.Next() {
 		n := e.Value.(*blockNode)
-		block, exists := b.blockCache[*n.hash]
+		block, exists := b.blockCache[n.hash]
 		if !exists {
 			return fmt.Errorf("unable to find block %v in "+
 				"side chain cache for utxo view construction",

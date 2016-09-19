@@ -33,44 +33,46 @@ const (
 	testDbRoot = "testdbs"
 )
 
-func ticketsInBlock(bl *dcrutil.Block) []*chainhash.Hash {
-	tickets := make([]*chainhash.Hash, 0)
+func ticketsInBlock(bl *dcrutil.Block) []chainhash.Hash {
+	tickets := make([]chainhash.Hash, 0)
 	for _, stx := range bl.STransactions() {
 		if stake.DetermineTxType(stx) == stake.TxTypeSStx {
-			tickets = append(tickets, stx.Sha())
+			h := stx.Sha()
+			tickets = append(tickets, *h)
 		}
 	}
 
 	return tickets
 }
 
-func ticketsSpentInBlock(bl *dcrutil.Block) []*chainhash.Hash {
-	tickets := make([]*chainhash.Hash, 0)
+func ticketsSpentInBlock(bl *dcrutil.Block) []chainhash.Hash {
+	tickets := make([]chainhash.Hash, 0)
 	for _, stx := range bl.STransactions() {
 		if stake.DetermineTxType(stx) == stake.TxTypeSSGen {
-			tickets = append(tickets, &stx.MsgTx().TxIn[1].PreviousOutPoint.Hash)
+			tickets = append(tickets, stx.MsgTx().TxIn[1].PreviousOutPoint.Hash)
 		}
 	}
 
 	return tickets
 }
 
-func votesInBlock(bl *dcrutil.Block) []*chainhash.Hash {
-	votes := make([]*chainhash.Hash, 0)
+func votesInBlock(bl *dcrutil.Block) []chainhash.Hash {
+	votes := make([]chainhash.Hash, 0)
 	for _, stx := range bl.STransactions() {
 		if stake.DetermineTxType(stx) == stake.TxTypeSSGen {
-			votes = append(votes, stx.Sha())
+			h := stx.Sha()
+			votes = append(votes, *h)
 		}
 	}
 
 	return votes
 }
 
-func revokedTicketsInBlock(bl *dcrutil.Block) []*chainhash.Hash {
-	tickets := make([]*chainhash.Hash, 0)
+func revokedTicketsInBlock(bl *dcrutil.Block) []chainhash.Hash {
+	tickets := make([]chainhash.Hash, 0)
 	for _, stx := range bl.STransactions() {
 		if stake.DetermineTxType(stx) == stake.TxTypeSSRtx {
-			tickets = append(tickets, &stx.MsgTx().TxIn[0].PreviousOutPoint.Hash)
+			tickets = append(tickets, stx.MsgTx().TxIn[0].PreviousOutPoint.Hash)
 		}
 	}
 
@@ -180,7 +182,7 @@ func TestTicketDB(t *testing.T) {
 	err = testDb.Update(func(dbTx database.Tx) error {
 		for i := int64(1); i <= testBCHeight; i++ {
 			block := testBlockchain[i]
-			ticketsToAdd := make([]*chainhash.Hash, 0)
+			ticketsToAdd := make([]chainhash.Hash, 0)
 			if i >= simNetParams.StakeEnabledHeight {
 				matureHeight := (i - int64(simNetParams.TicketMaturity))
 				ticketsToAdd = ticketsInBlock(testBlockchain[matureHeight])
@@ -196,7 +198,7 @@ func TestTicketDB(t *testing.T) {
 			}
 
 			// In memory addition test.
-			bestNode, err = bestNode.ConnectNode(&header,
+			bestNode, err = bestNode.ConnectNode(header,
 				ticketsSpentInBlock(block), revokedTicketsInBlock(block),
 				ticketsToAdd)
 			if err != nil {
@@ -212,8 +214,9 @@ func TestTicketDB(t *testing.T) {
 			}
 
 			// Reload the node from DB and make sure it's the same.
+			blockHash := block.Sha()
 			loadedNode, err := stake.LoadBestNode(dbTx, bestNode.Height(),
-				block.Sha(), &header, simNetParams)
+				*blockHash, header, simNetParams)
 			if err != nil {
 				return fmt.Errorf("failed to load the best node: %v",
 					err.Error())
@@ -236,7 +239,7 @@ func TestTicketDB(t *testing.T) {
 	stakeNodesBackward[testBCHeight] = bestNode
 	for i := testBCHeight; i >= int64(1); i-- {
 		parentBlock := testBlockchain[i-1]
-		ticketsToAdd := make([]*chainhash.Hash, 0)
+		ticketsToAdd := make([]chainhash.Hash, 0)
 		if i >= simNetParams.StakeEnabledHeight {
 			matureHeight := (i - 1 - int64(simNetParams.TicketMaturity))
 			ticketsToAdd = ticketsInBlock(testBlockchain[matureHeight])
@@ -246,7 +249,7 @@ func TestTicketDB(t *testing.T) {
 		formerBestNode := bestNode
 
 		// In memory disconnection test.
-		bestNode, err = bestNode.DisconnectNode(&header, blockUndoData,
+		bestNode, err = bestNode.DisconnectNode(header, blockUndoData,
 			ticketsToAdd, nil)
 		if err != nil {
 			t.Fatalf(err.Error())
@@ -261,7 +264,7 @@ func TestTicketDB(t *testing.T) {
 		// data to disconnect the node, too.
 		var bestNodeUsingDB *stake.StakeNode
 		err = testDb.View(func(dbTx database.Tx) error {
-			bestNodeUsingDB, err = formerBestNode.DisconnectNode(&header, nil,
+			bestNodeUsingDB, err = formerBestNode.DisconnectNode(header, nil,
 				nil, dbTx)
 			if err != nil {
 				return err
@@ -299,8 +302,9 @@ func TestTicketDB(t *testing.T) {
 		// Check the best node against the loaded best node from
 		// the database after.
 		err = testDb.View(func(dbTx database.Tx) error {
+			parentBlockHash := parentBlock.Sha()
 			loadedNode, err := stake.LoadBestNode(dbTx, bestNode.Height(),
-				parentBlock.Sha(), &header, simNetParams)
+				*parentBlockHash, header, simNetParams)
 			if err != nil {
 				return fmt.Errorf("failed to load the best node: %v",
 					err.Error())

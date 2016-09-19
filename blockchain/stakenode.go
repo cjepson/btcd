@@ -39,10 +39,11 @@ func (b *BlockChain) nodeAtHeightFromTopNode(node *blockNode,
 //
 // This function is NOT safe for concurrent access and must be called with
 // the chainLock held for writes.
-func (b *BlockChain) fetchNewTicketsForNode(node *blockNode) ([]*chainhash.Hash, error) {
-	//
+func (b *BlockChain) fetchNewTicketsForNode(node *blockNode) ([]chainhash.Hash, error) {
+	// If we're before the stake enabled height, there can be no
+	// tickets in the live ticket pool.
 	if node.height < b.chainParams.StakeEnabledHeight {
-		return []*chainhash.Hash{}, nil
+		return []chainhash.Hash{}, nil
 	}
 
 	// If we already cached the tickets, simply return the cached list.
@@ -61,15 +62,16 @@ func (b *BlockChain) fetchNewTicketsForNode(node *blockNode) ([]*chainhash.Hash,
 		return nil, err
 	}
 
-	matureBlock, errBlock := b.fetchBlockFromHash(matureNode.hash)
+	matureBlock, errBlock := b.fetchBlockFromHash(&matureNode.hash)
 	if errBlock != nil {
 		return nil, errBlock
 	}
 
-	tickets := []*chainhash.Hash{}
+	tickets := []chainhash.Hash{}
 	for _, stx := range matureBlock.STransactions() {
 		if is, _ := stake.IsSStx(stx); is {
-			tickets = append(tickets, stx.Sha())
+			h := stx.Sha()
+			tickets = append(tickets, *h)
 		}
 	}
 
@@ -108,8 +110,10 @@ func (b *BlockChain) fetchStakeNode(node *blockNode) (*stake.StakeNode, error) {
 				}
 			}
 
-			node.stakeNode, err = node.parent.stakeNode.ConnectNode(&node.header,
-				node.ticketsSpent, node.ticketsRevoked, node.newTickets)
+			node.stakeNode, err = node.parent.stakeNode.ConnectNode(node.header,
+				node.ticketsSpent,
+				node.ticketsRevoked,
+				node.newTickets)
 			if err != nil {
 				return nil, err
 			}
@@ -138,7 +142,7 @@ func (b *BlockChain) fetchStakeNode(node *blockNode) (*stake.StakeNode, error) {
 			var errLocal error
 			if n.stakeNode == nil {
 				n.stakeNode, errLocal =
-					current.stakeNode.DisconnectNode(&n.header,
+					current.stakeNode.DisconnectNode(n.header,
 						n.stakeUndoData, n.newTickets, dbTx)
 			}
 			if errLocal != nil {
@@ -159,7 +163,7 @@ func (b *BlockChain) fetchStakeNode(node *blockNode) (*stake.StakeNode, error) {
 		var errLocal error
 		if current.parent.stakeNode == nil {
 			current.parent.stakeNode, errLocal =
-				current.stakeNode.DisconnectNode(&current.header,
+				current.stakeNode.DisconnectNode(current.header,
 					current.stakeUndoData, current.newTickets, dbTx)
 		}
 		if errLocal != nil {
@@ -176,7 +180,7 @@ func (b *BlockChain) fetchStakeNode(node *blockNode) (*stake.StakeNode, error) {
 	// The node is at a fork point in the block chain, so just return
 	// this stake node.
 	if attachNodes.Len() == 0 {
-		if *current.hash != *node.hash ||
+		if current.hash != node.hash ||
 			current.height != node.height {
 			return nil, AssertError("failed to restore stake node to " +
 				"fork point when fetching")
@@ -200,7 +204,7 @@ func (b *BlockChain) fetchStakeNode(node *blockNode) (*stake.StakeNode, error) {
 				}
 			}
 
-			n.stakeNode, err = current.stakeNode.ConnectNode(&n.header,
+			n.stakeNode, err = current.stakeNode.ConnectNode(n.header,
 				n.ticketsSpent, n.ticketsRevoked, n.newTickets)
 			if err != nil {
 				return nil, err

@@ -175,11 +175,11 @@ func (b *BlockChain) checkBlockContext(block *dcrutil.Block, prevNode *blockNode
 
 // ticketsSpentInBlock fetches a list of tickets that were spent in the
 // block.
-func ticketsSpentInBlock(bl *dcrutil.Block) []*chainhash.Hash {
-	tickets := make([]*chainhash.Hash, 0)
+func ticketsSpentInBlock(bl *dcrutil.Block) []chainhash.Hash {
+	tickets := make([]chainhash.Hash, 0)
 	for _, stx := range bl.STransactions() {
 		if stake.DetermineTxType(stx) == stake.TxTypeSSGen {
-			tickets = append(tickets, &stx.MsgTx().TxIn[1].PreviousOutPoint.Hash)
+			tickets = append(tickets, stx.MsgTx().TxIn[1].PreviousOutPoint.Hash)
 		}
 	}
 
@@ -188,11 +188,11 @@ func ticketsSpentInBlock(bl *dcrutil.Block) []*chainhash.Hash {
 
 // ticketsRevokedInBlock fetches a list of tickets that were revoked in the
 // block.
-func ticketsRevokedInBlock(bl *dcrutil.Block) []*chainhash.Hash {
-	tickets := make([]*chainhash.Hash, 0)
+func ticketsRevokedInBlock(bl *dcrutil.Block) []chainhash.Hash {
+	tickets := make([]chainhash.Hash, 0)
 	for _, stx := range bl.STransactions() {
 		if stake.DetermineTxType(stx) == stake.TxTypeSSRtx {
-			tickets = append(tickets, &stx.MsgTx().TxIn[0].PreviousOutPoint.Hash)
+			tickets = append(tickets, stx.MsgTx().TxIn[0].PreviousOutPoint.Hash)
 		}
 	}
 

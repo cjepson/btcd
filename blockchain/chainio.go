@@ -29,7 +29,7 @@ const (
 
 	// currentDatabaseVersion indicates what the current database
 	// version is.
-	currentDatabaseVersion = 1
+	currentDatabaseVersion = 2
 )
 
 // errNotInMainChain signifies that a block hash or height that is not in the
@@ -1273,14 +1273,14 @@ func (b *BlockChain) createChainState() error {
 	// node and the best node.
 	genesisBlock := dcrutil.NewBlock(b.chainParams.GenesisBlock)
 	header := &genesisBlock.MsgBlock().Header
-	node := newBlockNode(header, genesisBlock.Sha(), 0, []*chainhash.Hash{},
-		[]*chainhash.Hash{})
+	node := newBlockNode(header, genesisBlock.Sha(), 0, []chainhash.Hash{},
+		[]chainhash.Hash{})
 	node.inMainChain = true
 	b.bestNode = node
 	b.root = node
 
 	// Add the new node to the index which is used for faster lookups.
-	b.index[*node.hash] = node
+	b.index[node.hash] = node
 
 	// Initialize the state related to the best block.
 	numTxns := uint64(len(genesisBlock.MsgBlock().Transactions))
@@ -1340,7 +1340,7 @@ func (b *BlockChain) createChainState() error {
 
 		// Add the genesis block hash to height and height to hash
 		// mappings to the index.
-		err = dbPutBlockIndex(dbTx, b.bestNode.hash, b.bestNode.height)
+		err = dbPutBlockIndex(dbTx, &b.bestNode.hash, b.bestNode.height)
 		if err != nil {
 			return err
 		}
@@ -1443,7 +1443,7 @@ func (b *BlockChain) initChainState() error {
 		node.inMainChain = true
 		node.workSum = state.workSum
 		node.stakeNode, err = stake.LoadBestNode(dbTx, uint32(node.height),
-			node.hash, &node.header, b.chainParams)
+			node.hash, node.header, b.chainParams)
 		if err != nil {
 			return err
 		}
@@ -1454,9 +1454,9 @@ func (b *BlockChain) initChainState() error {
 		b.root = node
 
 		// Add the new node to the indices for faster lookups.
-		prevHash := &node.header.PrevBlock
-		b.index[*node.hash] = node
-		b.depNodes[*prevHash] = append(b.depNodes[*prevHash], node)
+		prevHash := node.header.PrevBlock
+		b.index[node.hash] = node
+		b.depNodes[prevHash] = append(b.depNodes[prevHash], node)
 
 		// Initialize the state related to the best block.
 		blockSize := uint64(len(blockBytes))

@@ -19,7 +19,7 @@ import (
 // state checksum.
 //
 // This function is safe for concurrent access.
-func (b *BlockChain) NextLotteryData() ([]*chainhash.Hash, int, [6]byte, error) {
+func (b *BlockChain) NextLotteryData() ([]chainhash.Hash, int, [6]byte, error) {
 	b.chainLock.RLock()
 	defer b.chainLock.RUnlock()
 
@@ -32,13 +32,13 @@ func (b *BlockChain) NextLotteryData() ([]*chainhash.Hash, int, [6]byte, error) 
 //
 // This function is NOT safe for concurrent access and MUST be called
 // with the chainLock held for writes.
-func (b *BlockChain) lotteryDataForNode(node *blockNode) ([]*chainhash.Hash, int, [6]byte, error) {
+func (b *BlockChain) lotteryDataForNode(node *blockNode) ([]chainhash.Hash, int, [6]byte, error) {
 	if node.height < b.chainParams.StakeEnabledHeight {
-		return []*chainhash.Hash{}, 0, [6]byte{}, nil
+		return []chainhash.Hash{}, 0, [6]byte{}, nil
 	}
 	stakeNode, err := b.fetchStakeNode(node)
 	if err != nil {
-		return []*chainhash.Hash{}, 0, [6]byte{}, err
+		return []chainhash.Hash{}, 0, [6]byte{}, err
 	}
 
 	return stakeNode.Winners(), b.bestNode.stakeNode.PoolSize(),
@@ -67,12 +67,8 @@ func (b *BlockChain) lotteryDataForBlock(hash *chainhash.Hash) ([]chainhash.Hash
 	if err != nil {
 		return nil, 0, [6]byte{}, err
 	}
-	winningTicketsValue := make([]chainhash.Hash, len(winningTickets))
-	for i, wt := range winningTickets {
-		winningTicketsValue[i] = *wt
-	}
 
-	return winningTicketsValue, poolSize, finalState, nil
+	return winningTickets, poolSize, finalState, nil
 }
 
 // LotteryDataForBlock returns lottery data for a given block in the block
@@ -93,7 +89,7 @@ func (b *BlockChain) LotteryDataForBlock(hash *chainhash.Hash) ([]chainhash.Hash
 // LiveTickets returns all currently live tickets from the stake database.
 //
 // This function is NOT safe for concurrent access.
-func (b *BlockChain) LiveTickets() ([]*chainhash.Hash, error) {
+func (b *BlockChain) LiveTickets() ([]chainhash.Hash, error) {
 	b.chainLock.RLock()
 	sn := b.bestNode.stakeNode
 	b.chainLock.RUnlock()
@@ -104,7 +100,7 @@ func (b *BlockChain) LiveTickets() ([]*chainhash.Hash, error) {
 // MissedTickets returns all currently missed tickets from the stake database.
 //
 // This function is NOT safe for concurrent access.
-func (b *BlockChain) MissedTickets() ([]*chainhash.Hash, error) {
+func (b *BlockChain) MissedTickets() ([]chainhash.Hash, error) {
 	b.chainLock.RLock()
 	sn := b.bestNode.stakeNode
 	b.chainLock.RUnlock()
@@ -127,7 +123,7 @@ func (b *BlockChain) TicketsWithAddress(address dcrutil.Address) ([]chainhash.Ha
 	err := b.db.View(func(dbTx database.Tx) error {
 		var err error
 		for _, hash := range tickets {
-			utxo, err := dbFetchUtxoEntry(dbTx, hash)
+			utxo, err := dbFetchUtxoEntry(dbTx, &hash)
 			if err != nil {
 				return err
 			}
@@ -136,7 +132,7 @@ func (b *BlockChain) TicketsWithAddress(address dcrutil.Address) ([]chainhash.Ha
 				txscript.ExtractPkScriptAddrs(txscript.DefaultScriptVersion,
 					utxo.PkScriptByIndex(0), b.chainParams)
 			if addrs[0].EncodeAddress() == address.EncodeAddress() {
-				ticketsWithAddr = append(ticketsWithAddr, *hash)
+				ticketsWithAddr = append(ticketsWithAddr, hash)
 			}
 		}
 		return err
@@ -152,7 +148,7 @@ func (b *BlockChain) TicketsWithAddress(address dcrutil.Address) ([]chainhash.Ha
 // treap of the best node.
 //
 // This function is safe for concurrent access.
-func (b *BlockChain) CheckLiveTicket(hash *chainhash.Hash) bool {
+func (b *BlockChain) CheckLiveTicket(hash chainhash.Hash) bool {
 	b.chainLock.RLock()
 	sn := b.bestNode.stakeNode
 	b.chainLock.RUnlock()
@@ -164,7 +160,7 @@ func (b *BlockChain) CheckLiveTicket(hash *chainhash.Hash) bool {
 // ticket treap of the best node.
 //
 // This function is safe for concurrent access.
-func (b *BlockChain) CheckLiveTickets(hashes []*chainhash.Hash) []bool {
+func (b *BlockChain) CheckLiveTickets(hashes []chainhash.Hash) []bool {
 	b.chainLock.RLock()
 	sn := b.bestNode.stakeNode
 	b.chainLock.RUnlock()
@@ -192,7 +188,7 @@ func (b *BlockChain) TicketPoolValue() (dcrutil.Amount, error) {
 	err := b.db.View(func(dbTx database.Tx) error {
 		var err error
 		for _, hash := range sn.LiveTickets() {
-			utxo, err := dbFetchUtxoEntry(dbTx, hash)
+			utxo, err := dbFetchUtxoEntry(dbTx, &hash)
 			if err != nil {
 				return err
 			}

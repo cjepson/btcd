@@ -219,20 +219,20 @@ func TestBlockUndoDataSerializing(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		utds       []*UndoTicketData
+		utds       []UndoTicketData
 		serialized []byte
 	}{
 		{
 			name: "two ticket datas",
-			utds: []*UndoTicketData{
-				&UndoTicketData{
+			utds: []UndoTicketData{
+				UndoTicketData{
 					TicketHash:   chainhash.HashFuncH([]byte{0x00}),
 					TicketHeight: 123456,
 					Missed:       true,
 					Revoked:      false,
 					Spent:        false,
 				},
-				&UndoTicketData{
+				UndoTicketData{
 					TicketHash:   chainhash.HashFuncH([]byte{0x01}),
 					TicketHeight: 122222,
 					Missed:       false,
@@ -327,8 +327,8 @@ func TestTicketHashesSerializing(t *testing.T) {
 		{
 			name: "two ticket hashes",
 			ths: TicketHashes{
-				&hash1,
-				&hash2,
+				hash1,
+				hash2,
 			},
 			serialized: hexToBytes("0ce8d4ef4dd7cd8d62dfded9d4edb0a774ae6a41929a74da23109e8f11139c874a6c419a1e25c85327115c4ace586decddfe2990ed8f3d4d801871158338501d"),
 		},

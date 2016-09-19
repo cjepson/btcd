@@ -397,7 +397,7 @@ func undoBitFlagsFromByte(b byte) (bool, bool, bool) {
 
 // serializeBlockUndoData serializes an entire list of relevant tickets for
 // undoing tickets at any given height.
-func serializeBlockUndoData(utds []*UndoTicketData) []byte {
+func serializeBlockUndoData(utds []UndoTicketData) []byte {
 	b := make([]byte, len(utds)*undoTicketDataSize)
 	offset := 0
 	for _, utd := range utds {
@@ -414,9 +414,9 @@ func serializeBlockUndoData(utds []*UndoTicketData) []byte {
 
 // deserializeBlockUndoData deserializes a list of UndoTicketData for an entire
 // block. Empty but non-nil slices are deserialized empty.
-func deserializeBlockUndoData(b []byte) ([]*UndoTicketData, error) {
+func deserializeBlockUndoData(b []byte) ([]UndoTicketData, error) {
 	if b != nil && len(b) == 0 {
-		return make([]*UndoTicketData, 0), nil
+		return make([]UndoTicketData, 0), nil
 	}
 
 	if len(b) < undoTicketDataSize {
@@ -430,7 +430,7 @@ func deserializeBlockUndoData(b []byte) ([]*UndoTicketData, error) {
 	}
 
 	entries := len(b) / undoTicketDataSize
-	utds := make([]*UndoTicketData, entries)
+	utds := make([]UndoTicketData, entries)
 
 	offset := 0
 	for i := 0; i < entries; i++ {
@@ -448,7 +448,7 @@ func deserializeBlockUndoData(b []byte) ([]*UndoTicketData, error) {
 		missed, revoked, spent := undoBitFlagsFromByte(b[offset])
 		offset += 1
 
-		utds[i] = &UndoTicketData{
+		utds[i] = UndoTicketData{
 			TicketHash:   *hash,
 			TicketHeight: height,
 			Missed:       missed,
@@ -461,7 +461,7 @@ func deserializeBlockUndoData(b []byte) ([]*UndoTicketData, error) {
 }
 
 // DbFetchBlockUndoData fetches block undo data from the database.
-func DbFetchBlockUndoData(dbTx database.Tx, height uint32) ([]*UndoTicketData, error) {
+func DbFetchBlockUndoData(dbTx database.Tx, height uint32) ([]UndoTicketData, error) {
 	meta := dbTx.Metadata()
 	bucket := meta.Bucket(dbnamespace.StakeBlockUndoDataBucketName)
 
@@ -477,7 +477,7 @@ func DbFetchBlockUndoData(dbTx database.Tx, height uint32) ([]*UndoTicketData, e
 }
 
 // DbPutBlockUndoData inserts block undo data into the database for a given height.
-func DbPutBlockUndoData(dbTx database.Tx, height uint32, utds []*UndoTicketData) error {
+func DbPutBlockUndoData(dbTx database.Tx, height uint32, utds []UndoTicketData) error {
 	meta := dbTx.Metadata()
 	bucket := meta.Bucket(dbnamespace.StakeBlockUndoDataBucketName)
 	k := make([]byte, 4)
@@ -499,7 +499,7 @@ func DbDropBlockUndoData(dbTx database.Tx, height uint32) error {
 
 // TicketHashes is a list of ticket hashes that will mature in TicketMaturity
 // many blocks from the block in which they were included.
-type TicketHashes []*chainhash.Hash
+type TicketHashes []chainhash.Hash
 
 // serializeTicketHashes serializes a list of ticket hashes.
 func serializeTicketHashes(ths TicketHashes) []byte {
@@ -543,7 +543,7 @@ func deserializeTicketHashes(b []byte) (TicketHashes, error) {
 		}
 		offset += chainhash.HashSize
 
-		ths[i] = hash
+		ths[i] = *hash
 	}
 
 	return ths, nil
