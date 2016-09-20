@@ -326,7 +326,7 @@ func LoadBestNode(dbTx database.Tx, height uint32, blockHash chainhash.Hash, hea
 		copy(node.finalState[:], chainhash.HashFuncB(stateBuffer)[0:6])
 	}
 
-	log.Infof("Loaded stake database version %v", info.Version)
+	log.Infof("Stake database version %v loaded", info.Version)
 
 	return node, nil
 }

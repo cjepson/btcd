@@ -587,10 +587,19 @@ func DbDropNewTickets(dbTx database.Tx, height uint32) error {
 	return bucket.Delete(k)
 }
 
-// DbDeleteTicket removes a ticket from one of the ticket database buckets.
+// DbDeleteTicket removes a ticket from one of the ticket database buckets. This
+// differs from the bucket deletion method in that it will fail if the value
+// itself is missing.
 func DbDeleteTicket(dbTx database.Tx, ticketBucket []byte, hash *chainhash.Hash) error {
 	meta := dbTx.Metadata()
 	bucket := meta.Bucket(ticketBucket)
+
+	// Check to see if the value exists before we delete it.
+	v := bucket.Get(hash[:])
+	if v == nil {
+		return ticketDBError(ErrMissingKey, fmt.Sprintf("missing key %v "+
+			"to delete", hash))
+	}
 
 	return bucket.Delete(hash[:])
 }

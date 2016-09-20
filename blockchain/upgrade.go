@@ -6,6 +6,7 @@
 package blockchain
 
 import (
+	"github.com/decred/dcrd/blockchain/internal/progresslog"
 	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg/chainhash"
 	"github.com/decred/dcrd/database"
@@ -18,7 +19,9 @@ const refreshRateForV2Upgrade = 500
 // upgradeToVersion2 upgrades a version 1 blockchain to version 2, allowing
 // use of the new on-disk ticket database.
 func (b *BlockChain) upgradeToVersion2() error {
+	log.Infof("Initializing upgrade to database version 2")
 	best := b.BestSnapshot()
+	progressLogger := progresslog.NewBlockProgressLogger("Upgraded", log)
 
 	// The upgrade is atomic, so there is no need to set the flag that
 	// the database is undergoing an upgrade here.  Get the stake node
@@ -26,6 +29,11 @@ func (b *BlockChain) upgradeToVersion2() error {
 	// incrementally.
 	err := b.db.Update(func(dbTx database.Tx) error {
 		bestStakeNode, errLocal := stake.InitDatabaseState(dbTx, b.chainParams)
+		if errLocal != nil {
+			return errLocal
+		}
+
+		parent, errLocal := dbFetchBlockByHeight(dbTx, 0)
 		if errLocal != nil {
 			return errLocal
 		}
@@ -77,10 +85,8 @@ func (b *BlockChain) upgradeToVersion2() error {
 				b.bestNode.ticketsRevoked = ticketsRevokedInBlock(block)
 			}
 
-			if i%refreshRateForV2Upgrade == 0 {
-				log.Infof("Upgrade to new stake database has proceeded to "+
-					"block %v/%v", block.Height(), best.Height)
-			}
+			progressLogger.LogBlockHeight(block, parent)
+			parent = block
 		}
 
 		// Write the new database version.

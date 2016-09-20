@@ -2123,10 +2123,10 @@ func New(config *Config) (*BlockChain, error) {
 
 	b.subsidyCache = NewSubsidyCache(b.bestNode.height, b.chainParams)
 
-	log.Infof("Blockchain database version %v loaded successfully",
+	log.Infof("Blockchain database version %v loaded",
 		b.dbInfo.version)
 
-	log.Infof("Chain state (height %d, hash %v, total transactions %d, work %v)",
+	log.Infof("Chain state: height %d, hash %v, total transactions %d, work %v",
 		b.bestNode.height, b.bestNode.hash, b.stateSnapshot.TotalTxns,
 		b.bestNode.workSum)
 

@@ -207,7 +207,8 @@ func TestTicketDB(t *testing.T) {
 
 			// Write the new node to db.
 			stakeNodesForward[i] = bestNode
-			err := stake.WriteConnectedBestNode(dbTx, bestNode, block.Sha())
+			blockSha := block.Sha()
+			err := stake.WriteConnectedBestNode(dbTx, bestNode, *blockSha)
 			if err != nil {
 				return fmt.Errorf("failure writing the best node: %v",
 					err.Error())
@@ -286,8 +287,9 @@ func TestTicketDB(t *testing.T) {
 		stakeNodesBackward[i-1] = bestNode
 		err = testDb.Update(func(dbTx database.Tx) error {
 			stakeNodesForward[i] = bestNode
+			parentBlockSha := parentBlock.Sha()
 			err := stake.WriteDisconnectedBestNode(dbTx, bestNode,
-				parentBlock.Sha(), formerBestNode.UndoData())
+				*parentBlockSha, formerBestNode.UndoData())
 			if err != nil {
 				return fmt.Errorf("failure writing the best node: %v",
 					err.Error())

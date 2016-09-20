@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 
 	"github.com/decred/dcrd/blockchain"
-	//	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg"
 	"github.com/decred/dcrd/database"
 	_ "github.com/decred/dcrd/database/ffldb"

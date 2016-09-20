@@ -15,7 +15,6 @@ import (
 	"strings"
 
 	"github.com/decred/dcrd/blockchain"
-	// "github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg"
 	"github.com/decred/dcrd/chaincfg/chainhash"
 	"github.com/decred/dcrd/database"

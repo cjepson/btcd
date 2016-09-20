@@ -51,29 +51,6 @@ func (b *BlockChain) DoStxoTest() error {
 	return nil
 }
 
-// copyHashSliceValues creates a slice of hashes from a slice of hash pointers,
-// making sure that the reference to the pointers does not remain in memory so
-// that the values and structs including them may be more easily freed later.
-func copyHashSliceValues(ptrs []*chainhash.Hash) []chainhash.Hash {
-	vals := make([]chainhash.Hash, len(ptrs))
-	for i, ptr := range ptrs {
-		vals[i] = *ptr
-	}
-
-	return vals
-}
-
-// copyHashSlicePointers creates a slice of hash pointers from a slice of hash
-// values, for functions that require a slice of hash pointers for input.
-func copyHashSlicePointers(vals []chainhash.Hash) []*chainhash.Hash {
-	ptrs := make([]*chainhash.Hash, len(vals))
-	for i := range vals {
-		ptrs[i] = &vals[i]
-	}
-
-	return ptrs
-}
-
 // DebugBlockHeaderString dumps a verbose message containing information about
 // the block header of a block.
 func DebugBlockHeaderString(chainParams *chaincfg.Params,
