@@ -81,7 +81,7 @@ func revokedTicketsInBlock(bl *dcrutil.Block) []chainhash.Hash {
 
 // nodesEqual does a cursory test to ensure that data returned from the API
 // for any given node is equivalent.
-func nodesEqual(a *stake.StakeNode, b *stake.StakeNode) error {
+func nodesEqual(a *stake.Node, b *stake.Node) error {
 	if !reflect.DeepEqual(a.LiveTickets(), b.LiveTickets()) {
 		return fmt.Errorf("live tickets were not equal between nodes; "+
 			"a: %v, b: %v", len(a.LiveTickets()), len(b.LiveTickets()))
@@ -159,7 +159,7 @@ func TestTicketDB(t *testing.T) {
 	defer testDb.Close()
 
 	// Load the genesis block.
-	var bestNode *stake.StakeNode
+	var bestNode *stake.Node
 	err = testDb.Update(func(dbTx database.Tx) error {
 		var errLocal error
 		bestNode, errLocal = stake.InitDatabaseState(dbTx, simNetParams)
@@ -175,9 +175,9 @@ func TestTicketDB(t *testing.T) {
 
 	// Cache all of our nodes so that we can check them when we start
 	// disconnecting and going backwards through the blockchain.
-	stakeNodesForward := make([]*stake.StakeNode, testBCHeight+1)
-	loadedNodesForward := make([]*stake.StakeNode, testBCHeight+1)
-	stakeNodesForward[0] = bestNode
+	NodesForward := make([]*stake.Node, testBCHeight+1)
+	loadedNodesForward := make([]*stake.Node, testBCHeight+1)
+	NodesForward[0] = bestNode
 	loadedNodesForward[0] = bestNode
 	err = testDb.Update(func(dbTx database.Tx) error {
 		for i := int64(1); i <= testBCHeight; i++ {
@@ -206,7 +206,7 @@ func TestTicketDB(t *testing.T) {
 			}
 
 			// Write the new node to db.
-			stakeNodesForward[i] = bestNode
+			NodesForward[i] = bestNode
 			blockSha := block.Sha()
 			err := stake.WriteConnectedBestNode(dbTx, bestNode, *blockSha)
 			if err != nil {
@@ -236,8 +236,8 @@ func TestTicketDB(t *testing.T) {
 		t.Fatalf(err.Error())
 	}
 
-	stakeNodesBackward := make([]*stake.StakeNode, testBCHeight+1)
-	stakeNodesBackward[testBCHeight] = bestNode
+	NodesBackward := make([]*stake.Node, testBCHeight+1)
+	NodesBackward[testBCHeight] = bestNode
 	for i := testBCHeight; i >= int64(1); i-- {
 		parentBlock := testBlockchain[i-1]
 		ticketsToAdd := make([]chainhash.Hash, 0)
@@ -246,7 +246,7 @@ func TestTicketDB(t *testing.T) {
 			ticketsToAdd = ticketsInBlock(testBlockchain[matureHeight])
 		}
 		header := parentBlock.MsgBlock().Header
-		blockUndoData := stakeNodesForward[i-1].UndoData()
+		blockUndoData := NodesForward[i-1].UndoData()
 		formerBestNode := bestNode
 
 		// In memory disconnection test.
@@ -256,14 +256,14 @@ func TestTicketDB(t *testing.T) {
 			t.Fatalf(err.Error())
 		}
 
-		err = nodesEqual(bestNode, stakeNodesForward[i-1])
+		err = nodesEqual(bestNode, NodesForward[i-1])
 		if err != nil {
 			t.Fatalf("non-equiv stake nodes: %v", err.Error())
 		}
 
 		// Try again using the database instead of the in memory
 		// data to disconnect the node, too.
-		var bestNodeUsingDB *stake.StakeNode
+		var bestNodeUsingDB *stake.Node
 		err = testDb.View(func(dbTx database.Tx) error {
 			bestNodeUsingDB, err = formerBestNode.DisconnectNode(header, nil,
 				nil, dbTx)
@@ -284,9 +284,9 @@ func TestTicketDB(t *testing.T) {
 		}
 
 		// Write the new best node to the database.
-		stakeNodesBackward[i-1] = bestNode
+		NodesBackward[i-1] = bestNode
 		err = testDb.Update(func(dbTx database.Tx) error {
-			stakeNodesForward[i] = bestNode
+			NodesForward[i] = bestNode
 			parentBlockSha := parentBlock.Sha()
 			err := stake.WriteDisconnectedBestNode(dbTx, bestNode,
 				*parentBlockSha, formerBestNode.UndoData())

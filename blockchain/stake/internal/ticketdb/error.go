@@ -1,4 +1,7 @@
-// error.go
+// Copyright (c) 2015-2016 The Decred developers
+// Use of this source code is governed by an ISC
+// license that can be found in the LICENSE file.
+
 package ticketdb
 
 import (
@@ -67,26 +70,26 @@ func (e ErrorCode) String() string {
 	return fmt.Sprintf("Unknown ErrorCode (%d)", int(e))
 }
 
-// TicketDBError identifies a an error in the stake database for tickets.
+// DBError identifies a an error in the stake database for tickets.
 // The caller can use type assertions to determine if a failure was
 // specifically due to a rule violation and access the ErrorCode field to
 // ascertain the specific reason for the rule violation.
-type TicketDBError struct {
+type DBError struct {
 	ErrorCode   ErrorCode // Describes the kind of error
 	Description string    // Human readable description of the issue
 }
 
 // Error satisfies the error interface and prints human-readable errors.
-func (e TicketDBError) Error() string {
+func (e DBError) Error() string {
 	return e.Description
 }
 
 // GetCode satisfies the error interface and prints human-readable errors.
-func (e TicketDBError) GetCode() ErrorCode {
+func (e DBError) GetCode() ErrorCode {
 	return e.ErrorCode
 }
 
-// ticketDBError creates an TicketDBError given a set of arguments.
-func ticketDBError(c ErrorCode, desc string) TicketDBError {
-	return TicketDBError{ErrorCode: c, Description: desc}
+// DBError creates an DBError given a set of arguments.
+func ticketDBError(c ErrorCode, desc string) DBError {
+	return DBError{ErrorCode: c, Description: desc}
 }

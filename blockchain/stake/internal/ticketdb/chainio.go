@@ -1,6 +1,7 @@
 // Copyright (c) 2015-2016 The Decred developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
+
 package ticketdb
 
 import (
@@ -188,7 +189,7 @@ func deserializeDatabaseInfo(dbInfoBytes []byte) (*DatabaseInfo, error) {
 	}, nil
 }
 
-// DbFetchSubsidyForHeightInterval uses an existing database transaction to
+// DbFetchDatabaseInfo uses an existing database transaction to
 // fetch the database versioning and creation information.
 func DbFetchDatabaseInfo(dbTx database.Tx) (*DatabaseInfo, error) {
 	meta := dbTx.Metadata()
@@ -406,7 +407,7 @@ func serializeBlockUndoData(utds []UndoTicketData) []byte {
 		dbnamespace.ByteOrder.PutUint32(b[offset:offset+4], utd.TicketHeight)
 		offset += 4
 		b[offset] = undoBitFlagsToByte(utd.Missed, utd.Revoked, utd.Spent)
-		offset += 1
+		offset++
 	}
 
 	return b
@@ -446,7 +447,7 @@ func deserializeBlockUndoData(b []byte) ([]UndoTicketData, error) {
 		offset += 4
 
 		missed, revoked, spent := undoBitFlagsFromByte(b[offset])
-		offset += 1
+		offset++
 
 		utds[i] = UndoTicketData{
 			TicketHash:   *hash,
@@ -604,7 +605,7 @@ func DbDeleteTicket(dbTx database.Tx, ticketBucket []byte, hash *chainhash.Hash)
 	return bucket.Delete(hash[:])
 }
 
-// DbInsertTicket inserts a ticket into one of the ticket database buckets.
+// DbPutTicket inserts a ticket into one of the ticket database buckets.
 func DbPutTicket(dbTx database.Tx, ticketBucket []byte, hash *chainhash.Hash, height uint32) error {
 	meta := dbTx.Metadata()
 	bucket := meta.Bucket(ticketBucket)

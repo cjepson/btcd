@@ -45,7 +45,7 @@ func (b *BlockChain) upgradeToVersion2() error {
 			}
 
 			// If we need the tickets, fetch them too.
-			newTickets := make([]chainhash.Hash, 0)
+			var newTickets []chainhash.Hash
 			if i >= b.chainParams.StakeEnabledHeight {
 				matureHeight := i - int64(b.chainParams.TicketMaturity)
 				matureBlock, errLocal := dbFetchBlockByHeight(dbTx, matureHeight)

@@ -367,8 +367,8 @@ func (t *Immutable) FetchWinnersAndExpired(idxs []int, height uint32) ([]*Key, [
 	// TODO buffer winners according to the TicketsPerBlock value from
 	// chaincfg?
 	idx := 0
-	winners := make([]*Key, 0)
-	expired := make([]*Key, 0)
+	var winners []*Key
+	var expired []*Key
 	winnerIdx := 0
 	t.ForEach(func(k Key, v *Value) bool {
 		if v.Height <= height {

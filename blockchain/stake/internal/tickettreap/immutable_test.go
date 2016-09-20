@@ -550,7 +550,7 @@ func TestImmutableMemory(t *testing.T) {
 	// functions work as expected.
 	randSource := rand.NewSource(12345)
 	numItems := 40960
-	numNodes := 256
+	numNodes := 128
 	nodeTreaps := make([]*Immutable, numNodes)
 	testTreap := NewImmutable()
 
@@ -612,5 +612,8 @@ func TestImmutableMemory(t *testing.T) {
 
 	// Keep all the treaps alive in memory so GC doesn't rm them in
 	// the previous step.
-	nodeTreaps[0] = nodeTreaps[0]
+	lenTest := nodeTreaps[0].count == nodeTreaps[0].Len()
+	if !lenTest {
+		t.Errorf("bad len test")
+	}
 }

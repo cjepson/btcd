@@ -1,4 +1,8 @@
-// stakenode.go
+// Copyright (c) 2013-2016 The btcsuite developers
+// Copyright (c) 2015-2016 The Decred developers
+// Use of this source code is governed by an ISC
+// license that can be found in the LICENSE file.
+
 package blockchain
 
 import (
@@ -91,7 +95,7 @@ func (b *BlockChain) fetchNewTicketsForNode(node *blockNode) ([]chainhash.Hash, 
 // correct data.
 //
 // This function MUST be called with the chain state lock held (for writes).
-func (b *BlockChain) fetchStakeNode(node *blockNode) (*stake.StakeNode, error) {
+func (b *BlockChain) fetchStakeNode(node *blockNode) (*stake.Node, error) {
 	// If we already have the stake node fetched, returned the cached result.
 	// Stake nodes are immutable.
 	if node.stakeNode != nil {

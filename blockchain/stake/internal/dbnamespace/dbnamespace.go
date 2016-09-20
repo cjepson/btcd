@@ -21,11 +21,11 @@ var (
 	// chain state from the perspective of the stake database.
 	StakeChainStateKeyName = []byte("stakechainstate")
 
-	// liveTicketsBucketName is the name of the db bucket used to house the
+	// LiveTicketsBucketName is the name of the db bucket used to house the
 	// list of live tickets keyed to their entry height.
 	LiveTicketsBucketName = []byte("livetickets")
 
-	// missedTicketsBucketName is the name of the db bucket used to house the
+	// MissedTicketsBucketName is the name of the db bucket used to house the
 	// list of missed tickets keyed to their entry height.
 	MissedTicketsBucketName = []byte("missedtickets")
 

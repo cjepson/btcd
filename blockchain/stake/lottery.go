@@ -245,7 +245,7 @@ func fetchWinners(idxs []int, t *tickettreap.Immutable) ([]*tickettreap.Key, err
 // These are returned as a slice of pointers to keys, which can be recast as
 // []*chainhash.Hash.
 func fetchExpired(height uint32, t *tickettreap.Immutable) []*tickettreap.Key {
-	expired := make([]*tickettreap.Key, 0)
+	var expired []*tickettreap.Key
 	t.ForEach(func(k tickettreap.Key, v *tickettreap.Value) bool {
 		if v.Height <= height {
 			expired = append(expired, &k)

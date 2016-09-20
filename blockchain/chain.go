@@ -87,7 +87,7 @@ type blockNode struct {
 	// to save memory while maintaining high throughput efficiency for the
 	// evaluation of sidechains.
 	stakeDataLock  sync.Mutex
-	stakeNode      *stake.StakeNode
+	stakeNode      *stake.Node
 	newTickets     []chainhash.Hash
 	stakeUndoData  stake.UndoTicketDataSlice
 	ticketsSpent   []chainhash.Hash
@@ -1193,8 +1193,6 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block,
 			return err
 		}
 
-		empty := make([]chainhash.Hash, 0)
-
 		// Notify of spent and missed tickets
 		b.sendNotification(NTSpentAndMissedTickets,
 			&TicketNotificationsData{
@@ -1203,7 +1201,7 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block,
 				StakeDifficulty: nextStakeDiff,
 				TicketsSpent:    node.stakeNode.MissedByBlock(),
 				TicketsMissed:   node.stakeNode.SpentByBlock(),
-				TicketsNew:      empty,
+				TicketsNew:      []chainhash.Hash{},
 			})
 		// Notify of new tickets
 		b.sendNotification(NTNewTickets,
@@ -1211,8 +1209,8 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block,
 				Hash:            node.hash,
 				Height:          node.height,
 				StakeDifficulty: nextStakeDiff,
-				TicketsSpent:    empty,
-				TicketsMissed:   empty,
+				TicketsSpent:    []chainhash.Hash{},
+				TicketsMissed:   []chainhash.Hash{},
 				TicketsNew:      node.stakeNode.NewTickets(),
 			})
 	}

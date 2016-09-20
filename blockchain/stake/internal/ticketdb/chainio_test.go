@@ -103,7 +103,7 @@ func TestDbInfoDeserializeErrors(t *testing.T) {
 	for _, test := range tests {
 		// Ensure the expected error type is returned.
 		_, err := deserializeDatabaseInfo(test.serialized)
-		ticketDBErr, ok := err.(TicketDBError)
+		ticketDBErr, ok := err.(DBError)
 		if !ok {
 			t.Errorf("couldn't convert deserializeDatabaseInfo error "+
 				"to ticket db error (err: %v)", err)
@@ -197,7 +197,7 @@ func TestBestChainStateDeserializeErrors(t *testing.T) {
 	for _, test := range tests {
 		// Ensure the expected error type is returned.
 		_, err := deserializeBestChainState(test.serialized)
-		ticketDBErr, ok := err.(TicketDBError)
+		ticketDBErr, ok := err.(DBError)
 		if !ok {
 			t.Errorf("couldn't convert deserializeBestChainState error "+
 				"to ticket db error (err: %v)", err)
@@ -297,7 +297,7 @@ func TestBlockUndoDataDeserializingErrors(t *testing.T) {
 	for _, test := range tests {
 		// Ensure the expected error type is returned.
 		_, err := deserializeBlockUndoData(test.serialized)
-		ticketDBErr, ok := err.(TicketDBError)
+		ticketDBErr, ok := err.(DBError)
 		if !ok {
 			t.Errorf("couldn't convert deserializeBlockUndoData error "+
 				"to ticket db error (err: %v)", err)
@@ -387,7 +387,7 @@ func TestTicketHashesDeserializingErrors(t *testing.T) {
 	for _, test := range tests {
 		// Ensure the expected error type is returned.
 		_, err := deserializeTicketHashes(test.serialized)
-		ticketDBErr, ok := err.(TicketDBError)
+		ticketDBErr, ok := err.(DBError)
 		if !ok {
 			t.Errorf("couldn't convert deserializeTicketHashes error "+
 				"to ticket db error (err: %v)", err)
