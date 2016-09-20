@@ -11,7 +11,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/decred/dcrd/blockchain/dbnamespace"
+	"github.com/decred/dcrd/blockchain/internal/dbnamespace"
 	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg/chainhash"
 	"github.com/decred/dcrd/database"
@@ -1733,4 +1733,41 @@ func (b *BlockChain) HeightRange(startHeight, endHeight int64) ([]chainhash.Hash
 		return nil
 	})
 	return hashList, err
+}
+
+// DumpBlockChain dumps the blockchain to a map of height --> serialized bytes.
+// Mainly used for generating tests.
+func DumpBlockChain(db database.DB, height int64) (map[int64][]byte, error) {
+	blockchain := make(map[int64][]byte)
+	var hash chainhash.Hash
+	err := db.View(func(dbTx database.Tx) error {
+		for i := int64(0); i <= height; i++ {
+			// Fetch blocks and put them in the map
+			var serializedHeight [4]byte
+			dbnamespace.ByteOrder.PutUint32(serializedHeight[:], uint32(height))
+
+			meta := dbTx.Metadata()
+			heightIndex := meta.Bucket(dbnamespace.HeightIndexBucketName)
+			hashBytes := heightIndex.Get(serializedHeight[:])
+			if hashBytes == nil {
+				return fmt.Errorf("no block at height %d exists", height)
+			}
+			copy(hash[:], hashBytes)
+
+			blockBLocal, err := dbTx.FetchBlock(&hash)
+			if err != nil {
+				return err
+			}
+			blockB := make([]byte, len(blockBLocal))
+			copy(blockB, blockBLocal)
+			blockchain[i] = blockB
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return blockchain, err
 }

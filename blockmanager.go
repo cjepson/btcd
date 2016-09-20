@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/decred/dcrd/blockchain"
-	"github.com/decred/dcrd/blockchain/dbnamespace"
 	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg"
 	"github.com/decred/dcrd/chaincfg/chainhash"
@@ -2838,33 +2837,7 @@ func loadBlockDB() (database.DB, error) {
 
 // dumpBlockChain dumps a map of the blockchain blocks as serialized bytes.
 func dumpBlockChain(height int64, db database.DB) error {
-	blockchain := make(map[int64][]byte)
-	var hash chainhash.Hash
-	err := db.View(func(dbTx database.Tx) error {
-		for i := int64(0); i <= height; i++ {
-			// Fetch blocks and put them in the map
-			var serializedHeight [4]byte
-			dbnamespace.ByteOrder.PutUint32(serializedHeight[:], uint32(height))
-
-			meta := dbTx.Metadata()
-			heightIndex := meta.Bucket(dbnamespace.HeightIndexBucketName)
-			hashBytes := heightIndex.Get(serializedHeight[:])
-			if hashBytes == nil {
-				return fmt.Errorf("no block at height %d exists", height)
-			}
-			copy(hash[:], hashBytes)
-
-			blockBLocal, err := dbTx.FetchBlock(&hash)
-			if err != nil {
-				return err
-			}
-			blockB := make([]byte, len(blockBLocal))
-			copy(blockB, blockBLocal)
-			blockchain[i] = blockB
-		}
-
-		return nil
-	})
+	blockchain, err := blockchain.DumpBlockChain(db, height)
 	if err != nil {
 		return err
 	}
