@@ -2,10 +2,19 @@
 package stake_test
 
 import (
+	"bytes"
+	"encoding/hex"
+	"reflect"
 	"testing"
 
 	"github.com/decred/dcrd/blockchain/stake"
+	"github.com/decred/dcrd/chaincfg/chainhash"
 )
+
+func bytesFromHex(s string) []byte {
+	b, _ := hex.DecodeString(s)
+	return b
+}
 
 func TestDecodingVoteBits(t *testing.T) {
 	tests := []struct {
@@ -105,6 +114,58 @@ func TestDecodingVoteBits(t *testing.T) {
 		if out != test.out {
 			t.Errorf("bad result on DecodeVoteBitsPrefix: got %v, want %v",
 				out, test.out)
+		}
+	}
+}
+
+// TestRollingVotingPrefixTallySerializing tests serializing and deserializing
+// for RollingVotingPrefixTally.
+func TestRollingVotingPrefixTallySerializing(t *testing.T) {
+	tests := []struct {
+		name string
+		in   stake.RollingVotingPrefixTally
+		out  []byte
+	}{
+		{
+			"no and all undefined",
+			stake.RollingVotingPrefixTally{
+				StartBlockHash:     chainhash.Hash{byte(0x01)},
+				StartBlockHeight:   99998,
+				CurrentBlockHeight: 10200,
+				BlockValid:         213,
+				Unused:             492,
+				Issues: [7]stake.VotingTally{
+					stake.VotingTally{123, 321, 324, 2819},
+					stake.VotingTally{523, 2355, 0, 0},
+					stake.VotingTally{352, 2352, 2442, 44},
+					stake.VotingTally{234, 0, 44, 344},
+					stake.VotingTally{523, 223, 133, 3444},
+					stake.VotingTally{0, 44, 3233, 432},
+					stake.VotingTally{867, 1, 444, 33},
+				},
+			},
+			bytesFromHex("01000000000000000000000000000000000000000000000000000000000000009e860100d8270000d500ec017b0041014401030b0b02330900000000600130098a092c00ea0000002c0058010b02df008500740d00002c00a10cb00163030100bc012100"),
+		},
+	}
+
+	// Serialize.
+	for i := range tests {
+		test := tests[i]
+		out := test.in.Serialize()
+		if !bytes.Equal(out, test.out) {
+			t.Errorf("bad result on test.in.Serialize(): got %x, want %x",
+				out, test.out)
+		}
+	}
+
+	// Deserialize.
+	for i := range tests {
+		test := tests[i]
+		var tally stake.RollingVotingPrefixTally
+		tally.Deserialize(test.out)
+		if !reflect.DeepEqual(tally, test.in) {
+			t.Errorf("bad result on tally.Deserialize(): got %v, want %v",
+				tally, test.in)
 		}
 	}
 }

@@ -4,9 +4,9 @@
 
 package stake
 
-// import "fmt"
 import (
 	"encoding/binary"
+	"fmt"
 
 	"github.com/decred/dcrd/chaincfg/chainhash"
 )
@@ -104,9 +104,28 @@ func DecodeVoteBitsPrefix(voteBits uint16) DecodedVoteBitsPrefix {
 // This would be the VotingTally represented by {0,100,200,300}.
 type VotingTally [4]uint16
 
-// Serialize
-func (v *VotingTally) Serialize() [8]byte {
+// SerializeInto serializes the VotingTally into a passed byte slice, stored as
+// little endian uint16s.  It takes a passed offset to begin writing into.
+//
+// The function does not check for the length of the byte slice and will panic
+// if there is not enough space to write into.
+func (v *VotingTally) SerializeInto(sl *[]byte, offset int) {
+	slVal := *sl
+	for i := 0; i < 8; i += 2 {
+		binary.LittleEndian.PutUint16(slVal[offset+i:offset+i+2], v[i/2])
+	}
+}
 
+// Deserialize deserializes from a byte slice into the VotingTally it is called
+// on.  It takes a passed offset to begin reading from.
+//
+// The function does not check for the length of the byte slice and will panic
+// if there is not enough space to write into.
+func (v *VotingTally) Deserialize(sl *[]byte, offset int) {
+	slVal := *sl
+	for i := 0; i < 8; i += 2 {
+		v[i/2] = binary.LittleEndian.Uint16(slVal[offset+i : offset+i+2])
+	}
 }
 
 // RollingPrefixTally is a rolling tally of the decoded vote bits from a series
@@ -114,42 +133,75 @@ func (v *VotingTally) Serialize() [8]byte {
 // array.
 type RollingVotingPrefixTally struct {
 	StartBlockHash     chainhash.Hash
-	StartBlockHeight   int64
-	CurrentBlockHeight int64
+	StartBlockHeight   uint32
+	CurrentBlockHeight uint32
 	BlockValid         uint16
 	Unused             uint16
 	Issues             [7]VotingTally
 }
 
+// RollingVotingPrefixTallySize is the size of a serialized
+// RollingVotingPrefixTally The size is calculated as
+//   chainhash.HashSize (32 bytes) + 2x uint32s (8 bytes) +
+//   2x uint16s (4 bytes) + 7x VotingTallies (56 bytes)
+const RollingVotingPrefixTallySize = chainhash.HashSize + 4 + 4 + 2 + 2 + 56
+
 // Serialize serializes a RollingVotingPrefixTally into a contiguous slice of
 // bytes.  Integer values are serialized in little endian.
 func (r *RollingVotingPrefixTally) Serialize() []byte {
-	// The size is chainhash.HashSize (32 bytes) + 2x int64s (16 bytes) +
-	// 2x uint16s (4 bytes) + 7x VotingTallies (56 bytes)
-	size := chainhash.HashSize + 8 + 8 + 2 + 2 + 7*8
-
-	val := make([]byte, size)
+	val := make([]byte, RollingVotingPrefixTallySize)
 	offset := 0
 	copy(val[offset:], r.StartBlockHash[:])
 	offset += chainhash.HashSize
 
-	binary.LittleEndian.PutUint64(val[offset:offset+8],
-		uint64(r.StartBlockHeight))
-	offset += 8
-	binary.LittleEndian.PutUint64(val[offset:offset+8],
-		uint64(r.CurrentBlockHeight))
-	offset += 8
-	binary.LittleEndian.PutUint64(val[offset:offset+2],
-		uint64(r.BlockValid))
+	binary.LittleEndian.PutUint32(val[offset:offset+4], r.StartBlockHeight)
+	offset += 4
+	binary.LittleEndian.PutUint32(val[offset:offset+4], r.CurrentBlockHeight)
+	offset += 4
+	binary.LittleEndian.PutUint16(val[offset:offset+2], r.BlockValid)
 	offset += 2
-	binary.LittleEndian.PutUint64(val[offset:offset+2],
-		uint64(r.Unused))
+	binary.LittleEndian.PutUint16(val[offset:offset+2], r.Unused)
 	offset += 2
 
+	// Serialize the issues individually; the array size
+	// is 8 bytes each.
+	for i := 0; i < 7; i++ {
+		r.Issues[i].SerializeInto(&val, offset)
+		offset += 8
+	}
+
+	return val
 }
 
 // Deserialize deserializes a contiguous slice of bytes into the
 // RollingVotingPrefixTally the function is called on.
 func (r *RollingVotingPrefixTally) Deserialize(val []byte) error {
+	if len(val) < RollingVotingPrefixTallySize {
+		str := fmt.Sprintf("short read of serialized RollingVotingPrefixTally "+
+			"when deserializing (got %v, want %v bytes)", len(val),
+			RollingVotingPrefixTallySize)
+		return stakeRuleError(ErrMemoryCorruption, str)
+	}
 
+	offset := 0
+	copy(r.StartBlockHash[:], val[offset:])
+	offset += chainhash.HashSize
+
+	r.StartBlockHeight = binary.LittleEndian.Uint32(val[offset : offset+4])
+	offset += 4
+	r.CurrentBlockHeight = binary.LittleEndian.Uint32(val[offset : offset+4])
+	offset += 4
+	r.BlockValid = binary.LittleEndian.Uint16(val[offset : offset+2])
+	offset += 2
+	r.Unused = binary.LittleEndian.Uint16(val[offset : offset+2])
+	offset += 2
+
+	// Serialize the issues individually; the array size
+	// is 8 bytes each.
+	for i := 0; i < 7; i++ {
+		r.Issues[i].Deserialize(&val, offset)
+		offset += 8
+	}
+
+	return nil
 }
