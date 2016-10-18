@@ -72,6 +72,29 @@ func rotateLeft(value uint16, count uint16) uint16 {
 
 // DecodeVoteBitsPrefix decodes the passed 16 vote bits into their decoded
 // structure for subsequent use in tallying or examination.
+func EncodeVoteBitsPrefix(voteBits DecodedVoteBitsPrefix) uint16 {
+	var val uint16
+
+	// Issues.
+	for i := 6; i >= 0; i-- {
+		// Set the issue and bitshift it to the left.
+		val += uint16(voteBits.Issues[i])
+		val <<= 2
+	}
+
+	// First two bits.
+	if voteBits.BlockValid {
+		val |= 0x0001 // set 0000 ... 0001
+	}
+	if voteBits.Unused {
+		val |= 0x0002 // set 0000 ... 0010
+	}
+
+	return val
+}
+
+// DecodeVoteBitsPrefix decodes the passed 16 vote bits into their decoded
+// structure for subsequent use in tallying or examination.
 func DecodeVoteBitsPrefix(voteBits uint16) DecodedVoteBitsPrefix {
 	var dvbs DecodedVoteBitsPrefix
 

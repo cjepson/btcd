@@ -16,7 +16,7 @@ func bytesFromHex(s string) []byte {
 	return b
 }
 
-func TestDecodingVoteBits(t *testing.T) {
+func TestDecodingAndEncodingVoteBits(t *testing.T) {
 	tests := []struct {
 		name string
 		in   uint16
@@ -108,12 +108,23 @@ func TestDecodingVoteBits(t *testing.T) {
 		},
 	}
 
+	// Encoding.
+	for i := range tests {
+		test := tests[i]
+		in := stake.EncodeVoteBitsPrefix(test.out)
+		if !reflect.DeepEqual(in, test.in) {
+			t.Errorf("bad result on EncodeVoteBitsPrefix test %v: got %v, "+
+				"want %v", test.name, in, test.in)
+		}
+	}
+
+	// Decoding.
 	for i := range tests {
 		test := tests[i]
 		out := stake.DecodeVoteBitsPrefix(test.in)
 		if out != test.out {
-			t.Errorf("bad result on DecodeVoteBitsPrefix: got %v, want %v",
-				out, test.out)
+			t.Errorf("bad result on DecodeVoteBitsPrefix test %v: got %v, "+
+				"want %v", test.name, out, test.out)
 		}
 	}
 }
@@ -162,10 +173,25 @@ func TestRollingVotingPrefixTallySerializing(t *testing.T) {
 	for i := range tests {
 		test := tests[i]
 		var tally stake.RollingVotingPrefixTally
-		tally.Deserialize(test.out)
+		err := tally.Deserialize(test.out)
+		if err != nil {
+			t.Errorf("unexpected error %v")
+		}
 		if !reflect.DeepEqual(tally, test.in) {
-			t.Errorf("bad result on tally.Deserialize(): got %v, want %v",
-				tally, test.in)
+			t.Errorf("bad result on tally.Deserialize() test %v: got %v, "+
+				"want %v", test.name, tally, test.in)
+		}
+	}
+
+	// Test short read error.
+	for i := range tests {
+		test := tests[i]
+		var tally stake.RollingVotingPrefixTally
+		err := tally.Deserialize(test.out[:len(test.out)-1])
+		if err == nil ||
+			err.(stake.RuleError).ErrorCode != stake.ErrMemoryCorruption {
+			t.Errorf("expected ErrMemoryCorruption on test %v, got %v",
+				test.name, err)
 		}
 	}
 }
