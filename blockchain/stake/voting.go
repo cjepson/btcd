@@ -5,7 +5,11 @@
 package stake
 
 // import "fmt"
-import "github.com/decred/dcrd/chaincfg/chainhash"
+import (
+	"encoding/binary"
+
+	"github.com/decred/dcrd/chaincfg/chainhash"
+)
 
 // IssueVote is the state of a vote on a given issue as indicated in the vote's
 // vote bits.  The mandatory vote bits, a little endian uint16, are organized as
@@ -100,14 +104,52 @@ func DecodeVoteBitsPrefix(voteBits uint16) DecodedVoteBitsPrefix {
 // This would be the VotingTally represented by {0,100,200,300}.
 type VotingTally [4]uint16
 
+// Serialize
+func (v *VotingTally) Serialize() [8]byte {
+
+}
+
 // RollingPrefixTally is a rolling tally of the decoded vote bits from a series
 // of votes.  The tallies of the issues are arranged in a two dimensionaly
 // array.
 type RollingVotingPrefixTally struct {
-	StartBlockHash   chainhash.Hash
-	StartBlockHeight int64
-	CurrentBlock     int64
-	BlockValid       uint16
-	Unused           uint16
-	Issues           [7]VotingTally
+	StartBlockHash     chainhash.Hash
+	StartBlockHeight   int64
+	CurrentBlockHeight int64
+	BlockValid         uint16
+	Unused             uint16
+	Issues             [7]VotingTally
+}
+
+// Serialize serializes a RollingVotingPrefixTally into a contiguous slice of
+// bytes.  Integer values are serialized in little endian.
+func (r *RollingVotingPrefixTally) Serialize() []byte {
+	// The size is chainhash.HashSize (32 bytes) + 2x int64s (16 bytes) +
+	// 2x uint16s (4 bytes) + 7x VotingTallies (56 bytes)
+	size := chainhash.HashSize + 8 + 8 + 2 + 2 + 7*8
+
+	val := make([]byte, size)
+	offset := 0
+	copy(val[offset:], r.StartBlockHash[:])
+	offset += chainhash.HashSize
+
+	binary.LittleEndian.PutUint64(val[offset:offset+8],
+		uint64(r.StartBlockHeight))
+	offset += 8
+	binary.LittleEndian.PutUint64(val[offset:offset+8],
+		uint64(r.CurrentBlockHeight))
+	offset += 8
+	binary.LittleEndian.PutUint64(val[offset:offset+2],
+		uint64(r.BlockValid))
+	offset += 2
+	binary.LittleEndian.PutUint64(val[offset:offset+2],
+		uint64(r.Unused))
+	offset += 2
+
+}
+
+// Deserialize deserializes a contiguous slice of bytes into the
+// RollingVotingPrefixTally the function is called on.
+func (r *RollingVotingPrefixTally) Deserialize(val []byte) error {
+
 }
