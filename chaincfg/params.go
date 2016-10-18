@@ -264,6 +264,13 @@ type Params struct {
 	// it to be this value miners/daemons could freely change it.
 	StakeBaseSigScript []byte
 
+	// VoteKeyBlockInterval is the number of blocks to tally votes for an issue
+	// and versions, and determine consensus states around the voting system.
+	// This value should always be set such that it is divisible by the
+	// StakeDiffWindowSize, as that is used as a shorter interval in vote
+	// tallying calculations.
+	VoteKeyBlockInterval int64
+
 	// OrganizationPkScript is the output script for block taxes to be
 	// distributed to in every block's coinbase. It should ideally be a P2SH
 	// multisignature address.  OrganizationPkScriptVersion is the version
@@ -362,6 +369,7 @@ var MainNetParams = Params{
 	StakeEnabledHeight:    256 + 256, // CoinbaseMaturity + TicketMaturity
 	StakeValidationHeight: 4096,      // ~14 days
 	StakeBaseSigScript:    []byte{0x00, 0x00},
+	VoteKeyBlockInterval:  144 * 14, // 7 days
 
 	// Decred organization related parameters
 	// Organization address is Dcur2mcGjmENx4DhNqDctW5wJCVyT3Qeqkx
@@ -457,6 +465,7 @@ var TestNetParams = Params{
 	StakeEnabledHeight:    16 + 16, // CoinbaseMaturity + TicketMaturity
 	StakeValidationHeight: 768,     // Arbitrary
 	StakeBaseSigScript:    []byte{0xDE, 0xAD, 0xBE, 0xEF},
+	VoteKeyBlockInterval:  720, // 1 day
 
 	// Decred organization related parameters.
 	// Organization address is TcemyEtyHSg9L7jww7uihv9BJfKL6YGiZYn
@@ -543,6 +552,7 @@ var SimNetParams = Params{
 	StakeEnabledHeight:    16 + 16,       // CoinbaseMaturity + TicketMaturity
 	StakeValidationHeight: 16 + (64 * 2), // CoinbaseMaturity + TicketPoolSize*2
 	StakeBaseSigScript:    []byte{0xDE, 0xAD, 0xBE, 0xEF},
+	VoteKeyBlockInterval:  64,
 
 	// Decred organization related parameters
 	//

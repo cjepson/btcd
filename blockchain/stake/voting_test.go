@@ -140,8 +140,8 @@ func TestRollingVotingPrefixTallySerializing(t *testing.T) {
 		{
 			"no and all undefined",
 			stake.RollingVotingPrefixTally{
-				StartBlockHash:     chainhash.Hash{byte(0x01)},
-				StartBlockHeight:   99998,
+				LastKeyBlock:       stake.BlockKey{Hash: chainhash.Hash{byte(0x01)}, Height: 38829},
+				LastIntervalBlock:  stake.BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
 				CurrentBlockHeight: 10200,
 				BlockValid:         213,
 				Unused:             492,
@@ -155,7 +155,7 @@ func TestRollingVotingPrefixTallySerializing(t *testing.T) {
 					stake.VotingTally{867, 1, 444, 33},
 				},
 			},
-			bytesFromHex("01000000000000000000000000000000000000000000000000000000000000009e860100d8270000d500ec017b0041014401030b0b02330900000000600130098a092c00ea0000002c0058010b02df008500740d00002c00a10cb00163030100bc012100"),
+			bytesFromHex("0100000000000000000000000000000000000000000000000000000000000000ad9700000200000000000000000000000000000000000000000000000000000000000000cb970000d8270000d500ec017b0041014401030b0b02330900000000600130098a092c00ea0000002c0058010b02df008500740d00002c00a10cb00163030100bc012100"),
 		},
 	}
 
@@ -175,7 +175,7 @@ func TestRollingVotingPrefixTallySerializing(t *testing.T) {
 		var tally stake.RollingVotingPrefixTally
 		err := tally.Deserialize(test.out)
 		if err != nil {
-			t.Errorf("unexpected error %v")
+			t.Errorf("unexpected error %v", err)
 		}
 		if !reflect.DeepEqual(tally, test.in) {
 			t.Errorf("bad result on tally.Deserialize() test %v: got %v, "+
