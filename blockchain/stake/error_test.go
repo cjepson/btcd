@@ -56,6 +56,8 @@ func TestErrorCodeStringer(t *testing.T) {
 		{stake.ErrMissingTicket, "ErrMissingTicket"},
 		{stake.ErrDuplicateTicket, "ErrDuplicateTicket"},
 		{stake.ErrUnknownTicketSpent, "ErrUnknownTicketSpent"},
+		{stake.ErrBadVotingConnectBlock, "ErrBadVotingConnectBlock"},
+		{stake.ErrBadVotingRemoveBlock, "ErrBadVotingRemoveBlock"},
 		{0xffff, "Unknown ErrorCode (65535)"},
 	}
 

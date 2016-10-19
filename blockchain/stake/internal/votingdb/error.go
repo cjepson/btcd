@@ -2,7 +2,7 @@
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
-package ticketdb
+package votingdb
 
 import (
 	"fmt"
@@ -13,25 +13,9 @@ type ErrorCode int
 
 // These constants are used to identify a specific RuleError.
 const (
-	// ErrUndoDataShortRead indicates that the given undo serialized data
-	// was took small.
-	ErrUndoDataShortRead = iota
-
-	// ErrUndoDataNoEntries indicates that the data for undoing ticket data
-	// in a serialized entry was corrupt.
-	ErrUndoDataCorrupt
-
-	// ErrTicketHashesShortRead indicates that the given ticket hashes
-	// serialized data was took small.
-	ErrTicketHashesShortRead
-
-	// ErrTicketHashesCorrupt indicates that the data for ticket hashes
-	// in a serialized entry was corrupt.
-	ErrTicketHashesCorrupt
-
 	// ErrUninitializedBucket indicates that a database bucket was not
 	// initialized and therefore could not be written to or read from.
-	ErrUninitializedBucket
+	ErrUninitializedBucket = iota
 
 	// ErrMissingKey indicates that a key was not found in a bucket.
 	ErrMissingKey
@@ -43,23 +27,14 @@ const (
 	// ErrDatabaseInfoShortRead indicates that the given database information
 	// was too small.
 	ErrDatabaseInfoShortRead
-
-	// ErrLoadAllTickets indicates that there was an error loading the tickets
-	// from the database, presumably at startup.
-	ErrLoadAllTickets
 )
 
 // Map of ErrorCode values back to their constant names for pretty printing.
 var errorCodeStrings = map[ErrorCode]string{
-	ErrUndoDataShortRead:     "ErrUndoDataShortRead",
-	ErrUndoDataCorrupt:       "ErrUndoDataCorrupt",
-	ErrTicketHashesShortRead: "ErrTicketHashesShortRead",
-	ErrTicketHashesCorrupt:   "ErrTicketHashesCorrupt",
 	ErrUninitializedBucket:   "ErrUninitializedBucket",
 	ErrMissingKey:            "ErrMissingKey",
 	ErrChainStateShortRead:   "ErrChainStateShortRead",
 	ErrDatabaseInfoShortRead: "ErrDatabaseInfoShortRead",
-	ErrLoadAllTickets:        "ErrLoadAllTickets",
 }
 
 // String returns the ErrorCode as a human-readable name.
@@ -89,7 +64,7 @@ func (e DBError) GetCode() ErrorCode {
 	return e.ErrorCode
 }
 
-// ticketDBError creates a DBError given a set of arguments.
-func ticketDBError(c ErrorCode, desc string) DBError {
+// votingDBError creates a DBError given a set of arguments.
+func votingDBError(c ErrorCode, desc string) DBError {
 	return DBError{ErrorCode: c, Description: desc}
 }

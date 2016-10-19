@@ -1,5 +1,8 @@
-// voting_test.go
-package stake_test
+// Copyright (c) 2016 The Decred developers
+// Use of this source code is governed by an ISC
+// license that can be found in the LICENSE file.
+
+package stake
 
 import (
 	"bytes"
@@ -7,7 +10,6 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg/chainhash"
 )
 
@@ -20,89 +22,89 @@ func TestDecodingAndEncodingVoteBits(t *testing.T) {
 	tests := []struct {
 		name string
 		in   uint16
-		out  stake.DecodedVoteBitsPrefix
+		out  DecodedVoteBitsPrefix
 	}{
 		{
 			"no and all undefined",
 			0x0000,
-			stake.DecodedVoteBitsPrefix{
+			DecodedVoteBitsPrefix{
 				BlockValid: false,
 				Unused:     false,
-				Issues: [7]stake.IssueVote{
-					stake.IssueVoteUndefined, stake.IssueVoteUndefined,
-					stake.IssueVoteUndefined, stake.IssueVoteUndefined,
-					stake.IssueVoteUndefined, stake.IssueVoteUndefined,
-					stake.IssueVoteUndefined,
+				Issues: [7]IssueVote{
+					IssueVoteUndefined, IssueVoteUndefined,
+					IssueVoteUndefined, IssueVoteUndefined,
+					IssueVoteUndefined, IssueVoteUndefined,
+					IssueVoteUndefined,
 				},
 			},
 		},
 		{
 			"yes and all undefined",
 			0x0001,
-			stake.DecodedVoteBitsPrefix{
+			DecodedVoteBitsPrefix{
 				BlockValid: true,
 				Unused:     false,
-				Issues: [7]stake.IssueVote{
-					stake.IssueVoteUndefined, stake.IssueVoteUndefined,
-					stake.IssueVoteUndefined, stake.IssueVoteUndefined,
-					stake.IssueVoteUndefined, stake.IssueVoteUndefined,
-					stake.IssueVoteUndefined,
+				Issues: [7]IssueVote{
+					IssueVoteUndefined, IssueVoteUndefined,
+					IssueVoteUndefined, IssueVoteUndefined,
+					IssueVoteUndefined, IssueVoteUndefined,
+					IssueVoteUndefined,
 				},
 			},
 		},
 		{
 			"no (unused set) and all undefined",
 			0x0002,
-			stake.DecodedVoteBitsPrefix{
+			DecodedVoteBitsPrefix{
 				BlockValid: false,
 				Unused:     true,
-				Issues: [7]stake.IssueVote{
-					stake.IssueVoteUndefined, stake.IssueVoteUndefined,
-					stake.IssueVoteUndefined, stake.IssueVoteUndefined,
-					stake.IssueVoteUndefined, stake.IssueVoteUndefined,
-					stake.IssueVoteUndefined,
+				Issues: [7]IssueVote{
+					IssueVoteUndefined, IssueVoteUndefined,
+					IssueVoteUndefined, IssueVoteUndefined,
+					IssueVoteUndefined, IssueVoteUndefined,
+					IssueVoteUndefined,
 				},
 			},
 		},
 		{
 			"yes and odd issues yes, even issues no",
 			0x6665,
-			stake.DecodedVoteBitsPrefix{
+			DecodedVoteBitsPrefix{
 				BlockValid: true,
 				Unused:     false,
-				Issues: [7]stake.IssueVote{
-					stake.IssueVoteYes, stake.IssueVoteNo,
-					stake.IssueVoteYes, stake.IssueVoteNo,
-					stake.IssueVoteYes, stake.IssueVoteNo,
-					stake.IssueVoteYes,
+				Issues: [7]IssueVote{
+					IssueVoteYes, IssueVoteNo,
+					IssueVoteYes, IssueVoteNo,
+					IssueVoteYes, IssueVoteNo,
+					IssueVoteYes,
 				},
 			},
 		},
 		{
 			"yes and odd issues no, even issues abstain",
 			0xBBB9,
-			stake.DecodedVoteBitsPrefix{
+			DecodedVoteBitsPrefix{
 				BlockValid: true,
 				Unused:     false,
-				Issues: [7]stake.IssueVote{
-					stake.IssueVoteNo, stake.IssueVoteAbstain,
-					stake.IssueVoteNo, stake.IssueVoteAbstain,
-					stake.IssueVoteNo, stake.IssueVoteAbstain,
-					stake.IssueVoteNo,
+				Issues: [7]IssueVote{
+					IssueVoteNo, IssueVoteAbstain,
+					IssueVoteNo, IssueVoteAbstain,
+					IssueVoteNo, IssueVoteAbstain,
+					IssueVoteNo,
 				},
 			},
 		},
 		{
 			"no and issue 1 yes, rest unused",
 			0x0004,
-			stake.DecodedVoteBitsPrefix{
+			DecodedVoteBitsPrefix{
 				BlockValid: false,
 				Unused:     false,
-				Issues: [7]stake.IssueVote{
-					stake.IssueVoteYes, stake.IssueVoteUndefined,
-					stake.IssueVoteUndefined, stake.IssueVoteUndefined,
-					stake.IssueVoteUndefined, stake.IssueVoteUndefined,
-					stake.IssueVoteUndefined,
+				Issues: [7]IssueVote{
+					IssueVoteYes, IssueVoteUndefined,
+					IssueVoteUndefined, IssueVoteUndefined,
+					IssueVoteUndefined, IssueVoteUndefined,
+					IssueVoteUndefined,
 				},
 			},
 		},
@@ -111,7 +113,7 @@ func TestDecodingAndEncodingVoteBits(t *testing.T) {
 	// Encoding.
 	for i := range tests {
 		test := tests[i]
-		in := stake.EncodeVoteBitsPrefix(test.out)
+		in := EncodeVoteBitsPrefix(test.out)
 		if !reflect.DeepEqual(in, test.in) {
 			t.Errorf("bad result on EncodeVoteBitsPrefix test %v: got %v, "+
 				"want %v", test.name, in, test.in)
@@ -121,7 +123,7 @@ func TestDecodingAndEncodingVoteBits(t *testing.T) {
 	// Decoding.
 	for i := range tests {
 		test := tests[i]
-		out := stake.DecodeVoteBitsPrefix(test.in)
+		out := DecodeVoteBitsPrefix(test.in)
 		if out != test.out {
 			t.Errorf("bad result on DecodeVoteBitsPrefix test %v: got %v, "+
 				"want %v", test.name, out, test.out)
@@ -134,25 +136,25 @@ func TestDecodingAndEncodingVoteBits(t *testing.T) {
 func TestRollingVotingPrefixTallySerializing(t *testing.T) {
 	tests := []struct {
 		name string
-		in   stake.RollingVotingPrefixTally
+		in   RollingVotingPrefixTally
 		out  []byte
 	}{
 		{
 			"no and all undefined",
-			stake.RollingVotingPrefixTally{
-				LastKeyBlock:       stake.BlockKey{Hash: chainhash.Hash{byte(0x01)}, Height: 38829},
-				LastIntervalBlock:  stake.BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
+			RollingVotingPrefixTally{
+				LastKeyBlock:       BlockKey{Hash: chainhash.Hash{byte(0x01)}, Height: 38829},
+				LastIntervalBlock:  BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
 				CurrentBlockHeight: 10200,
 				BlockValid:         213,
 				Unused:             492,
-				Issues: [7]stake.VotingTally{
-					stake.VotingTally{123, 321, 324, 2819},
-					stake.VotingTally{523, 2355, 0, 0},
-					stake.VotingTally{352, 2352, 2442, 44},
-					stake.VotingTally{234, 0, 44, 344},
-					stake.VotingTally{523, 223, 133, 3444},
-					stake.VotingTally{0, 44, 3233, 432},
-					stake.VotingTally{867, 1, 444, 33},
+				Issues: [7]VotingTally{
+					VotingTally{123, 321, 324, 2819},
+					VotingTally{523, 2355, 0, 0},
+					VotingTally{352, 2352, 2442, 44},
+					VotingTally{234, 0, 44, 344},
+					VotingTally{523, 223, 133, 3444},
+					VotingTally{0, 44, 3233, 432},
+					VotingTally{867, 1, 444, 33},
 				},
 			},
 			bytesFromHex("0100000000000000000000000000000000000000000000000000000000000000ad9700000200000000000000000000000000000000000000000000000000000000000000cb970000d8270000d500ec017b0041014401030b0b02330900000000600130098a092c00ea0000002c0058010b02df008500740d00002c00a10cb00163030100bc012100"),
@@ -172,7 +174,7 @@ func TestRollingVotingPrefixTallySerializing(t *testing.T) {
 	// Deserialize.
 	for i := range tests {
 		test := tests[i]
-		var tally stake.RollingVotingPrefixTally
+		var tally RollingVotingPrefixTally
 		err := tally.Deserialize(test.out)
 		if err != nil {
 			t.Errorf("unexpected error %v", err)
@@ -186,12 +188,83 @@ func TestRollingVotingPrefixTallySerializing(t *testing.T) {
 	// Test short read error.
 	for i := range tests {
 		test := tests[i]
-		var tally stake.RollingVotingPrefixTally
+		var tally RollingVotingPrefixTally
 		err := tally.Deserialize(test.out[:len(test.out)-1])
 		if err == nil ||
-			err.(stake.RuleError).ErrorCode != stake.ErrMemoryCorruption {
+			err.(RuleError).ErrorCode != ErrMemoryCorruption {
 			t.Errorf("expected ErrMemoryCorruption on test %v, got %v",
 				test.name, err)
+		}
+	}
+}
+
+// TestTallyAddingAndSubstracting tests adding and then substracting some vote
+// bits to/from a tally.
+func TestTallyAddingAndSubstracting(t *testing.T) {
+	tests := []struct {
+		name     string
+		tally    RollingVotingPrefixTally
+		votebits []uint16
+		out      RollingVotingPrefixTally
+	}{
+		{
+			"simple addition of 5 votebits",
+			RollingVotingPrefixTally{
+				LastKeyBlock:       BlockKey{Hash: chainhash.Hash{byte(0x01)}, Height: 38829},
+				LastIntervalBlock:  BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
+				CurrentBlockHeight: 10200,
+				BlockValid:         6,
+				Unused:             7,
+				Issues: [7]VotingTally{
+					VotingTally{5, 4, 3, 2},
+					VotingTally{5, 4, 3, 2},
+					VotingTally{5, 4, 3, 2},
+					VotingTally{5, 4, 3, 2},
+					VotingTally{5, 4, 3, 2},
+					VotingTally{5, 4, 3, 2},
+					VotingTally{5, 4, 3, 2},
+				},
+			},
+			// Add 3x "yes and odd issues yes, even issues no", 1x "yes and odd issues no, even issues abstain", 1x "yes and unused yes, rest undeclared"
+			// Total:
+			//   +5 BlockValid
+			//   +1 Unused
+			//   +3 Yes on all odd issues
+			//   +3 No on all even issues
+			//   +1 No on all odd issues
+			//   +1 Abstain on all even issues
+			[]uint16{0x6665, 0xBBB9, 0x0003, 0x6665, 0x6665},
+			RollingVotingPrefixTally{
+				LastKeyBlock:       BlockKey{Hash: chainhash.Hash{byte(0x01)}, Height: 38829},
+				LastIntervalBlock:  BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
+				CurrentBlockHeight: 10200,
+				BlockValid:         6 + 5,
+				Unused:             7 + 1,
+				Issues: [7]VotingTally{
+					VotingTally{5 + 1, 4 + 3, 3 + 1, 2}, // #1
+					VotingTally{5 + 1, 4, 3 + 3, 2 + 1}, // #2
+					VotingTally{5 + 1, 4 + 3, 3 + 1, 2}, // #3
+					VotingTally{5 + 1, 4, 3 + 3, 2 + 1}, // #4
+					VotingTally{5 + 1, 4 + 3, 3 + 1, 2}, // #5
+					VotingTally{5 + 1, 4, 3 + 3, 2 + 1}, // #6
+					VotingTally{5 + 1, 4 + 3, 3 + 1, 2}, // #7
+				},
+			},
+		},
+	}
+
+	for i := range tests {
+		testTally := tests[i].tally
+		testTally.AddTally(tests[i].votebits)
+		if !reflect.DeepEqual(testTally, tests[i].out) {
+			t.Errorf("bad result on addTally test %v: got %v, "+
+				"want %v", tests[i].name, testTally, tests[i].out)
+		}
+
+		testTally.SubtractTally(tests[i].votebits)
+		if !reflect.DeepEqual(testTally, tests[i].tally) {
+			t.Errorf("bad result on subtractTally test %v: got %v, "+
+				"want %v", tests[i].name, testTally, tests[i].tally)
 		}
 	}
 }
