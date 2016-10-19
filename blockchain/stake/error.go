@@ -184,6 +184,10 @@ const (
 	// ErrBadVotingRemoveBlock indicates there was an issue with the
 	// block being removed from a rolling voting tally.
 	ErrBadVotingRemoveBlock
+
+	// ErrMissingTally indicates that a given voting tally for some
+	// interval period was missing from the cache or database.
+	ErrMissingTally
 )
 
 // Map of ErrorCode values back to their constant names for pretty printing.
@@ -229,6 +233,7 @@ var errorCodeStrings = map[ErrorCode]string{
 	ErrUnknownTicketSpent:    "ErrUnknownTicketSpent",
 	ErrBadVotingConnectBlock: "ErrBadVotingConnectBlock",
 	ErrBadVotingRemoveBlock:  "ErrBadVotingRemoveBlock",
+	ErrMissingTally:          "ErrMissingTally",
 }
 
 // String returns the ErrorCode as a human-readable name.

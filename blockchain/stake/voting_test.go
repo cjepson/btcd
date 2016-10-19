@@ -198,9 +198,9 @@ func TestRollingVotingPrefixTallySerializing(t *testing.T) {
 	}
 }
 
-// TestTallyAddingAndSubstracting tests adding and then substracting some vote
+// TestBitsSliceAddingAndSubstracting tests adding and then substracting some vote
 // bits to/from a tally.
-func TestTallyAddingAndSubstracting(t *testing.T) {
+func TestBitsSliceAddingAndSubstracting(t *testing.T) {
 	tests := []struct {
 		name     string
 		tally    RollingVotingPrefixTally
@@ -255,16 +255,88 @@ func TestTallyAddingAndSubstracting(t *testing.T) {
 
 	for i := range tests {
 		testTally := tests[i].tally
-		testTally.AddTally(tests[i].votebits)
+		testTally.AddVoteBitsSlice(tests[i].votebits)
 		if !reflect.DeepEqual(testTally, tests[i].out) {
-			t.Errorf("bad result on addTally test %v: got %v, "+
+			t.Errorf("bad result on AddVoteBitsSlice test %v: got %v, "+
 				"want %v", tests[i].name, testTally, tests[i].out)
 		}
 
-		testTally.SubtractTally(tests[i].votebits)
+		testTally.SubtractVoteBitsSlice(tests[i].votebits)
 		if !reflect.DeepEqual(testTally, tests[i].tally) {
-			t.Errorf("bad result on subtractTally test %v: got %v, "+
+			t.Errorf("bad result on SubtractVoteBitsSlice test %v: got %v, "+
 				"want %v", tests[i].name, testTally, tests[i].tally)
+		}
+	}
+}
+
+// TestAddingTallies tests adding and then substracting some vote
+// bits to/from a tally.
+func TestAddingTallies(t *testing.T) {
+	tests := []struct {
+		name   string
+		tally1 RollingVotingPrefixTally
+		tally2 RollingVotingPrefixTally
+		out    RollingVotingPrefixTally
+	}{
+		{
+			"simple addition of 1 or 2 to every field",
+			RollingVotingPrefixTally{
+				LastKeyBlock:       BlockKey{Hash: chainhash.Hash{byte(0x01)}, Height: 38829},
+				LastIntervalBlock:  BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
+				CurrentBlockHeight: 10200,
+				BlockValid:         6,
+				Unused:             7,
+				Issues: [7]VotingTally{
+					VotingTally{5, 4, 3, 2},
+					VotingTally{5, 4, 3, 2},
+					VotingTally{5, 4, 3, 2},
+					VotingTally{5, 4, 3, 2},
+					VotingTally{5, 4, 3, 2},
+					VotingTally{5, 4, 3, 2},
+					VotingTally{5, 4, 3, 2},
+				},
+			},
+			RollingVotingPrefixTally{
+				LastKeyBlock:       BlockKey{Hash: chainhash.Hash{byte(0x01)}, Height: 38829},
+				LastIntervalBlock:  BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
+				CurrentBlockHeight: 10200,
+				BlockValid:         1,
+				Unused:             2,
+				Issues: [7]VotingTally{
+					VotingTally{1, 2, 1, 2},
+					VotingTally{2, 1, 2, 1},
+					VotingTally{1, 2, 1, 2},
+					VotingTally{2, 1, 2, 1},
+					VotingTally{1, 2, 1, 2},
+					VotingTally{2, 1, 2, 1},
+					VotingTally{1, 2, 1, 2},
+				},
+			},
+			RollingVotingPrefixTally{
+				LastKeyBlock:       BlockKey{Hash: chainhash.Hash{byte(0x01)}, Height: 38829},
+				LastIntervalBlock:  BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
+				CurrentBlockHeight: 10200,
+				BlockValid:         6 + 1,
+				Unused:             7 + 2,
+				Issues: [7]VotingTally{
+					VotingTally{5 + 1, 4 + 2, 3 + 1, 2 + 2},
+					VotingTally{5 + 2, 4 + 1, 3 + 2, 2 + 1},
+					VotingTally{5 + 1, 4 + 2, 3 + 1, 2 + 2},
+					VotingTally{5 + 2, 4 + 1, 3 + 2, 2 + 1},
+					VotingTally{5 + 1, 4 + 2, 3 + 1, 2 + 2},
+					VotingTally{5 + 2, 4 + 1, 3 + 2, 2 + 1},
+					VotingTally{5 + 1, 4 + 2, 3 + 1, 2 + 2},
+				},
+			},
+		},
+	}
+
+	for i := range tests {
+		testTally := tests[i].tally1
+		testTally.AddTally(tests[i].tally2)
+		if !reflect.DeepEqual(testTally, tests[i].out) {
+			t.Errorf("bad result on addTally test %v: got %v, "+
+				"want %v", tests[i].name, testTally, tests[i].out)
 		}
 	}
 }
