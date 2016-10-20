@@ -27,6 +27,10 @@ const (
 	// ErrDatabaseInfoShortRead indicates that the given database information
 	// was too small.
 	ErrDatabaseInfoShortRead
+
+	// ErrTallyShortRead indicates that the given voting tally information
+	// was too small.
+	ErrTallyShortRead
 )
 
 // Map of ErrorCode values back to their constant names for pretty printing.
@@ -35,6 +39,7 @@ var errorCodeStrings = map[ErrorCode]string{
 	ErrMissingKey:            "ErrMissingKey",
 	ErrChainStateShortRead:   "ErrChainStateShortRead",
 	ErrDatabaseInfoShortRead: "ErrDatabaseInfoShortRead",
+	ErrTallyShortRead:        "ErrTallyShortRead",
 }
 
 // String returns the ErrorCode as a human-readable name.

@@ -142,11 +142,11 @@ func TestRollingVotingPrefixTallySerializing(t *testing.T) {
 		{
 			"no and all undefined",
 			RollingVotingPrefixTally{
-				LastKeyBlock:       BlockKey{Hash: chainhash.Hash{byte(0x01)}, Height: 38829},
-				LastIntervalBlock:  BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
-				CurrentBlockHeight: 10200,
-				BlockValid:         213,
-				Unused:             492,
+				CurrentIntervalBlock: BlockKey{Hash: chainhash.Hash{byte(0x01)}, Height: 38829},
+				LastIntervalBlock:    BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
+				CurrentBlockHeight:   10200,
+				BlockValid:           213,
+				Unused:               492,
 				Issues: [7]VotingTally{
 					VotingTally{123, 321, 324, 2819},
 					VotingTally{523, 2355, 0, 0},
@@ -210,11 +210,11 @@ func TestBitsSliceAddingAndSubstracting(t *testing.T) {
 		{
 			"simple addition of 5 votebits",
 			RollingVotingPrefixTally{
-				LastKeyBlock:       BlockKey{Hash: chainhash.Hash{byte(0x01)}, Height: 38829},
-				LastIntervalBlock:  BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
-				CurrentBlockHeight: 10200,
-				BlockValid:         6,
-				Unused:             7,
+				CurrentIntervalBlock: BlockKey{Hash: chainhash.Hash{byte(0x01)}, Height: 38829},
+				LastIntervalBlock:    BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
+				CurrentBlockHeight:   10200,
+				BlockValid:           6,
+				Unused:               7,
 				Issues: [7]VotingTally{
 					VotingTally{5, 4, 3, 2},
 					VotingTally{5, 4, 3, 2},
@@ -235,11 +235,11 @@ func TestBitsSliceAddingAndSubstracting(t *testing.T) {
 			//   +1 Abstain on all even issues
 			[]uint16{0x6665, 0xBBB9, 0x0003, 0x6665, 0x6665},
 			RollingVotingPrefixTally{
-				LastKeyBlock:       BlockKey{Hash: chainhash.Hash{byte(0x01)}, Height: 38829},
-				LastIntervalBlock:  BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
-				CurrentBlockHeight: 10200,
-				BlockValid:         6 + 5,
-				Unused:             7 + 1,
+				CurrentIntervalBlock: BlockKey{Hash: chainhash.Hash{byte(0x01)}, Height: 38829},
+				LastIntervalBlock:    BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
+				CurrentBlockHeight:   10200,
+				BlockValid:           6 + 5,
+				Unused:               7 + 1,
 				Issues: [7]VotingTally{
 					VotingTally{5 + 1, 4 + 3, 3 + 1, 2}, // #1
 					VotingTally{5 + 1, 4, 3 + 3, 2 + 1}, // #2
@@ -281,11 +281,11 @@ func TestAddingTallies(t *testing.T) {
 		{
 			"simple addition of 1 or 2 to every field",
 			RollingVotingPrefixTally{
-				LastKeyBlock:       BlockKey{Hash: chainhash.Hash{byte(0x01)}, Height: 38829},
-				LastIntervalBlock:  BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
-				CurrentBlockHeight: 10200,
-				BlockValid:         6,
-				Unused:             7,
+				CurrentIntervalBlock: BlockKey{Hash: chainhash.Hash{byte(0x01)}, Height: 38829},
+				LastIntervalBlock:    BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
+				CurrentBlockHeight:   10200,
+				BlockValid:           6,
+				Unused:               7,
 				Issues: [7]VotingTally{
 					VotingTally{5, 4, 3, 2},
 					VotingTally{5, 4, 3, 2},
@@ -297,11 +297,11 @@ func TestAddingTallies(t *testing.T) {
 				},
 			},
 			RollingVotingPrefixTally{
-				LastKeyBlock:       BlockKey{Hash: chainhash.Hash{byte(0x01)}, Height: 38829},
-				LastIntervalBlock:  BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
-				CurrentBlockHeight: 10200,
-				BlockValid:         1,
-				Unused:             2,
+				CurrentIntervalBlock: BlockKey{Hash: chainhash.Hash{byte(0x01)}, Height: 38829},
+				LastIntervalBlock:    BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
+				CurrentBlockHeight:   10200,
+				BlockValid:           1,
+				Unused:               2,
 				Issues: [7]VotingTally{
 					VotingTally{1, 2, 1, 2},
 					VotingTally{2, 1, 2, 1},
@@ -313,11 +313,11 @@ func TestAddingTallies(t *testing.T) {
 				},
 			},
 			RollingVotingPrefixTally{
-				LastKeyBlock:       BlockKey{Hash: chainhash.Hash{byte(0x01)}, Height: 38829},
-				LastIntervalBlock:  BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
-				CurrentBlockHeight: 10200,
-				BlockValid:         6 + 1,
-				Unused:             7 + 2,
+				CurrentIntervalBlock: BlockKey{Hash: chainhash.Hash{byte(0x01)}, Height: 38829},
+				LastIntervalBlock:    BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
+				CurrentBlockHeight:   10200,
+				BlockValid:           6 + 1,
+				Unused:               7 + 2,
 				Issues: [7]VotingTally{
 					VotingTally{5 + 1, 4 + 2, 3 + 1, 2 + 2},
 					VotingTally{5 + 2, 4 + 1, 3 + 2, 2 + 1},

@@ -60,8 +60,4 @@ var (
 	// IntervalBlockTallyBucket is the name of the db bucket used to house the
 	// rolling vote tallies for interval blocks in the tallying system.
 	IntervalBlockTallyBucketName = []byte("intervalblktally")
-
-	// KeyBlockTallyBucketName is the name of the db bucket used to house the
-	// rolling vote tallies for key blocks in the tallying system.
-	KeyBlockTallyBucketName = []byte("keyblktally")
 )

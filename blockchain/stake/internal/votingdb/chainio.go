@@ -5,6 +5,7 @@
 package votingdb
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/decred/dcrd/blockchain/stake/internal/dbnamespace"
@@ -203,4 +204,75 @@ func DbPutBestState(dbTx database.Tx, bcs BestChainState) error {
 	// Store the current best chain state into the database.
 	return dbTx.Metadata().Put(dbnamespace.VotingChainStateKeyName,
 		serializedData)
+}
+
+// DbFetchBlockTally fetches an interval block's tally from the voting database.
+// It concatenates the first 36 bytes (the current block key) with the last
+// 72 bytes of the value, restoring the serialized tally to return to the
+// caller.
+func DbFetchBlockTally(dbTx database.Tx, blockKey []byte) ([]byte, error) {
+	meta := dbTx.Metadata()
+	bucket := meta.Bucket(dbnamespace.IntervalBlockTallyBucketName)
+
+	v := bucket.Get(blockKey[:])
+	if v == nil {
+		return nil, votingDBError(ErrMissingKey,
+			fmt.Sprintf("missing key %x for db tally", blockKey))
+	}
+
+	if len(v) < 100 {
+		return nil, votingDBError(ErrMissingKey,
+			fmt.Sprintf("short read of db tally data (got %v, min %v)",
+				len(v), 100))
+	}
+	serialized := make([]byte, 108)
+	copy(serialized[0:], blockKey[:])
+	copy(serialized[36:], v[:])
+
+	return serialized, nil
+}
+
+// DbPutBlockTally inserts an interval block's tally into the voting database.
+// It uses the first 36 bytes (the current block key) as the key for insertion,
+// while storing the remaining 72 bytes as the value.
+func DbPutBlockTally(dbTx database.Tx, serializedTally []byte) error {
+	meta := dbTx.Metadata()
+	bucket := meta.Bucket(dbnamespace.IntervalBlockTallyBucketName)
+	k := make([]byte, 36)
+	copy(k[:], serializedTally[0:])
+	v := make([]byte, 100)
+	copy(v[:], serializedTally[36:])
+
+	return bucket.Put(k[:], v[:])
+}
+
+// DbCreate initializes all the buckets required for the database and stores
+// the current database version information.
+func DbCreate(dbTx database.Tx) error {
+	meta := dbTx.Metadata()
+
+	// Create the bucket that houses information about the database's
+	// creation and version.
+	_, err := meta.CreateBucket(dbnamespace.VotingDbInfoBucketName)
+	if err != nil {
+		return err
+	}
+
+	dbInfo := &DatabaseInfo{
+		Version:        currentDatabaseVersion,
+		Date:           time.Now(),
+		UpgradeStarted: false,
+	}
+	err = DbPutDatabaseInfo(dbTx, dbInfo)
+	if err != nil {
+		return err
+	}
+
+	// Create the bucket that houses the live tickets of the best node.
+	_, err = meta.CreateBucket(dbnamespace.IntervalBlockTallyBucketName)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

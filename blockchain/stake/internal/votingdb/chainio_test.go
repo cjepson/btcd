@@ -7,16 +7,16 @@ package votingdb
 import (
 	"bytes"
 	"encoding/hex"
-	//	"os"
-	//	"path/filepath"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 
 	//	"github.com/decred/dcrd/blockchain/stake/internal/dbnamespace"
-	//	"github.com/decred/dcrd/chaincfg"
+	"github.com/decred/dcrd/chaincfg"
 	"github.com/decred/dcrd/chaincfg/chainhash"
-	//	"github.com/decred/dcrd/database"
+	"github.com/decred/dcrd/database"
 	_ "github.com/decred/dcrd/database/ffldb"
 )
 
@@ -225,7 +225,6 @@ func TestBestChainStateDeserializeErrors(t *testing.T) {
 	}
 }
 
-/*
 // TestLiveDatabase tests various functions that require a live database.
 func TestLiveDatabase(t *testing.T) {
 	// Create a new database to store the accepted stake node data into.
@@ -267,26 +266,17 @@ func TestLiveDatabase(t *testing.T) {
 			currentDatabaseVersion, dbi.Version)
 	}
 
-	// Test storing arbitrary ticket treaps.
-	ticketMap := make(map[tickettreap.Key]*tickettreap.Value)
-	tickets := make([]chainhash.Hash, 5)
-	for i := 0; i < 4; i++ {
-		h := chainhash.HashFuncH(bytes.Repeat([]byte{0x01}, i))
-		ticketMap[tickettreap.Key(h)] = &tickettreap.Value{
-			Height:  12345 + uint32(i),
-			Missed:  i%2 == 0,
-			Revoked: i%2 != 0,
-			Spent:   i%2 == 0,
-			Expired: i%2 != 0,
-		}
-		tickets[i] = h
+	// Test storing some tally data.
+	tallies := make([][136]byte, 10)
+	for i := 0; i < 10; i++ {
+		tallies[i][0] = byte(i + 10)
+		tallies[i][36] = byte(i + 20)
 	}
 
+	// Test put tallies.
 	err = testDb.Update(func(dbTx database.Tx) error {
-		for k, v := range ticketMap {
-			h := chainhash.Hash(k)
-			err = DbPutTicket(dbTx, dbnamespace.LiveTicketsBucketName, &h,
-				v.Height, v.Missed, v.Revoked, v.Spent, v.Expired)
+		for i := 0; i < 10; i++ {
+			err = DbPutBlockTally(dbTx, tallies[i][:])
 			if err != nil {
 				return err
 			}
@@ -298,10 +288,38 @@ func TestLiveDatabase(t *testing.T) {
 		t.Fatalf("%v", err.Error())
 	}
 
-	var treap *tickettreap.Immutable
-	ticketMap2 := make(map[tickettreap.Key]*tickettreap.Value)
+	// Test fetch tallies.
+	talliesRead := make([][136]byte, 10)
 	err = testDb.View(func(dbTx database.Tx) error {
-		treap, err = DbLoadAllTickets(dbTx, dbnamespace.LiveTicketsBucketName)
+		for i := 0; i < 10; i++ {
+			tally, err := DbFetchBlockTally(dbTx, tallies[i][0:36])
+			if err != nil {
+				return err
+			}
+
+			copy(talliesRead[i][:], tally[:])
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("%v", err.Error())
+	}
+
+	if !reflect.DeepEqual(tallies, talliesRead) {
+		t.Errorf("failed to read stored tallies from database: stored %v, "+
+			"read %v", tallies, talliesRead)
+	}
+
+	// Test put best state.
+	best := BestChainState{
+		Hash:              chainhash.Hash{0xff},
+		Height:            55555,
+		CurrentTally:      tallies[0][:],
+		LastIntervalTally: tallies[1][:],
+	}
+	err = testDb.Update(func(dbTx database.Tx) error {
+		err = DbPutBestState(dbTx, best)
 		if err != nil {
 			return err
 		}
@@ -311,14 +329,23 @@ func TestLiveDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v", err.Error())
 	}
-	treap.ForEach(func(k tickettreap.Key, v *tickettreap.Value) bool {
-		ticketMap2[k] = v
 
-		return true
+	// Test read best state.
+	var bestRead BestChainState
+	err = testDb.View(func(dbTx database.Tx) error {
+		bestRead, err = DbFetchBestState(dbTx)
+		if err != nil {
+			return err
+		}
+
+		return nil
 	})
+	if err != nil {
+		t.Fatalf("%v", err.Error())
+	}
 
-	if !reflect.DeepEqual(ticketMap, ticketMap2) {
-		t.Fatalf("not same ticket maps")
+	if !reflect.DeepEqual(best, bestRead) {
+		t.Errorf("failed to read stored best state from database: stored %v, "+
+			"read %v", best, bestRead)
 	}
 }
-*/
