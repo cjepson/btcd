@@ -340,3 +340,9 @@ func TestAddingTallies(t *testing.T) {
 		}
 	}
 }
+
+// TestVotingDbAndSpoofedChain tests block connection, disconnect, and
+// a spoofed blockchain.
+func TestVotingDbAndSpoofedChain(t *testing.T) {
+
+}

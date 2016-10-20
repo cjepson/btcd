@@ -114,20 +114,18 @@ func DbFetchDatabaseInfo(dbTx database.Tx) (*DatabaseInfo, error) {
 //   block hash           chainhash.Hash    chainhash.HashSize
 //   block height         uint32            4 bytes
 //   current tally        []byte            136 bytes (preserialized)
-//   last interval tally  []byte            136 bytes (preserialized)
 // -----------------------------------------------------------------------------
 
 // minimumBestChainStateSize is the minimum serialized size of the best chain
 // state in bytes.
-var minimumBestChainStateSize = chainhash.HashSize + 4 + 136 + 136
+var minimumBestChainStateSize = chainhash.HashSize + 4 + 136
 
 // BestChainState represents the data to be stored the database for the current
 // best chain state.
 type BestChainState struct {
-	Hash              chainhash.Hash
-	Height            uint32
-	CurrentTally      []byte
-	LastIntervalTally []byte
+	Hash         chainhash.Hash
+	Height       uint32
+	CurrentTally []byte
 }
 
 // serializeBestChainState returns the serialization of the passed block best
@@ -147,8 +145,6 @@ func serializeBestChainState(state BestChainState) []byte {
 
 	// Serialize the tallies.
 	copy(serializedData[offset:], state.CurrentTally[:])
-	offset += 136
-	copy(serializedData[offset:], state.LastIntervalTally[:])
 	offset += 136
 
 	return serializedData[:]
@@ -174,9 +170,6 @@ func deserializeBestChainState(serializedData []byte) (BestChainState, error) {
 	offset += 4
 	state.CurrentTally = make([]byte, 136)
 	copy(state.CurrentTally[:], serializedData[offset:])
-	offset += 136
-	state.LastIntervalTally = make([]byte, 136)
-	copy(state.LastIntervalTally[:], serializedData[offset:])
 	offset += 136
 
 	return state, nil

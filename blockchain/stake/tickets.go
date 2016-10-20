@@ -206,9 +206,9 @@ func genesisNode(params *chaincfg.Params) *Node {
 	}
 }
 
-// InitDatabaseState initializes the chain with the best state being the
+// InitTicketDatabaseState initializes the chain with the best state being the
 // genesis block.
-func InitDatabaseState(dbTx database.Tx, params *chaincfg.Params) (*Node, error) {
+func InitTicketDatabaseState(dbTx database.Tx, params *chaincfg.Params) (*Node, error) {
 	// Create the database.
 	err := ticketdb.DbCreate(dbTx)
 	if err != nil {

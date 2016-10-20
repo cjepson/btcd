@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/decred/dcrd/blockchain/stake/internal/dbnamespace"
+	"github.com/decred/dcrd/blockchain/stake/internal/votingdb"
 	"github.com/decred/dcrd/chaincfg"
 	"github.com/decred/dcrd/chaincfg/chainhash"
 	"github.com/decred/dcrd/database"
@@ -275,12 +276,63 @@ func (r *RollingVotingPrefixTally) Deserialize(val []byte) error {
 // blocks containing intermediate tallies.  On connection of the last block
 // in the interval period, the final tally is written with the key being
 // the first block in the interval.
+// TODO This cache stores the block key twice, to cut down on memory usage
+// in the future you could reconstruct from the k->v like database does.
 type RollingVotingPrefixTallyCache map[BlockKey]RollingVotingPrefixTally
 
-// InitRollingTallyCache initializes a rolling tally cache from the stored
-// tallies in the database.
-func InitRollingTallyCache(dbTx database.Tx) (RollingVotingPrefixTallyCache, error) {
+// initCacheSize is how many interval windows into the past the cache should
+// restore on startup from the database.  It is equivalent to 4 months on
+// mainnet.
+const initCacheSize = 240
 
+// InitRollingTallyCache initializes a rolling tally cache from the stored
+// tallies in the database.  It loads the best state, then restores the past
+// tallies by iterating backwards over the records.
+func InitRollingTallyCache(dbTx database.Tx, params *chaincfg.Params) (RollingVotingPrefixTallyCache, error) {
+	best, err := votingdb.DbFetchBestState(dbTx)
+	if err != nil {
+		return nil, err
+	}
+
+	var bestTally RollingVotingPrefixTally
+	err = bestTally.Deserialize(best.CurrentTally)
+	if err != nil {
+		return nil, err
+	}
+
+	// Nothing to load if this is the first time.
+	if best.Hash == *params.GenesisHash {
+		return make(RollingVotingPrefixTallyCache), nil
+	}
+
+	// Iterate backwards through the entries in the database, loading
+	// them into the cache.
+	cache := make(RollingVotingPrefixTallyCache)
+	currentKey := bestTally.LastIntervalBlock
+	var currentKeyB [36]byte
+	buf := currentKeyB[:]
+	for i := 0; i < initCacheSize; i++ {
+		// Break if we reach the genesis block.
+		if currentKey.Hash == *params.GenesisHash {
+			break
+		}
+
+		currentKey.SerializeInto(&buf, 0)
+		currentTallyB, err := votingdb.DbFetchBlockTally(dbTx, buf)
+		if err != nil {
+			return nil, err
+		}
+		var currentTally RollingVotingPrefixTally
+		err = currentTally.Deserialize(currentTallyB)
+		if err != nil {
+			return nil, err
+		}
+
+		cache[currentKey] = currentTally
+		currentKey = currentTally.LastIntervalBlock
+	}
+
+	return cache, nil
 }
 
 // rollover resets the RollingVotingPrefixTally when reaching a new tallying
@@ -365,14 +417,31 @@ func (r *RollingVotingPrefixTally) AddTally(tally RollingVotingPrefixTally) {
 // database.  It returns an error if it can not find the relevant tally, which
 // should exist even if the block is on a sidechain.
 func FetchIntervalTally(key *BlockKey, cache RollingVotingPrefixTallyCache, dbTx database.Tx) (*RollingVotingPrefixTally, error) {
-	tally, exists := cache[*key]
-	if exists {
-		return &tally, nil
+	if cache != nil {
+		tally, exists := cache[*key]
+		if exists {
+			return &tally, nil
+		}
 	}
 
-	// TODO db
-	return nil, stakeRuleError(ErrMissingTally, "failed to find tally in "+
-		"the interval cache or interval bucket of the database")
+	var keyB [36]byte
+	buf := keyB[:]
+	key.SerializeInto(&buf, 0)
+	tallyB, err := votingdb.DbFetchBlockTally(dbTx, buf)
+	if err != nil {
+		return nil, stakeRuleError(ErrMissingTally, fmt.Sprintf("failed to "+
+			"find tally in the interval cache or interval bucket of the "+
+			"database: %v", err))
+	}
+
+	var tally RollingVotingPrefixTally
+	err = tally.Deserialize(tallyB)
+	if err != nil {
+		return nil, err
+	}
+
+	return &tally, nil
+
 }
 
 // ConnectBlockToTally connects a "block" to a tally.  The only components of
@@ -492,8 +561,14 @@ func (r *RollingVotingPrefixTally) revert(blockHeight uint32, voteBitsSlice []ui
 	return nil
 }
 
-// DisconnectBlockFromTally
-func (r *RollingVotingPrefixTally) DisconnectBlockFromTally(intervalCache RollingVotingPrefixTallyCache, dbTx database.Tx, blockHash chainhash.Hash, blockHeight uint32, voteBitsSlice []uint16, lastIntervalTally *RollingVotingPrefixTally, params *chaincfg.Params) (RollingVotingPrefixTally, error) {
+// DisconnectBlockFromTally disconnects a "block" from a rolling tally.  In the
+// simplest case, it just subtracts the individual votes on issues and then
+// rolls back the height.  In cases of rolling back an interval block (where
+// values for the votes were reset), it needs the previous interval tally to
+// be restored.  This is passed as lastIntervalTally.  If this does not exist,
+// the passed cache and the database will be searched to see if this interval
+// tally can be found.
+func (r *RollingVotingPrefixTally) DisconnectBlockFromTally(blockHash chainhash.Hash, blockHeight uint32, voteBitsSlice []uint16, lastIntervalTally *RollingVotingPrefixTally, intervalCache RollingVotingPrefixTallyCache, dbTx database.Tx, params *chaincfg.Params) (RollingVotingPrefixTally, error) {
 	tally := *r
 
 	// Search the cache.
@@ -514,6 +589,74 @@ func (r *RollingVotingPrefixTally) DisconnectBlockFromTally(intervalCache Rollin
 	return tally, nil
 }
 
-// WriteConnectedBlockTally
+// InitVotingDatabaseState initializes the chain with the best state being the
+// genesis block.
+func InitVotingDatabaseState(dbTx database.Tx, params *chaincfg.Params) (*RollingVotingPrefixTally, error) {
+	// Create the database.
+	err := votingdb.DbCreate(dbTx)
+	if err != nil {
+		return nil, err
+	}
 
-// WriteDisconnectedBlockTally
+	// Write the new block undo and new tickets data to the
+	// database for the genesis block.
+	var best votingdb.BestChainState
+	var bestTally RollingVotingPrefixTally
+	best.Hash = *params.GenesisHash
+	best.Height = 0
+	bestTally.CurrentIntervalBlock = BlockKey{best.Hash, best.Height}
+	best.CurrentTally = bestTally.Serialize()
+
+	err = votingdb.DbPutBestState(dbTx, best)
+	if err != nil {
+		return nil, err
+	}
+
+	return &bestTally, nil
+}
+
+// WriteConnectedBlockTally writes a block tally to the database if the block is
+// the last block in the block interval.  It also updates the current best block
+// tally in the best chain component of the database.
+func WriteConnectedBlockTally(dbTx database.Tx, blockHash chainhash.Hash, blockHeight uint32, tally *RollingVotingPrefixTally, params *chaincfg.Params) error {
+	var best votingdb.BestChainState
+	best.Hash = blockHash
+	best.Height = blockHeight
+	best.CurrentTally = tally.Serialize()
+
+	if (tally.CurrentBlockHeight+1)%uint32(params.StakeDiffWindowSize) == 0 {
+		votingdb.DbPutBlockTally(dbTx, best.CurrentTally)
+	}
+
+	return votingdb.DbPutBestState(dbTx, best)
+}
+
+// WriteDisconnectedBlockTally disconnects a block tally from the database,
+// subtracting the slice of vote bits or restoring it to the previous tally's
+// state if it falls into an interval block.  We don't need to call the cache
+// here, because we know that disconnects are only on the mainchain and that the
+// mainchain MUST have the previous interval block in it.
+func WriteDisconnectedBlockTally(dbTx database.Tx, blockHash chainhash.Hash, blockHeight uint32, tally *RollingVotingPrefixTally, voteBitsSlice []uint16, params *chaincfg.Params) error {
+	disconnectedTally, err := tally.DisconnectBlockFromTally(blockHash,
+		blockHeight, voteBitsSlice, nil, nil, dbTx, params)
+	if err != nil {
+		return err
+	}
+
+	var best votingdb.BestChainState
+	best.Hash = blockHash
+	best.Height = blockHeight
+	best.CurrentTally = disconnectedTally.Serialize()
+
+	// Overwrite the previous best if we're disconnecting into a
+	// previous window.
+	if (disconnectedTally.CurrentBlockHeight+1)%
+		uint32(params.StakeDiffWindowSize) == 0 {
+		err = votingdb.DbPutBlockTally(dbTx, best.CurrentTally)
+		if err != nil {
+			return err
+		}
+	}
+
+	return votingdb.DbPutBestState(dbTx, best)
+}

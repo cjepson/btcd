@@ -24,7 +24,8 @@ func (b *BlockChain) upgradeToVersion2() error {
 	// for the genesis block, and then begin connecting stake nodes
 	// incrementally.
 	err := b.db.Update(func(dbTx database.Tx) error {
-		bestStakeNode, errLocal := stake.InitDatabaseState(dbTx, b.chainParams)
+		bestStakeNode, errLocal := stake.InitTicketDatabaseState(dbTx,
+			b.chainParams)
 		if errLocal != nil {
 			return errLocal
 		}

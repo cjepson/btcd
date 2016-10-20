@@ -1349,7 +1349,8 @@ func (b *BlockChain) createChainState() error {
 
 		// Initialize the stake buckets in the database, along with
 		// the best state for the stake database.
-		b.bestNode.stakeNode, err = stake.InitDatabaseState(dbTx, b.chainParams)
+		b.bestNode.stakeNode, err = stake.InitTicketDatabaseState(dbTx,
+			b.chainParams)
 		if err != nil {
 			return err
 		}
