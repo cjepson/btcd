@@ -406,7 +406,18 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 	err = testDb.Update(func(dbTx database.Tx) error {
 		for i := 1; i < numBlocks; i++ {
 			if int64(i) >= chaincfg.MainNetParams.StakeValidationHeight {
-				vbSlice = []uint16{0x6665, 0x6665, 0x6665, 0x6665, 0x6665}
+				switch i % 5 {
+				case 0:
+					vbSlice = []uint16{0x6665, 0x2345, 0x9999, 0xa0a1, 0xc432}
+				case 1:
+					vbSlice = []uint16{0x6687, 0x6689, 0x66bb, 0x66bb, 0x66e1}
+				case 2:
+					vbSlice = []uint16{0x3465, 0x5565, 0x6165, 0x65b6, 0xaaaa}
+				case 3:
+					vbSlice = []uint16{0xffff, 0x0000, 0x2342, 0x6444, 0xa333}
+				case 4:
+					vbSlice = []uint16{0x231b, 0xa343, 0xff34, 0x90bb}
+				}
 			}
 
 			bestTally, err = bestTally.ConnectBlockToTally(cache, dbTx,
@@ -438,6 +449,21 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 			if int64(i) < chaincfg.MainNetParams.StakeValidationHeight {
 				vbSlice = []uint16{}
 			}
+			if int64(i) >= chaincfg.MainNetParams.StakeValidationHeight {
+				switch i % 5 {
+				case 0:
+					vbSlice = []uint16{0x6665, 0x2345, 0x9999, 0xa0a1, 0xc432}
+				case 1:
+					vbSlice = []uint16{0x6687, 0x6689, 0x66bb, 0x66bb, 0x66e1}
+				case 2:
+					vbSlice = []uint16{0x3465, 0x5565, 0x6165, 0x65b6, 0xaaaa}
+				case 3:
+					vbSlice = []uint16{0xffff, 0x0000, 0x2342, 0x6444, 0xa333}
+				case 4:
+					vbSlice = []uint16{0x231b, 0xa343, 0xff34, 0x90bb}
+				}
+			}
+
 			bestTallyCopy := bestTally
 			talliesBackward[i-1] = bestTally
 
