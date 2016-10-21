@@ -7,7 +7,6 @@ package stake
 import (
 	"bytes"
 	"encoding/hex"
-	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -347,6 +346,13 @@ func TestAddingTallies(t *testing.T) {
 	}
 }
 
+// numBlocks is the number of "blocks" to add/remove below, including the
+// genesis block which is automatically skipped.
+const numBlocks = 1 + 99999
+
+// numTallies is the number of tallies to store and assess for correctness.
+const numTallies = numBlocks - 1
+
 // TestVotingDbAndSpoofedChain tests block connection, disconnect, and
 // a spoofed blockchain.
 func TestVotingDbAndSpoofedChain(t *testing.T) {
@@ -395,11 +401,10 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 
 	// Start adding some "blocks".
 	bestTally := *tally
-	var tallyAt5000 RollingVotingPrefixTally
-	var tallyAt25000 RollingVotingPrefixTally
+	var talliesForward [numTallies]RollingVotingPrefixTally
 	vbSlice := []uint16{}
 	err = testDb.Update(func(dbTx database.Tx) error {
-		for i := 1; i < 50000; i++ {
+		for i := 1; i < numBlocks; i++ {
 			if int64(i) >= chaincfg.MainNetParams.StakeValidationHeight {
 				vbSlice = []uint16{0x6665, 0x6665, 0x6665, 0x6665, 0x6665}
 			}
@@ -411,12 +416,7 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 				return err
 			}
 
-			switch i {
-			case 5000:
-				tallyAt5000 = bestTally
-			case 25000:
-				tallyAt25000 = bestTally
-			}
+			talliesForward[i-1] = bestTally
 
 			err = WriteConnectedBlockTally(dbTx, chainhash.Hash{byte(i)},
 				uint32(i), &bestTally, &chaincfg.MainNetParams)
@@ -432,52 +432,40 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 	}
 
 	// Go backwards, seeing if the state can be reverted.
+	var talliesBackward [numTallies]RollingVotingPrefixTally
 	err = testDb.Update(func(dbTx database.Tx) error {
-		for i := 49999; i >= 1; i-- {
+		for i := numBlocks - 1; i >= 1; i-- {
 			if int64(i) < chaincfg.MainNetParams.StakeValidationHeight {
 				vbSlice = []uint16{}
 			}
+			bestTallyCopy := bestTally
+			talliesBackward[i-1] = bestTally
 
-			//bestTallyCopy := bestTally
 			bestTally, err = bestTally.DisconnectBlockFromTally(cache, dbTx,
 				chainhash.Hash{byte(i)}, uint32(i), vbSlice, nil,
 				&chaincfg.MainNetParams)
 			if err != nil {
 				return err
 			}
-			fmt.Printf("best tally at height %v %v\n", i-1, bestTally)
 
-			var compareTally RollingVotingPrefixTally
-			equiv := true
-			switch i {
-			case 5001:
-				if bestTally != tallyAt5000 {
-					compareTally = tallyAt5000
-					equiv = false
-				}
-			case 25001:
-				if bestTally != tallyAt25000 {
-					compareTally = tallyAt25000
-					equiv = false
-				}
+			err = WriteDisconnectedBlockTally(dbTx, chainhash.Hash{byte(i)},
+				uint32(i), &bestTallyCopy, vbSlice, &chaincfg.MainNetParams)
+			if err != nil {
+				return err
 			}
-			if !equiv {
-				t.Errorf("non-equivalent disconnection tallies at height %v:"+
-					" got %v, want %v", bestTally, compareTally)
-			}
-
-			/*
-				err = WriteDisconnectedBlockTally(dbTx, chainhash.Hash{byte(i)},
-					uint32(i), &bestTallyCopy, vbSlice, &chaincfg.MainNetParams)
-				if err != nil {
-					return err
-				}
-			*/
 		}
 
 		return nil
 	})
 	if err != nil {
 		t.Errorf("unexpected error removing blocks: %v", err)
+	}
+
+	for i := range talliesForward {
+		if talliesForward[i] != talliesBackward[i] {
+			t.Errorf("non-equivalent disconnection tallies at height %v:"+
+				" backward %v, forward %v", i, talliesBackward[i],
+				talliesForward[i])
+		}
 	}
 }

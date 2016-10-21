@@ -413,10 +413,19 @@ func (r *RollingVotingPrefixTally) AddTally(tally RollingVotingPrefixTally) {
 	}
 }
 
+var zeroKey = BlockKey{chainhash.Hash{0x00}, 0}
+
 // FetchIntervalTally fetches a finalized interval tally from the cache or
 // database.  It returns an error if it can not find the relevant tally, which
 // should exist even if the block is on a sidechain.
-func FetchIntervalTally(key *BlockKey, cache RollingVotingPrefixTallyCache, dbTx database.Tx) (*RollingVotingPrefixTally, error) {
+func FetchIntervalTally(key *BlockKey, cache RollingVotingPrefixTallyCache, dbTx database.Tx, params *chaincfg.Params) (*RollingVotingPrefixTally, error) {
+	// Exception for the genesis block window.
+	if *key == zeroKey {
+		var tally RollingVotingPrefixTally
+		tally.CurrentIntervalBlock = BlockKey{*params.GenesisHash, 0}
+		return &tally, nil
+	}
+
 	if cache != nil {
 		tally, exists := cache[*key]
 		if exists {
@@ -492,7 +501,7 @@ func (r *RollingVotingPrefixTally) ConnectBlockToTally(intervalCache RollingVoti
 	// This is the final block in the interval window, so write it to the
 	// cache now.
 	if (tally.CurrentBlockHeight+1)%uint32(params.StakeDiffWindowSize) == 0 {
-		intervalCache[tally.LastIntervalBlock] = tally
+		intervalCache[tally.CurrentIntervalBlock] = tally
 	}
 
 	return tally, nil
@@ -566,7 +575,6 @@ func (r *RollingVotingPrefixTally) revert(blockHeight uint32, voteBitsSlice []ui
 	// a key block interval as well, so we roll back to the old state of the
 	// voting tally.
 	if blockHeight%uint32(params.StakeDiffWindowSize) == 0 {
-		fmt.Printf("revert height %v, LAST TALLY %v\n", blockHeight, lastIntervalTally)
 		*r = *lastIntervalTally
 	} else {
 		r.SubtractVoteBitsSlice(voteBitsSlice)
@@ -586,13 +594,11 @@ func (r *RollingVotingPrefixTally) revert(blockHeight uint32, voteBitsSlice []ui
 func (r *RollingVotingPrefixTally) DisconnectBlockFromTally(intervalCache RollingVotingPrefixTallyCache, dbTx database.Tx, blockHash chainhash.Hash, blockHeight uint32, voteBitsSlice []uint16, lastIntervalTally *RollingVotingPrefixTally, params *chaincfg.Params) (RollingVotingPrefixTally, error) {
 	tally := *r
 
-	// Search the cache.
+	// Search the cache and the database.
 	if lastIntervalTally == nil {
 		var err error
-		fmt.Printf("last interval %v\n", r.LastIntervalBlock)
 		lastIntervalTally, err = FetchIntervalTally(&r.LastIntervalBlock,
-			intervalCache, dbTx)
-		fmt.Printf("last tally fetched %v\n", lastIntervalTally)
+			intervalCache, dbTx, params)
 		if err != nil {
 			return RollingVotingPrefixTally{}, err
 		}
@@ -642,7 +648,6 @@ func WriteConnectedBlockTally(dbTx database.Tx, blockHash chainhash.Hash, blockH
 	best.CurrentTally = tally.Serialize()
 
 	if (tally.CurrentBlockHeight+1)%uint32(params.StakeDiffWindowSize) == 0 {
-		fmt.Printf("Put tally %x\n", best.CurrentTally[0:36])
 		err := votingdb.DbPutBlockTally(dbTx, best.CurrentTally)
 		if err != nil {
 			return err
