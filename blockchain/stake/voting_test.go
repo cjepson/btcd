@@ -7,10 +7,16 @@ package stake
 import (
 	"bytes"
 	"encoding/hex"
+	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
+	"github.com/decred/dcrd/chaincfg"
 	"github.com/decred/dcrd/chaincfg/chainhash"
+	"github.com/decred/dcrd/database"
+	_ "github.com/decred/dcrd/database/ffldb"
 )
 
 func bytesFromHex(s string) []byte {
@@ -344,5 +350,134 @@ func TestAddingTallies(t *testing.T) {
 // TestVotingDbAndSpoofedChain tests block connection, disconnect, and
 // a spoofed blockchain.
 func TestVotingDbAndSpoofedChain(t *testing.T) {
+	// Setup the database.
+	dbName := "ffldb_votingtest"
+	dbPath := filepath.Join(testDbRoot, dbName)
+	_ = os.RemoveAll(dbPath)
+	testDb, err := database.Create(testDbType, dbPath, chaincfg.MainNetParams.Net)
+	if err != nil {
+		t.Fatalf("error creating db: %v", err)
+	}
 
+	// Setup a teardown.
+	defer os.RemoveAll(dbPath)
+	defer os.RemoveAll(testDbRoot)
+	defer testDb.Close()
+
+	// Create the buckets and best state for the genesis
+	// block.
+	var tally *RollingVotingPrefixTally
+	err = testDb.Update(func(dbTx database.Tx) error {
+		tally, err = InitVotingDatabaseState(dbTx, &chaincfg.MainNetParams)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("error initializing voting db: %v", err)
+	}
+
+	// Load the cache.
+	var cache RollingVotingPrefixTallyCache
+	err = testDb.View(func(dbTx database.Tx) error {
+		cache, err = InitRollingTallyCache(dbTx, &chaincfg.MainNetParams)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("error initializing cache: %v", err)
+	}
+
+	// Start adding some "blocks".
+	bestTally := *tally
+	var tallyAt5000 RollingVotingPrefixTally
+	var tallyAt25000 RollingVotingPrefixTally
+	vbSlice := []uint16{}
+	err = testDb.Update(func(dbTx database.Tx) error {
+		for i := 1; i < 50000; i++ {
+			if int64(i) >= chaincfg.MainNetParams.StakeValidationHeight {
+				vbSlice = []uint16{0x6665, 0x6665, 0x6665, 0x6665, 0x6665}
+			}
+
+			bestTally, err = bestTally.ConnectBlockToTally(cache, dbTx,
+				chainhash.Hash{byte(i)}, uint32(i), vbSlice,
+				&chaincfg.MainNetParams)
+			if err != nil {
+				return err
+			}
+
+			switch i {
+			case 5000:
+				tallyAt5000 = bestTally
+			case 25000:
+				tallyAt25000 = bestTally
+			}
+
+			err = WriteConnectedBlockTally(dbTx, chainhash.Hash{byte(i)},
+				uint32(i), &bestTally, &chaincfg.MainNetParams)
+			if err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Errorf("unexpected error adding blocks: %v", err)
+	}
+
+	// Go backwards, seeing if the state can be reverted.
+	err = testDb.Update(func(dbTx database.Tx) error {
+		for i := 49999; i >= 1; i-- {
+			if int64(i) < chaincfg.MainNetParams.StakeValidationHeight {
+				vbSlice = []uint16{}
+			}
+
+			//bestTallyCopy := bestTally
+			bestTally, err = bestTally.DisconnectBlockFromTally(cache, dbTx,
+				chainhash.Hash{byte(i)}, uint32(i), vbSlice, nil,
+				&chaincfg.MainNetParams)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("best tally at height %v %v\n", i-1, bestTally)
+
+			var compareTally RollingVotingPrefixTally
+			equiv := true
+			switch i {
+			case 5001:
+				if bestTally != tallyAt5000 {
+					compareTally = tallyAt5000
+					equiv = false
+				}
+			case 25001:
+				if bestTally != tallyAt25000 {
+					compareTally = tallyAt25000
+					equiv = false
+				}
+			}
+			if !equiv {
+				t.Errorf("non-equivalent disconnection tallies at height %v:"+
+					" got %v, want %v", bestTally, compareTally)
+			}
+
+			/*
+				err = WriteDisconnectedBlockTally(dbTx, chainhash.Hash{byte(i)},
+					uint32(i), &bestTallyCopy, vbSlice, &chaincfg.MainNetParams)
+				if err != nil {
+					return err
+				}
+			*/
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Errorf("unexpected error removing blocks: %v", err)
+	}
 }

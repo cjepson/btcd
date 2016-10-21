@@ -208,7 +208,7 @@ type RollingVotingPrefixTally struct {
 
 // RollingVotingPrefixTallySize is the size of a serialized
 // RollingVotingPrefixTally The size is calculated as
-//   3x BlockKey (72 bytes) + 1x uint32s (4 bytes) +
+//   2x BlockKey (72 bytes) + 1x uint32 (4 bytes) +
 //   2x uint16s (4 bytes) + 7x VotingTallies (56 bytes)
 const RollingVotingPrefixTallySize = 72 + 4 + 4 + 56
 
@@ -424,24 +424,30 @@ func FetchIntervalTally(key *BlockKey, cache RollingVotingPrefixTallyCache, dbTx
 		}
 	}
 
-	var keyB [36]byte
-	buf := keyB[:]
-	key.SerializeInto(&buf, 0)
-	tallyB, err := votingdb.DbFetchBlockTally(dbTx, buf)
-	if err != nil {
-		return nil, stakeRuleError(ErrMissingTally, fmt.Sprintf("failed to "+
-			"find tally in the interval cache or interval bucket of the "+
-			"database: %v", err))
+	if dbTx != nil {
+		var keyB [36]byte
+		buf := keyB[:]
+		key.SerializeInto(&buf, 0)
+		tallyB, err := votingdb.DbFetchBlockTally(dbTx, buf)
+		if err != nil && err.(votingdb.DBError).ErrorCode !=
+			votingdb.ErrMissingKey {
+			return nil, err
+		}
+
+		if len(tallyB) > 0 {
+			var tally RollingVotingPrefixTally
+			err = tally.Deserialize(tallyB)
+			if err != nil {
+				return nil, err
+			}
+
+			return &tally, nil
+		}
 	}
 
-	var tally RollingVotingPrefixTally
-	err = tally.Deserialize(tallyB)
-	if err != nil {
-		return nil, err
-	}
-
-	return &tally, nil
-
+	return nil, stakeRuleError(ErrMissingTally, fmt.Sprintf("failed to "+
+		"find tally for key %v in the interval cache or interval bucket of the "+
+		"database", key))
 }
 
 // ConnectBlockToTally connects a "block" to a tally.  The only components of
@@ -464,12 +470,21 @@ func (r *RollingVotingPrefixTally) ConnectBlockToTally(intervalCache RollingVoti
 	}
 
 	// Quick sanity check.
-	if len(voteBitsSlice) <= int(params.TicketsPerBlock)/2 {
-		str := fmt.Sprintf("bad number of voters attempted to be connected "+
-			"to rolling tally (got %v, min %v)", len(voteBitsSlice),
-			((params.TicketsPerBlock)/2)+1)
-		return RollingVotingPrefixTally{},
-			stakeRuleError(ErrBadVotingConnectBlock, str)
+	if int64(blockHeight) < params.StakeValidationHeight {
+		if len(voteBitsSlice) > 0 {
+			return RollingVotingPrefixTally{},
+				stakeRuleError(ErrBadVotingConnectBlock, "got block with "+
+					"votebits before stake validation height when tallying")
+		}
+	}
+	if int64(blockHeight) >= params.StakeValidationHeight {
+		if len(voteBitsSlice) <= int(params.TicketsPerBlock)/2 {
+			str := fmt.Sprintf("bad number of voters attempted to be connected "+
+				"to rolling tally (got %v, min %v)", len(voteBitsSlice),
+				((params.TicketsPerBlock)/2)+1)
+			return RollingVotingPrefixTally{},
+				stakeRuleError(ErrBadVotingConnectBlock, str)
+		}
 	}
 
 	tally.AddVoteBitsSlice(voteBitsSlice)
@@ -540,10 +555,10 @@ func (r *RollingVotingPrefixTally) SubtractVoteBitsSlice(voteBitsSlice []uint16)
 // the passed lastIntervalTally instead of further subtracting votes (which
 // would result in underflow).
 func (r *RollingVotingPrefixTally) revert(blockHeight uint32, voteBitsSlice []uint16, lastIntervalTally *RollingVotingPrefixTally, params *chaincfg.Params) error {
-	if blockHeight != r.CurrentBlockHeight-1 {
-		str := fmt.Sprintf("revert called, but next block height does not "+
+	if blockHeight != r.CurrentBlockHeight {
+		str := fmt.Sprintf("revert called, but block height does not "+
 			"correspond to the expected prev block height (got %v, expect %v)",
-			blockHeight, r.CurrentBlockHeight-1)
+			blockHeight, r.CurrentBlockHeight)
 		return stakeRuleError(ErrBadVotingRemoveBlock, str)
 	}
 
@@ -551,12 +566,12 @@ func (r *RollingVotingPrefixTally) revert(blockHeight uint32, voteBitsSlice []ui
 	// a key block interval as well, so we roll back to the old state of the
 	// voting tally.
 	if blockHeight%uint32(params.StakeDiffWindowSize) == 0 {
+		fmt.Printf("revert height %v, LAST TALLY %v\n", blockHeight, lastIntervalTally)
 		*r = *lastIntervalTally
 	} else {
 		r.SubtractVoteBitsSlice(voteBitsSlice)
+		r.CurrentBlockHeight--
 	}
-
-	r.CurrentBlockHeight--
 
 	return nil
 }
@@ -568,14 +583,16 @@ func (r *RollingVotingPrefixTally) revert(blockHeight uint32, voteBitsSlice []ui
 // be restored.  This is passed as lastIntervalTally.  If this does not exist,
 // the passed cache and the database will be searched to see if this interval
 // tally can be found.
-func (r *RollingVotingPrefixTally) DisconnectBlockFromTally(blockHash chainhash.Hash, blockHeight uint32, voteBitsSlice []uint16, lastIntervalTally *RollingVotingPrefixTally, intervalCache RollingVotingPrefixTallyCache, dbTx database.Tx, params *chaincfg.Params) (RollingVotingPrefixTally, error) {
+func (r *RollingVotingPrefixTally) DisconnectBlockFromTally(intervalCache RollingVotingPrefixTallyCache, dbTx database.Tx, blockHash chainhash.Hash, blockHeight uint32, voteBitsSlice []uint16, lastIntervalTally *RollingVotingPrefixTally, params *chaincfg.Params) (RollingVotingPrefixTally, error) {
 	tally := *r
 
 	// Search the cache.
 	if lastIntervalTally == nil {
 		var err error
-		lastIntervalTally, err = FetchIntervalTally(&r.CurrentIntervalBlock,
+		fmt.Printf("last interval %v\n", r.LastIntervalBlock)
+		lastIntervalTally, err = FetchIntervalTally(&r.LastIntervalBlock,
 			intervalCache, dbTx)
+		fmt.Printf("last tally fetched %v\n", lastIntervalTally)
 		if err != nil {
 			return RollingVotingPrefixTally{}, err
 		}
@@ -625,7 +642,11 @@ func WriteConnectedBlockTally(dbTx database.Tx, blockHash chainhash.Hash, blockH
 	best.CurrentTally = tally.Serialize()
 
 	if (tally.CurrentBlockHeight+1)%uint32(params.StakeDiffWindowSize) == 0 {
-		votingdb.DbPutBlockTally(dbTx, best.CurrentTally)
+		fmt.Printf("Put tally %x\n", best.CurrentTally[0:36])
+		err := votingdb.DbPutBlockTally(dbTx, best.CurrentTally)
+		if err != nil {
+			return err
+		}
 	}
 
 	return votingdb.DbPutBestState(dbTx, best)
@@ -637,8 +658,8 @@ func WriteConnectedBlockTally(dbTx database.Tx, blockHash chainhash.Hash, blockH
 // here, because we know that disconnects are only on the mainchain and that the
 // mainchain MUST have the previous interval block in it.
 func WriteDisconnectedBlockTally(dbTx database.Tx, blockHash chainhash.Hash, blockHeight uint32, tally *RollingVotingPrefixTally, voteBitsSlice []uint16, params *chaincfg.Params) error {
-	disconnectedTally, err := tally.DisconnectBlockFromTally(blockHash,
-		blockHeight, voteBitsSlice, nil, nil, dbTx, params)
+	disconnectedTally, err := tally.DisconnectBlockFromTally(nil, dbTx,
+		blockHash, blockHeight, voteBitsSlice, nil, params)
 	if err != nil {
 		return err
 	}

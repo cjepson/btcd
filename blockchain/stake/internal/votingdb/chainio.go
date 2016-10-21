@@ -113,7 +113,7 @@ func DbFetchDatabaseInfo(dbTx database.Tx) (*DatabaseInfo, error) {
 //   Field                Type              Size
 //   block hash           chainhash.Hash    chainhash.HashSize
 //   block height         uint32            4 bytes
-//   current tally        []byte            136 bytes (preserialized)
+//   current tally        []byte            108 bytes (preserialized)
 // -----------------------------------------------------------------------------
 
 // minimumBestChainStateSize is the minimum serialized size of the best chain
@@ -218,7 +218,7 @@ func DbFetchBlockTally(dbTx database.Tx, blockKey []byte) ([]byte, error) {
 			fmt.Sprintf("short read of db tally data (got %v, min %v)",
 				len(v), 100))
 	}
-	serialized := make([]byte, 108)
+	serialized := make([]byte, 136)
 	copy(serialized[0:], blockKey[:])
 	copy(serialized[36:], v[:])
 
