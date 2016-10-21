@@ -638,6 +638,22 @@ func InitVotingDatabaseState(dbTx database.Tx, params *chaincfg.Params) (*Rollin
 	return &bestTally, nil
 }
 
+// LoadVotingDatabaseState loads the best chain state of the voting datatabase.
+func LoadVotingDatabaseState(dbTx database.Tx) (*RollingVotingPrefixTally, error) {
+	best, err := votingdb.DbFetchBestState(dbTx)
+	if err != nil {
+		return nil, err
+	}
+
+	var bestTally RollingVotingPrefixTally
+	err = bestTally.Deserialize(best.CurrentTally)
+	if err != nil {
+		return nil, err
+	}
+
+	return &bestTally, nil
+}
+
 // WriteConnectedBlockTally writes a block tally to the database if the block is
 // the last block in the block interval.  It also updates the current best block
 // tally in the best chain component of the database.

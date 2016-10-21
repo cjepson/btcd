@@ -113,6 +113,12 @@ func (b *BlockChain) upgrade() error {
 			return err
 		}
 	}
+	if b.dbInfo.version == 2 {
+		//err := b.upgradeToVersion3()
+		//if err != nil {
+		//	return err
+		//}
+	}
 
 	return nil
 }

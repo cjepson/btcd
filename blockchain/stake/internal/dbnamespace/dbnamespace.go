@@ -55,7 +55,7 @@ var (
 
 	// VotingChainStateKeyName is the name of the db key used to store the best
 	// chain state from the perspective of the stake voting database.
-	VotingChainStateKeyName = []byte("stakechainstate")
+	VotingChainStateKeyName = []byte("votingstakechainstate")
 
 	// IntervalBlockTallyBucket is the name of the db bucket used to house the
 	// rolling vote tallies for interval blocks in the tallying system.

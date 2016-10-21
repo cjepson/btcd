@@ -406,6 +406,7 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 	err = testDb.Update(func(dbTx database.Tx) error {
 		for i := 1; i < numBlocks; i++ {
 			if int64(i) >= chaincfg.MainNetParams.StakeValidationHeight {
+				vbSlice = []uint16{0x6665, 0x6665, 0x6665, 0x6665, 0x6665}
 				switch i % 5 {
 				case 0:
 					vbSlice = []uint16{0x6665, 0x2345, 0x9999, 0xa0a1, 0xc432}
@@ -439,17 +440,82 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 		return nil
 	})
 	if err != nil {
-		t.Errorf("unexpected error adding blocks: %v", err)
+		t.Fatalf("unexpected error adding blocks: %v", err)
 	}
 
 	// Go backwards, seeing if the state can be reverted.
 	var talliesBackward [numTallies]RollingVotingPrefixTally
+	for i := numBlocks - 1; i >= 1; i-- {
+		if int64(i) < chaincfg.MainNetParams.StakeValidationHeight {
+			vbSlice = []uint16{}
+		}
+		if int64(i) >= chaincfg.MainNetParams.StakeValidationHeight {
+			vbSlice = []uint16{0x6665, 0x6665, 0x6665, 0x6665, 0x6665}
+			switch i % 5 {
+			case 0:
+				vbSlice = []uint16{0x6665, 0x2345, 0x9999, 0xa0a1, 0xc432}
+			case 1:
+				vbSlice = []uint16{0x6687, 0x6689, 0x66bb, 0x66bb, 0x66e1}
+			case 2:
+				vbSlice = []uint16{0x3465, 0x5565, 0x6165, 0x65b6, 0xaaaa}
+			case 3:
+				vbSlice = []uint16{0xffff, 0x0000, 0x2342, 0x6444, 0xa333}
+			case 4:
+				vbSlice = []uint16{0x231b, 0xa343, 0xff34, 0x90bb}
+			}
+		}
+
+		talliesBackward[i-1] = bestTally
+
+		bestTally, err = bestTally.DisconnectBlockFromTally(cache, nil,
+			chainhash.Hash{byte(i)}, uint32(i), vbSlice, nil,
+			&chaincfg.MainNetParams)
+		if err != nil {
+			t.Fatalf("unexpected error removing blocks: %v", err)
+		}
+	}
+
+	for i := range talliesForward {
+		if talliesForward[i] != talliesBackward[i] {
+			t.Fatalf("non-equivalent disconnection tallies at height %v:"+
+				" backward %v, forward %v", i, talliesBackward[i],
+				talliesForward[i])
+		}
+	}
+
+	// Do it again, loading from the database and going backwards this
+	// time.  Reload the cache and the best tally manually.
+	err = testDb.View(func(dbTx database.Tx) error {
+		cache, err = InitRollingTallyCache(dbTx, &chaincfg.MainNetParams)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("error initializing cache going backwards: %v", err)
+	}
+	err = testDb.View(func(dbTx database.Tx) error {
+		bestTallyPtr, err := LoadVotingDatabaseState(dbTx)
+		if err != nil {
+			return err
+		}
+		bestTally = *bestTallyPtr
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("error reloading the best state: %v", err)
+	}
+
 	err = testDb.Update(func(dbTx database.Tx) error {
 		for i := numBlocks - 1; i >= 1; i-- {
 			if int64(i) < chaincfg.MainNetParams.StakeValidationHeight {
 				vbSlice = []uint16{}
 			}
 			if int64(i) >= chaincfg.MainNetParams.StakeValidationHeight {
+				vbSlice = []uint16{0x6665, 0x6665, 0x6665, 0x6665, 0x6665}
 				switch i % 5 {
 				case 0:
 					vbSlice = []uint16{0x6665, 0x2345, 0x9999, 0xa0a1, 0xc432}
@@ -484,12 +550,12 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 		return nil
 	})
 	if err != nil {
-		t.Errorf("unexpected error removing blocks: %v", err)
+		t.Fatalf("unexpected error removing blocks: %v", err)
 	}
 
 	for i := range talliesForward {
 		if talliesForward[i] != talliesBackward[i] {
-			t.Errorf("non-equivalent disconnection tallies at height %v:"+
+			t.Fatalf("non-equivalent disconnection tallies at height %v:"+
 				" backward %v, forward %v", i, talliesBackward[i],
 				talliesForward[i])
 		}

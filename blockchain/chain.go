@@ -91,13 +91,24 @@ type blockNode struct {
 	stakeUndoData  stake.UndoTicketDataSlice
 	ticketsSpent   []chainhash.Hash
 	ticketsRevoked []chainhash.Hash
+
+	// stakeVersion is the slice of voter versions for this block.
+	stakeVersion []uint32
+
+	// voteBitsSlice is the slice of vote bits for the voter of this
+	// block.  It is used in tallying.
+	voteBitsSlice []uint16
+
+	// rollingTally is the rolling tally of the stake voter's decisions,
+	// updated every block and considered immutable.
+	rollingTally *stake.RollingVotingPrefixTally
 }
 
 // newBlockNode returns a new block node for the given block header.  It is
 // completely disconnected from the chain and the workSum value is just the work
 // for the passed block.  The work sum is updated accordingly when the node is
 // inserted into a chain.
-func newBlockNode(blockHeader *wire.BlockHeader, blockSha *chainhash.Hash, height int64, ticketsSpent []chainhash.Hash, ticketsRevoked []chainhash.Hash) *blockNode {
+func newBlockNode(blockHeader *wire.BlockHeader, blockSha *chainhash.Hash, height int64, ticketsSpent []chainhash.Hash, ticketsRevoked []chainhash.Hash, voteBitsSlice []uint16) *blockNode {
 	// Make a copy of the hash so the node doesn't keep a reference to part
 	// of the full block/block header preventing it from being garbage
 	// collected.
@@ -108,6 +119,7 @@ func newBlockNode(blockHeader *wire.BlockHeader, blockSha *chainhash.Hash, heigh
 		header:         *blockHeader,
 		ticketsSpent:   ticketsSpent,
 		ticketsRevoked: ticketsRevoked,
+		voteBitsSlice:  voteBitsSlice,
 	}
 	return &node
 }
@@ -249,6 +261,12 @@ type BlockChain struct {
 	// so that the memory may be restored by the garbage collector if
 	// it is unlikely to be referenced in the future.
 	pruner *chainPruner
+
+	// rollingTallyCache and its corresponding rollingTallyCacheLock are
+	// used to quickly determine what tallies of votes are be over long
+	// distances.
+	rollingTallyCacheLock sync.RWMutex
+	rollingTallyCache     stake.RollingVotingPrefixTallyCache
 }
 
 // DisableVerify provides a mechanism to disable transaction script validation
@@ -489,7 +507,8 @@ func (b *BlockChain) loadBlockNode(dbTx database.Tx,
 
 	blockHeader := block.MsgBlock().Header
 	node := newBlockNode(&blockHeader, hash, int64(blockHeader.Height),
-		ticketsSpentInBlock(block), ticketsRevokedInBlock(block))
+		ticketsSpentInBlock(block), ticketsRevokedInBlock(block),
+		voteBitsForVotersInBlock(block))
 	node.inMainChain = true
 	prevHash := &blockHeader.PrevBlock
 
@@ -1177,8 +1196,15 @@ func (b *BlockChain) connectBlock(node *blockNode, block *dcrutil.Block,
 			return err
 		}
 
-		// Insert the block into the stake database.
+		// Insert the block into the stake ticket database.
 		err = stake.WriteConnectedBestNode(dbTx, stakeNode, node.hash)
+		if err != nil {
+			return err
+		}
+
+		// Insert the block into the stake voting database.
+		err = stake.WriteConnectedBlockTally(dbTx, node.hash, uint32(node.height),
+			node.rollingTally, b.chainParams)
 		if err != nil {
 			return err
 		}
@@ -1370,11 +1396,17 @@ func (b *BlockChain) disconnectBlock(node *blockNode, block *dcrutil.Block,
 			return err
 		}
 
+		// Write the stake ticket best node.
 		err = stake.WriteDisconnectedBestNode(dbTx, parentStakeNode,
 			node.parent.hash, childStakeNode.UndoData())
 		if err != nil {
 			return err
 		}
+
+		// Write the best chain data for the vote tallying.
+		err = stake.WriteDisconnectedBlockTally(dbTx, node.hash,
+			uint32(node.height), node.rollingTally, node.voteBitsSlice,
+			b.chainParams)
 
 		// Allow the index manager to call each of the currently active
 		// optional indexes with the block being disconnected so they
