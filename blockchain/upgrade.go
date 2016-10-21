@@ -104,6 +104,80 @@ func (b *BlockChain) upgradeToVersion2() error {
 	return nil
 }
 
+// upgradeToVersion3 upgrades a version 2 blockchain to version 3, allowing
+// use of the new on-disk vote tallying database.
+func (b *BlockChain) upgradeToVersion3() error {
+	log.Infof("Initializing upgrade to database version 3")
+	best := b.BestSnapshot()
+	progressLogger := progresslog.NewBlockProgressLogger("Upgraded", log)
+
+	// The upgrade is atomic, so there is no need to set the flag that
+	// the database is undergoing an upgrade here.  Get the stake node
+	// for the genesis block, and then begin connecting stake nodes
+	// incrementally.
+	err := b.db.Update(func(dbTx database.Tx) error {
+		bestTally, errLocal := stake.InitVotingDatabaseState(dbTx,
+			b.chainParams)
+		if errLocal != nil {
+			return errLocal
+		}
+
+		b.rollingTallyCache, errLocal = stake.InitRollingTallyCache(dbTx,
+			b.chainParams)
+		if errLocal != nil {
+			return errLocal
+		}
+
+		for i := int64(1); i <= best.Height; i++ {
+			block, errLocal := dbFetchBlockByHeight(dbTx, i)
+			if errLocal != nil {
+				return errLocal
+			}
+
+			// Iteratively connect the tallies in memory.
+			blockSha := block.Sha()
+			var tally stake.RollingVotingPrefixTally
+			tally, errLocal = bestTally.ConnectBlockToTally(b.rollingTallyCache,
+				dbTx, *blockSha, uint32(block.Height()),
+				voteBitsForVotersInBlock(block), b.chainParams)
+			if errLocal != nil {
+				return errLocal
+			}
+			bestTally = &tally
+
+			// Write the top block stake node to the database.
+			errLocal = stake.WriteConnectedBlockTally(dbTx, *blockSha,
+				uint32(block.Height()), bestTally, b.chainParams)
+			if errLocal != nil {
+				return errLocal
+			}
+
+			// Write the best block node when we reach it.
+			if i == best.Height {
+				b.bestNode.rollingTally = bestTally
+			}
+
+			progressLogger.LogBlockHeight(block, nil)
+		}
+
+		// Write the new database version.
+		b.dbInfo.version = 3
+		errLocal = dbPutDatabaseInfo(dbTx, b.dbInfo)
+		if errLocal != nil {
+			return errLocal
+		}
+
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	log.Infof("Upgrade to new stake database was successful!")
+
+	return nil
+}
+
 // upgrade applies all possible upgrades to the blockchain database iteratively,
 // updating old clients to the newest version.
 func (b *BlockChain) upgrade() error {
@@ -114,10 +188,10 @@ func (b *BlockChain) upgrade() error {
 		}
 	}
 	if b.dbInfo.version == 2 {
-		//err := b.upgradeToVersion3()
-		//if err != nil {
-		//	return err
-		//}
+		err := b.upgradeToVersion3()
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
