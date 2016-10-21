@@ -108,6 +108,11 @@ func reorgTestLong(t *testing.T) {
 		}
 	}
 
+	err = chain.TestPrunedStakeData()
+	if err != nil {
+		t.Fatalf("error %v", err)
+	}
+
 	// Ensure our blockchain is at the correct best tip
 	topBlock, _ := chain.GetTopBlock()
 	tipHash := topBlock.Sha()

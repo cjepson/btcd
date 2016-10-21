@@ -173,7 +173,7 @@ func (b *BlockChain) upgradeToVersion3() error {
 		return err
 	}
 
-	log.Infof("Upgrade to new stake database was successful!")
+	log.Infof("Upgrade to new vote tallying database was successful!")
 
 	return nil
 }

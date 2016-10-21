@@ -126,7 +126,7 @@ func (b *BlockChain) fetchStakeNode(node *blockNode) (*stake.Node, error) {
 		}
 	}
 
-	// We need to generate a path to the stake node and restore it
+	// We need to generate a path to the stake node and restore
 	// it through the entire path.  The bestNode stake node must
 	// always be filled in, so assume it is safe to begin working
 	// backwards from there.
@@ -267,8 +267,8 @@ func (b *BlockChain) fetchRollingTally(node *blockNode) (*stake.RollingVotingPre
 		}
 	}
 
-	// We need to generate a path to the stake node and restore it
-	// it through the entire path.  The bestNode stake node must
+	// We need to generate a path to the rolling tally and restore
+	// it through the entire path.  The bestNode tally must
 	// always be filled in, so assume it is safe to begin working
 	// backwards from there.
 	detachNodes, attachNodes, err := b.getReorganizeNodes(node)
@@ -277,27 +277,28 @@ func (b *BlockChain) fetchRollingTally(node *blockNode) (*stake.RollingVotingPre
 	}
 	current := b.bestNode
 
-	// Move backwards through the main chain, undoing the ticket
-	// treaps for each block.  The database is passed because the
-	// undo data and new tickets data for each block may not yet
-	// be filled in and may require the database to look up.
+	// Move backwards through the main chain, undoing the block
+	// tallies for each block.  The database and cache are passed
+	// because the data required to restore to an earlier state
+	// might be located in either the cache or the database.
 	err = b.db.View(func(dbTx database.Tx) error {
 		for e := detachNodes.Front(); e != nil; e = e.Next() {
 			n := e.Value.(*blockNode)
 			var tally stake.RollingVotingPrefixTally
 			var errLocal error
 			if n.rollingTally == nil {
+				fmt.Printf("current rolling tally %v\n", current.rollingTally)
 				tally, errLocal =
 					current.rollingTally.DisconnectBlockFromTally(
 						b.rollingTallyCache, dbTx, current.hash,
 						uint32(current.height), current.voteBitsSlice,
 						nil, b.chainParams)
+				if errLocal != nil {
+					return errLocal
+				}
 
+				n.rollingTally = &tally
 			}
-			if errLocal != nil {
-				return errLocal
-			}
-			n.rollingTally = &tally
 
 			current = n
 		}
@@ -308,21 +309,23 @@ func (b *BlockChain) fetchRollingTally(node *blockNode) (*stake.RollingVotingPre
 		return nil, err
 	}
 
-	// Detach the final block and get the filled in node for the fork
+	// Detach the final block and get the filled in tally for the fork
 	// point.
 	err = b.db.View(func(dbTx database.Tx) error {
 		var tally stake.RollingVotingPrefixTally
 		var errLocal error
 		if current.parent.rollingTally == nil {
+			fmt.Printf("current rolling tally 2 %v\n", current.rollingTally)
 			tally, errLocal = current.rollingTally.DisconnectBlockFromTally(
-				b.rollingTallyCache, dbTx, current.parent.hash,
-				uint32(current.parent.height), current.parent.voteBitsSlice,
+				b.rollingTallyCache, dbTx, current.hash,
+				uint32(current.height), current.voteBitsSlice,
 				nil, b.chainParams)
 			if errLocal != nil {
 				return errLocal
 			}
+
+			current.parent.rollingTally = &tally
 		}
-		current.parent.rollingTally = &tally
 		current = current.parent
 
 		return nil
@@ -331,8 +334,8 @@ func (b *BlockChain) fetchRollingTally(node *blockNode) (*stake.RollingVotingPre
 		return nil, err
 	}
 
-	// The node is at a fork point in the block chain, so just return
-	// this stake node.
+	// The tally is at a fork point in the block chain, so just return
+	// this tally.
 	if attachNodes.Len() == 0 {
 		if current.hash != node.hash ||
 			current.height != node.height {
@@ -343,10 +346,9 @@ func (b *BlockChain) fetchRollingTally(node *blockNode) (*stake.RollingVotingPre
 		return current.rollingTally, nil
 	}
 
-	// The requested node is on a side chain, so we need to apply the
-	// transactions and spend information from each of the nodes to attach.
-	// Not that side chain ticket data and undo data is always stored
-	// in memory, so there is not need to use the database here.
+	// The requested tally is on a side chain, so we need to apply the
+	// blocks from this sidechain to the current tally and write any
+	// interval states to the cache.
 	err = b.db.View(func(dbTx database.Tx) error {
 		for e := attachNodes.Front(); e != nil; e = e.Next() {
 			n := e.Value.(*blockNode)
@@ -360,9 +362,10 @@ func (b *BlockChain) fetchRollingTally(node *blockNode) (*stake.RollingVotingPre
 				if errLocal != nil {
 					return errLocal
 				}
+
+				n.rollingTally = &tally
 			}
 
-			n.rollingTally = &tally
 			current = n
 		}
 
@@ -373,4 +376,39 @@ func (b *BlockChain) fetchRollingTally(node *blockNode) (*stake.RollingVotingPre
 	}
 
 	return current.rollingTally, nil
+}
+
+func (b *BlockChain) TestPrunedStakeData() error {
+	node := b.bestNode
+
+	tallies := make([]stake.RollingVotingPrefixTally, int(node.height))
+	tallies[int(node.height)-1] = *node.rollingTally
+	for i := node.height - 1; i >= 1; i-- {
+		fmt.Printf("height %v\n", i)
+
+		node = node.parent
+		tallies[i-1] = *node.rollingTally
+		node.rollingTally = nil
+	}
+
+	node = b.bestNode
+	for i := node.height; i >= 1; i-- {
+		fmt.Printf("fetch node %v height %v\n", node.hash, i)
+		tally, err := b.fetchRollingTally(node)
+		if err != nil {
+			return err
+		}
+		if *tally != tallies[i-1] {
+			return fmt.Errorf("got not equal: %v, %v", node.hash, *tally, tallies[i])
+		}
+		fmt.Printf("tally got %v\n", tally)
+
+		if i != node.height {
+			node.rollingTally = nil
+		}
+
+		node = node.parent
+	}
+
+	return nil
 }
