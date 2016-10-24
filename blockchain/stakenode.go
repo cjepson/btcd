@@ -165,6 +165,12 @@ func (b *BlockChain) fetchStakeNode(node *blockNode) (*stake.Node, error) {
 	// point.
 	err = b.db.View(func(dbTx database.Tx) error {
 		var errLocal error
+		if current.stakeNode == nil {
+			return fmt.Errorf("missing stake node to finally detach when "+
+				"attempting to fetch stake node for hash %v, height %v",
+				node.hash, node.height)
+		}
+
 		if current.parent.stakeNode == nil {
 			current.parent.stakeNode, errLocal =
 				current.stakeNode.DisconnectNode(current.parent.header,
@@ -287,7 +293,7 @@ func (b *BlockChain) fetchRollingTally(node *blockNode) (*stake.RollingVotingPre
 			var tally stake.RollingVotingPrefixTally
 			var errLocal error
 			if n.rollingTally == nil {
-				fmt.Printf("current rolling tally %v\n", current.rollingTally)
+				//fmt.Printf("current rolling tally %v\n", current.rollingTally)
 				tally, errLocal =
 					current.rollingTally.DisconnectBlockFromTally(
 						b.rollingTallyCache, dbTx, current.hash,
@@ -315,7 +321,7 @@ func (b *BlockChain) fetchRollingTally(node *blockNode) (*stake.RollingVotingPre
 		var tally stake.RollingVotingPrefixTally
 		var errLocal error
 		if current.parent.rollingTally == nil {
-			fmt.Printf("current rolling tally 2 %v\n", current.rollingTally)
+			//fmt.Printf("current rolling tally 2 %v\n", current.rollingTally)
 			tally, errLocal = current.rollingTally.DisconnectBlockFromTally(
 				b.rollingTallyCache, dbTx, current.hash,
 				uint32(current.height), current.voteBitsSlice,
@@ -376,39 +382,4 @@ func (b *BlockChain) fetchRollingTally(node *blockNode) (*stake.RollingVotingPre
 	}
 
 	return current.rollingTally, nil
-}
-
-func (b *BlockChain) TestPrunedStakeData() error {
-	node := b.bestNode
-
-	tallies := make([]stake.RollingVotingPrefixTally, int(node.height))
-	tallies[int(node.height)-1] = *node.rollingTally
-	for i := node.height - 1; i >= 1; i-- {
-		fmt.Printf("height %v\n", i)
-
-		node = node.parent
-		tallies[i-1] = *node.rollingTally
-		node.rollingTally = nil
-	}
-
-	node = b.bestNode
-	for i := node.height; i >= 1; i-- {
-		fmt.Printf("fetch node %v height %v\n", node.hash, i)
-		tally, err := b.fetchRollingTally(node)
-		if err != nil {
-			return err
-		}
-		if *tally != tallies[i-1] {
-			return fmt.Errorf("got not equal: %v, %v", node.hash, *tally, tallies[i])
-		}
-		fmt.Printf("tally got %v\n", tally)
-
-		if i != node.height {
-			node.rollingTally = nil
-		}
-
-		node = node.parent
-	}
-
-	return nil
 }

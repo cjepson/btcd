@@ -273,13 +273,14 @@ func (b *BlockChain) maybeAcceptBlock(block *dcrutil.Block,
 
 	// Fetching a stake node could enable a new DoS vector, so restrict
 	// this only to blocks that are recent in history.
-	if newNode.height < b.bestNode.height-minMemoryNodes {
+	if newNode.height > b.bestNode.height-minMemoryNodes {
 		newNode.stakeNode, err = b.fetchStakeNode(newNode)
 		if err != nil {
 			return false, err
 		}
 		newNode.stakeUndoData = newNode.stakeNode.UndoData()
 	}
+	// fmt.Printf("h %v check %v hash %v stakenode %v\n", newNode.height, b.bestNode.height-minMemoryNodes, newNode.hash, newNode.stakeNode)
 
 	// Fetch the rolling vote tally for this block.
 	newNode.rollingTally, err = b.fetchRollingTally(newNode)

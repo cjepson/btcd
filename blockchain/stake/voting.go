@@ -597,7 +597,7 @@ func (r *RollingVotingPrefixTally) DisconnectBlockFromTally(intervalCache Rollin
 	// Search the cache and the database.
 	if lastIntervalTally == nil {
 		var err error
-		fmt.Printf("r.LastIntervalBlock %v\n", r.LastIntervalBlock)
+		//fmt.Printf("r.LastIntervalBlock %v\n", r.LastIntervalBlock)
 		lastIntervalTally, err = FetchIntervalTally(&r.LastIntervalBlock,
 			intervalCache, dbTx, params)
 		if err != nil {
@@ -605,7 +605,7 @@ func (r *RollingVotingPrefixTally) DisconnectBlockFromTally(intervalCache Rollin
 		}
 	}
 
-	fmt.Printf("last interval tally %v\n", lastIntervalTally)
+	//fmt.Printf("last interval tally %v\n", lastIntervalTally)
 	err := tally.revert(blockHeight, voteBitsSlice, lastIntervalTally, params)
 	if err != nil {
 		return RollingVotingPrefixTally{}, err
