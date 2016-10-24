@@ -278,7 +278,7 @@ func (r *RollingVotingPrefixTally) Deserialize(val []byte) error {
 // the first block in the interval.
 // TODO This cache stores the block key twice, to cut down on memory usage
 // in the future you could reconstruct from the k->v like database does.
-type RollingVotingPrefixTallyCache map[BlockKey]RollingVotingPrefixTally
+type RollingVotingPrefixTallyCache map[BlockKey]*RollingVotingPrefixTally
 
 // initCacheSize is how many interval windows into the past the cache should
 // restore on startup from the database.  It is equivalent to 4 months on
@@ -328,7 +328,7 @@ func InitRollingTallyCache(dbTx database.Tx, params *chaincfg.Params) (RollingVo
 			return nil, err
 		}
 
-		cache[currentKey] = currentTally
+		cache[currentKey] = &currentTally
 		currentKey = currentTally.LastIntervalBlock
 	}
 
@@ -429,7 +429,7 @@ func FetchIntervalTally(key *BlockKey, cache RollingVotingPrefixTallyCache, dbTx
 	if cache != nil {
 		tally, exists := cache[*key]
 		if exists {
-			return &tally, nil
+			return tally, nil
 		}
 	}
 
@@ -501,7 +501,7 @@ func (r *RollingVotingPrefixTally) ConnectBlockToTally(intervalCache RollingVoti
 	// This is the final block in the interval window, so write it to the
 	// cache now.
 	if (tally.CurrentBlockHeight+1)%uint32(params.StakeDiffWindowSize) == 0 {
-		intervalCache[tally.CurrentIntervalBlock] = tally
+		intervalCache[tally.CurrentIntervalBlock] = &tally
 	}
 
 	return tally, nil
@@ -738,8 +738,10 @@ func (r *RollingVotingPrefixTally) GenerateSummedTally(intervalCache RollingVoti
 	// Loop through the remaining intervals, going backwards through the
 	// chain until you successfully add all of the tallies.
 	currentKey := &r.LastIntervalBlock
+	var tallyLocal *RollingVotingPrefixTally
+	var err error
 	for i := uint32(0); i < intervals-1; i++ {
-		tallyLocal, err := FetchIntervalTally(currentKey, intervalCache, dbTx,
+		tallyLocal, err = FetchIntervalTally(currentKey, intervalCache, dbTx,
 			params)
 		if err != nil {
 			return nil, err
@@ -747,7 +749,98 @@ func (r *RollingVotingPrefixTally) GenerateSummedTally(intervalCache RollingVoti
 
 		tallySum.AddTally(*tallyLocal)
 		currentKey = &tallyLocal.LastIntervalBlock
+		tallySum.CurrentIntervalBlock = tallyLocal.CurrentIntervalBlock
+		tallySum.LastIntervalBlock = tallyLocal.LastIntervalBlock
 	}
 
 	return tallySum, nil
+}
+
+// VotingResults
+type VotingResults struct {
+	CurrentIntervalBlock BlockKey
+	LastIntervalBlock    BlockKey
+	BlockValid           uint64
+	Unused               uint64
+	Issues               [issuesLen][]bool
+}
+
+// determineIssueStatus determines whether or not an issue has been voted yes
+// or no for some interval.  Importantly, it has a numerator multiplier and
+// a denominator such that the number of votes required to give a yes vote is:
+//     (numeratorMul * total) / denominatorMul
+// For example, if we had a 75% threshold and a total of 720 yes votes and no
+// votes total, we would use 3 as the numerator multiplier and 4 as the
+// denominator to yield (3*720)/4 = 540 yes votes required to pass the issue.
+func (r *RollingVotingPrefixTally) determineIssueStatus(issue int, numeratorMul, denominator uint16) bool {
+	// Only yes or no votes count.
+	total := r.Issues[issue][IssueVoteYes] +
+		r.Issues[issue][IssueVoteNo]
+
+	needed := (numeratorMul * total) / denominator
+
+	// Edge case: if needed is somehow zero because nearly all
+	// the votes on the issue are abstain, make at least one
+	// vote required in order to give yes to the issue.
+	if needed == 0 {
+		needed++
+	}
+
+	if r.Issues[issue][IssueVoteYes] >= needed {
+		return true
+	}
+
+	return false
+}
+
+// GenerateVotingResults
+func (r *RollingVotingPrefixTally) GenerateVotingResults(intervalCache RollingVotingPrefixTallyCache, dbTx database.Tx, intervals int, params *chaincfg.Params) (*VotingResults, error) {
+	// Summed tallies should only be generated from tallies that are the
+	// last block in the window period.  If this is not at the correct
+	// height, throw an error.
+	if ((r.CurrentBlockHeight + 1) % uint32(params.StakeDiffWindowSize)) != 0 {
+		str := fmt.Sprintf("tried to sum incomplete tally at height %v",
+			r.CurrentBlockHeight)
+		return nil, stakeRuleError(ErrSumIncompleteTally, str)
+	}
+
+	// Must sum at least one interval, which is the current one.  You also
+	// Can not sum tallies from before the genesis block.
+	maxIntervals := int(r.CurrentBlockHeight+1) / int(params.StakeDiffWindowSize)
+	if intervals == 0 || intervals > maxIntervals {
+		str := fmt.Sprintf("tried to sum incomplete tally at height %v",
+			r.CurrentBlockHeight)
+		return nil, stakeRuleError(ErrTallyingIntervals, str)
+	}
+
+	votingResults := new(VotingResults)
+	for i := 0; i < issuesLen; i++ {
+		votingResults.Issues[i] = make([]bool, intervals, intervals)
+	}
+
+	// Loop through the remaining intervals, going backwards through the
+	// chain until you successfully add all of the tallies.
+	currentKey := &r.LastIntervalBlock
+	tallyLocal := r
+	var err error
+	for i := intervals - 1; i >= 0; i-- {
+		for j := 0; j < issuesLen; j++ {
+			votingResults.Issues[j][i] = tallyLocal.determineIssueStatus(j, 3, 4)
+		}
+		currentKey = &tallyLocal.LastIntervalBlock
+		votingResults.CurrentIntervalBlock = tallyLocal.CurrentIntervalBlock
+		votingResults.LastIntervalBlock = tallyLocal.LastIntervalBlock
+
+		// Get the next tally in the linked list if we're not at
+		// the last entry.
+		if i > 0 {
+			tallyLocal, err = FetchIntervalTally(currentKey, intervalCache, dbTx,
+				params)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	return votingResults, nil
 }

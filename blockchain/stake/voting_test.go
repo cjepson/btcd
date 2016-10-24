@@ -24,6 +24,8 @@ func bytesFromHex(s string) []byte {
 }
 
 func TestDecodingAndEncodingVoteBits(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		in   uint16
@@ -139,6 +141,8 @@ func TestDecodingAndEncodingVoteBits(t *testing.T) {
 // TestRollingVotingPrefixTallySerializing tests serializing and deserializing
 // for RollingVotingPrefixTally.
 func TestRollingVotingPrefixTallySerializing(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		in   RollingVotingPrefixTally
@@ -206,6 +210,8 @@ func TestRollingVotingPrefixTallySerializing(t *testing.T) {
 // TestBitsSliceAddingAndSubstracting tests adding and then substracting some vote
 // bits to/from a tally.
 func TestBitsSliceAddingAndSubstracting(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		tally    RollingVotingPrefixTally
@@ -277,6 +283,8 @@ func TestBitsSliceAddingAndSubstracting(t *testing.T) {
 // TestAddingTallies tests adding and then substracting some vote
 // bits to/from a tally.
 func TestAddingTallies(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name   string
 		tally1 RollingVotingPrefixTally
@@ -442,6 +450,28 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error adding blocks: %v", err)
 	}
+
+	var votingResults *VotingResults
+	err = testDb.View(func(dbTx database.Tx) error {
+		lastBestInterval, err :=
+			FetchIntervalTally(&bestTally.LastIntervalBlock, cache, dbTx,
+				simNetParams)
+		if err != nil {
+			return err
+		}
+
+		votingResults, err = lastBestInterval.GenerateVotingResults(cache,
+			dbTx, 500, simNetParams)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected fetching votingResults: %v", err)
+	}
+	t.Errorf("%v", votingResults)
 
 	// Go backwards, seeing if the state can be reverted.
 	var talliesBackward [numTallies]RollingVotingPrefixTally

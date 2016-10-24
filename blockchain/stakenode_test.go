@@ -359,6 +359,7 @@ func TestReorgTestLongForStakeDataEquivalence(t *testing.T) {
 	return
 }
 
+/*
 func TestTallyingonSpoofedNodes(t *testing.T) {
 	// Create a new database and chain instance to run tests against.
 	chain, teardownFunc, err := chainSetup("stakedataequivtests",
@@ -377,3 +378,4 @@ func TestTallyingonSpoofedNodes(t *testing.T) {
 	// block nodes.  After the block nodes are gone, recreate the
 	// sidechain and ensure that the results are the same.
 }
+*/
