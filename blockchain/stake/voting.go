@@ -507,34 +507,6 @@ func (r *RollingVotingPrefixTally) ConnectBlockToTally(intervalCache RollingVoti
 	return tally, nil
 }
 
-/*
-	// TODO handling of longer tallies?
-
-	// This is the final block in the key block window, so write it to that
-	// cache now after summing up the tally for the entire week.  To do so,
-	// we must sum up the interval tallies from params.VoteKeyBlockInterval /
-	// params.StakeDiffWindowSize many periods (14 on mainnet, corresponding
-	// to one week).  The key block tally is then stored inside its respective
-	// cache.
-	if (tally.CurrentBlockHeight+1)%uint32(params.StakeDiffWindowSize) == 0 {
-		tallySum := tally
-		currentKey := &tally.LastIntervalBlock
-		iterations := int(params.VoteKeyBlockInterval/
-			params.StakeDiffWindowSize) - 1
-		for i := 0; i < iterations-1; i++ {
-			tallyLocal, err := FetchIntervalTally(currentKey, intervalCache, dbTx)
-			if err != nil {
-				return RollingVotingPrefixTally{}, err
-			}
-
-			tallySum.AddTally(*tallyLocal)
-			currentKey = &tallyLocal.LastIntervalBlock
-		}
-		keyBlockCache[tally.LastKeyBlock] = tallySum
-	}
-
-*/
-
 // SubtractVoteBitsSlice subtracts a slice of vote bits to a tally,
 // extracting the relevant bits from each vote bits and then
 // incrementing the relevant portion of the talley.
@@ -703,4 +675,79 @@ func WriteDisconnectedBlockTally(dbTx database.Tx, blockHash chainhash.Hash, blo
 	}
 
 	return votingdb.DbPutBestState(dbTx, best)
+}
+
+// SummedVotingTally is a voting tally struct comparable to a voting tally but
+// with a wider unsigned integer to prevent issues with overflowing while summing
+// over large periods.
+type SummedVotingTally [4]uint64
+
+// RollingSummedTally is a tally of the decoded vote bits from a series of votes
+// over a large period of time than the stake difficulty windows.  Note that
+// uint64s are used instead of uint16s, because the latter may overflow.  The
+// tallies of the issues are arranged in a two dimensional array, compared to
+// the RollingVotingPrefixTally more generally used.
+type RollingSummedTally struct {
+	CurrentIntervalBlock BlockKey
+	LastIntervalBlock    BlockKey
+	CurrentBlockHeight   uint32
+	BlockValid           uint64
+	Unused               uint64
+	Issues               [issuesLen]SummedVotingTally
+}
+
+// AddTally adds two tallies together, storing the result in the original
+// tally.
+func (r *RollingSummedTally) AddTally(tally RollingVotingPrefixTally) {
+	r.BlockValid += uint64(tally.BlockValid)
+	r.Unused += uint64(tally.Unused)
+	for i := 0; i < issuesLen; i++ {
+		for j := 0; j < 4; j++ {
+			r.Issues[i][j] += uint64(tally.Issues[i][j])
+		}
+	}
+}
+
+// GenerateSummedTally
+func (r *RollingVotingPrefixTally) GenerateSummedTally(intervalCache RollingVotingPrefixTallyCache, dbTx database.Tx, intervals uint32, params *chaincfg.Params) (*RollingSummedTally, error) {
+	// Summed tallies should only be generated from tallies that are the
+	// last block in the window period.  If this is not at the correct
+	// height, throw an error.
+	if ((r.CurrentBlockHeight + 1) % uint32(params.StakeDiffWindowSize)) != 0 {
+		str := fmt.Sprintf("tried to sum incomplete tally at height %v",
+			r.CurrentBlockHeight)
+		return nil, stakeRuleError(ErrSumIncompleteTally, str)
+	}
+
+	// Must sum at least one interval, which is the current one.  You also
+	// Can not sum tallies from before the genesis block.
+	maxIntervals := (r.CurrentBlockHeight + 1) / uint32(params.StakeDiffWindowSize)
+	if intervals == 0 || intervals > maxIntervals {
+		str := fmt.Sprintf("tried to sum incomplete tally at height %v",
+			r.CurrentBlockHeight)
+		return nil, stakeRuleError(ErrTallyingIntervals, str)
+	}
+
+	// The current tally is the first interval.
+	tallySum := new(RollingSummedTally)
+	tallySum.CurrentIntervalBlock = r.CurrentIntervalBlock
+	tallySum.LastIntervalBlock = r.LastIntervalBlock
+	tallySum.CurrentBlockHeight = r.CurrentBlockHeight
+	tallySum.AddTally(*r)
+
+	// Loop through the remaining intervals, going backwards through the
+	// chain until you successfully add all of the tallies.
+	currentKey := &r.LastIntervalBlock
+	for i := uint32(0); i < intervals-1; i++ {
+		tallyLocal, err := FetchIntervalTally(currentKey, intervalCache, dbTx,
+			params)
+		if err != nil {
+			return nil, err
+		}
+
+		tallySum.AddTally(*tallyLocal)
+		currentKey = &tallyLocal.LastIntervalBlock
+	}
+
+	return tallySum, nil
 }

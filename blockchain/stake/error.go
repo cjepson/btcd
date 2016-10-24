@@ -188,6 +188,15 @@ const (
 	// ErrMissingTally indicates that a given voting tally for some
 	// interval period was missing from the cache or database.
 	ErrMissingTally
+
+	// ErrSumIncompleteTally indicates that the caller is attempting
+	// to sum a rolling tally from a block that does not correspond
+	// to the final block in the interval period.
+	ErrSumIncompleteTally
+
+	// ErrTallyingIntervals indicates that an invalid number of tallying
+	// intervals to sum was passed by the caller.
+	ErrTallyingIntervals
 )
 
 // Map of ErrorCode values back to their constant names for pretty printing.
@@ -234,6 +243,8 @@ var errorCodeStrings = map[ErrorCode]string{
 	ErrBadVotingConnectBlock: "ErrBadVotingConnectBlock",
 	ErrBadVotingRemoveBlock:  "ErrBadVotingRemoveBlock",
 	ErrMissingTally:          "ErrMissingTally",
+	ErrSumIncompleteTally:    "ErrSumIncompleteTally",
+	ErrTallyingIntervals:     "ErrTallyingIntervals",
 }
 
 // String returns the ErrorCode as a human-readable name.

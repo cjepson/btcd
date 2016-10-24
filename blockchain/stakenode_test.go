@@ -358,3 +358,22 @@ func TestReorgTestLongForStakeDataEquivalence(t *testing.T) {
 
 	return
 }
+
+func TestTallyingonSpoofedNodes(t *testing.T) {
+	// Create a new database and chain instance to run tests against.
+	chain, teardownFunc, err := chainSetup("stakedataequivtests",
+		TestSimNetParams)
+	if err != nil {
+		t.Errorf("Failed to setup chain instance: %v", err)
+		return
+	}
+	defer teardownFunc()
+
+	// Spoof a large number of nodes with varying voteBits settings
+	// and run them forwards.
+
+	// Generate a side chain and attempt to get the correctly set
+	// voteBits from there.  Store the results, then drop all the
+	// block nodes.  After the block nodes are gone, recreate the
+	// sidechain and ensure that the results are the same.
+}
