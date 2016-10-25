@@ -63,9 +63,9 @@ func stakeNodesEqual(a *stake.Node, b *stake.Node) error {
 	return nil
 }
 
-// pruneChildrenRecursivelyTest
+// pruneChildrenRecursivelyTest prunes the stake data present in a child node,
+// then prunes the stake data from any children of that child recursively.
 func (b *BlockChain) pruneChildrenRecursivelyTest(child *blockNode) {
-	// fmt.Printf("prune sidechain child node %v h %v of stake data\n", child.hash, child.height)
 	child.stakeNode = nil
 	child.rollingTally = nil
 
@@ -74,7 +74,8 @@ func (b *BlockChain) pruneChildrenRecursivelyTest(child *blockNode) {
 	}
 }
 
-// pruneFromTopBlock
+// pruneRecursivelyTest prunes the stake data from all nodes except the best
+// node.
 func (b *BlockChain) pruneRecursivelyTest() {
 	node := b.bestNode.parent
 
@@ -98,23 +99,24 @@ func (b *BlockChain) pruneRecursivelyTest() {
 	}
 }
 
-// fetchNodeChildrenFromNodeTest
+// fetchNodeChildrenFromNodeTest is a recursive function that searches for
+// a node in the children of the passed node.  If it finds the node, it writes
+// it to the passed map.
 func (b *BlockChain) fetchNodeChildrenFromNodeTest(child *blockNode, allNodes map[chainhash.Hash]*blockNode) {
-	//fmt.Printf("fetch children for hash %v\n", child.hash)
 	allNodes[child.hash] = child
 	for _, anotherChild := range child.children {
 		b.fetchNodeChildrenFromNodeTest(anotherChild, allNodes)
 	}
 }
 
-// fetchNode
+// fetchNodeTest is an internal testing function that scours the blockchain
+// looking for a node that corresponds to the passed hash.  It returns an
+// error if it fails to find the node.  Because it stores a map each time,
+// it is extremely expensive and should only be used during testing.
 func (b *BlockChain) fetchNodeTest(hash chainhash.Hash) (*blockNode, error) {
-	//fmt.Printf("fetch node %v\n", hash)
 	allNodes := make(map[chainhash.Hash]*blockNode)
-
 	current := b.bestNode
 	for {
-		//fmt.Printf("current iterate thru %v (parent %v)\n", current.hash, current.parent)
 		if current.hash == hash {
 			return current, nil
 		}
@@ -132,7 +134,6 @@ func (b *BlockChain) fetchNodeTest(hash chainhash.Hash) (*blockNode, error) {
 		} else {
 			var err error
 			current, err = b.getPrevNodeFromNode(current)
-			//fmt.Printf("getPrevNodeFromNode %v %v (genesis %v)\n", current, err, b.chainParams.GenesisHash)
 			if err != nil {
 				return nil, err
 			}
@@ -151,58 +152,43 @@ func (b *BlockChain) fetchNodeTest(hash chainhash.Hash) (*blockNode, error) {
 	return nil, fmt.Errorf("can't find node %v", hash)
 }
 
-// testPrunedStakeData
+// testPrunedStakeData tests stake ticket and tallying data from the blockchain
+// and then ensures that fetches of this data still work correctly and return
+// the same data as was originally set in memory before the pruning.
 func (b *BlockChain) testPrunedStakeData(hashes []chainhash.Hash) error {
 	// The list of hashes should be in order.  Fetch the last node and
 	// go backwards, storing all the intermediate stake data to check
 	// for equivalence after.
 	nodeStakeData := make([]struct {
-		node      *blockNode
-		stakeNode *stake.Node
-		//stakeUndoData stake.UndoTicketDataSlice
+		node         *blockNode
+		stakeNode    *stake.Node
 		rollingTally *stake.RollingVotingPrefixTally
 	}, len(hashes))
 
 	for i := len(hashes) - 1; i >= 0; i-- {
-		// fmt.Printf("doing this for %v (%v)\n", hashes[i], i)
 		n, err := b.fetchNodeTest(hashes[i])
 		if err != nil {
 			return err
 		}
 
-		// fmt.Printf("nodeStakeData[i].stakeNode %v\n", nodeStakeData[i].stakeNode)
-
 		nodeStakeData[i].node = n
 		nodeStakeData[i].stakeNode = n.stakeNode
-		//nodeStakeData[i].stakeUndoData = n.stakeUndoData
 		nodeStakeData[i].rollingTally = n.rollingTally
 	}
 
 	for i := len(hashes) - 1; i >= 0; i-- {
-		//fmt.Printf("fetch node %v height %v\n", node.hash, i)
 		b.pruneRecursivelyTest()
 
 		stakeNode, err := b.fetchStakeNode(nodeStakeData[i].node)
 		if err != nil {
 			return err
 		}
-		// fmt.Printf("i %v\n", i)
 		if err = stakeNodesEqual(stakeNode,
 			nodeStakeData[i].stakeNode); err != nil {
 			return fmt.Errorf("got not equal stake nodes at block %v: %v, %v (%v)",
 				nodeStakeData[i].node.hash, stakeNode,
 				nodeStakeData[i].stakeNode, err)
 		}
-
-		// The stake undo data should now be set correctly, too.
-		/*
-			if !reflect.DeepEqual(nodeStakeData[i].node.stakeUndoData,
-				nodeStakeData[i].stakeUndoData) {
-				return fmt.Errorf("got not equal stake undo data at block %v: %v, %v",
-					nodeStakeData[i].node.hash, nodeStakeData[i].node.stakeUndoData,
-					nodeStakeData[i].stakeUndoData)
-			}
-		*/
 
 		tally, err := b.fetchRollingTally(nodeStakeData[i].node)
 		if err != nil {
@@ -213,14 +199,15 @@ func (b *BlockChain) testPrunedStakeData(hashes []chainhash.Hash) error {
 				nodeStakeData[i].node.hash, *tally,
 				*nodeStakeData[i].rollingTally)
 		}
-		//fmt.Printf("tally got %v\n", tally)
-
 	}
 
 	return nil
 }
 
-// TestReorgTestLongForStakeDataEquivalence does a single, large reorganization.
+// TestReorgTestLongForStakeDataEquivalence performs a long reorganization and
+// ensures the correct fetching of stake data for a mainchain and its sidechain
+// by calling testPrunedStakeData at various times when manipulating the
+// blockchain.
 func TestReorgTestLongForStakeDataEquivalence(t *testing.T) {
 	// Create a new database and chain instance to run tests against.
 	chain, teardownFunc, err := chainSetup("stakedataequivtests",
@@ -234,7 +221,6 @@ func TestReorgTestLongForStakeDataEquivalence(t *testing.T) {
 	// The genesis block should fail to connect since it's already
 	// inserted.
 	genesisBlock := TestSimNetParams.GenesisBlock
-	//fmt.Printf("genesis sha %v\n", genesisBlock.Transactions[0].TxSha())
 	err = chain.CheckConnectBlock(dcrutil.NewBlock(genesisBlock))
 	if err == nil {
 		t.Errorf("CheckConnectBlock: Did not receive expected error")
@@ -277,8 +263,6 @@ func TestReorgTestLongForStakeDataEquivalence(t *testing.T) {
 
 		blSha := bl.Sha()
 		mainchainBlockHashes[i-1] = *blSha
-
-		//fmt.Printf("put node %v (best %v) mainchain %v orphan %v\n", blSha, chain.stateSnapshot.Hash, mainchain, orphan)
 	}
 
 	// Prune the stake data and test for each block.
@@ -327,7 +311,6 @@ func TestReorgTestLongForStakeDataEquivalence(t *testing.T) {
 		}
 		bl.SetHeight(int64(i))
 
-		// var mainchain, orphan bool
 		_, _, err = chain.ProcessBlock(bl, timeSource, BFNone)
 		if err != nil {
 			t.Fatalf("ProcessBlock error: %v", err.Error())
@@ -335,7 +318,6 @@ func TestReorgTestLongForStakeDataEquivalence(t *testing.T) {
 
 		blSha := bl.Sha()
 		sidechainBlockHashes = append(sidechainBlockHashes, *blSha)
-		// fmt.Printf("put node %v (best %v) mainchain %v orphan %v\n", blSha, chain.stateSnapshot.Hash, mainchain, orphan)
 	}
 
 	// Ensure our blockchain is at the correct best tip

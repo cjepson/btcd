@@ -293,7 +293,6 @@ func (b *BlockChain) fetchRollingTally(node *blockNode) (*stake.RollingVotingPre
 			var tally stake.RollingVotingPrefixTally
 			var errLocal error
 			if n.rollingTally == nil {
-				//fmt.Printf("current rolling tally %v\n", current.rollingTally)
 				tally, errLocal =
 					current.rollingTally.DisconnectBlockFromTally(
 						b.rollingTallyCache, dbTx, current.hash,
@@ -321,7 +320,6 @@ func (b *BlockChain) fetchRollingTally(node *blockNode) (*stake.RollingVotingPre
 		var tally stake.RollingVotingPrefixTally
 		var errLocal error
 		if current.parent.rollingTally == nil {
-			//fmt.Printf("current rolling tally 2 %v\n", current.rollingTally)
 			tally, errLocal = current.rollingTally.DisconnectBlockFromTally(
 				b.rollingTallyCache, dbTx, current.hash,
 				uint32(current.height), current.voteBitsSlice,

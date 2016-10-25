@@ -569,7 +569,6 @@ func (r *RollingVotingPrefixTally) DisconnectBlockFromTally(intervalCache Rollin
 	// Search the cache and the database.
 	if lastIntervalTally == nil {
 		var err error
-		//fmt.Printf("r.LastIntervalBlock %v\n", r.LastIntervalBlock)
 		lastIntervalTally, err = FetchIntervalTally(&r.LastIntervalBlock,
 			intervalCache, dbTx, params)
 		if err != nil {
@@ -577,7 +576,6 @@ func (r *RollingVotingPrefixTally) DisconnectBlockFromTally(intervalCache Rollin
 		}
 	}
 
-	//fmt.Printf("last interval tally %v\n", lastIntervalTally)
 	err := tally.revert(blockHeight, voteBitsSlice, lastIntervalTally, params)
 	if err != nil {
 		return RollingVotingPrefixTally{}, err
@@ -826,7 +824,6 @@ func (r *RollingVotingPrefixTally) determineIssueStatus(issue int, numeratorMul,
 		needed++
 	}
 
-	//fmt.Printf("issue %v yes %v, no %v, needed %v\n", issue, r.Issues[issue][IssueVoteYes], r.Issues[issue][IssueVoteNo], needed)
 	if r.Issues[issue][IssueVoteYes] >= needed {
 		return VerdictYes
 	}
@@ -876,7 +873,6 @@ func (r *RollingVotingPrefixTally) GenerateVotingResults(intervalCache RollingVo
 	var err error
 	for i := intervals - 1; i >= 0; i-- {
 		for j := 0; j < issuesLen; j++ {
-			//fmt.Printf("Interval #%v -->", i)
 			votingResults.Issues[j][i] = tallyLocal.determineIssueStatus(j,
 				params.VotingIssueMultiplier, params.VotingIssueDivisor)
 		}
