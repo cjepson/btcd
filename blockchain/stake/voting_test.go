@@ -455,13 +455,14 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 	err = testDb.View(func(dbTx database.Tx) error {
 		lastBestInterval, err :=
 			FetchIntervalTally(&bestTally.LastIntervalBlock, cache, dbTx,
-				simNetParams)
+				&chaincfg.MainNetParams)
 		if err != nil {
 			return err
 		}
 
 		votingResults, err = lastBestInterval.GenerateVotingResults(cache,
-			dbTx, 500, simNetParams)
+			dbTx, chaincfg.MainNetParams.VotingIntervals,
+			&chaincfg.MainNetParams)
 		if err != nil {
 			return err
 		}

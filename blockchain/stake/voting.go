@@ -708,7 +708,12 @@ func (r *RollingSummedTally) AddTally(tally RollingVotingPrefixTally) {
 	}
 }
 
-// GenerateSummedTally
+// GenerateSummedTally generates a summation of all the values for issues and
+// their votes.  It uses uint64s to prevent overflows when summing across very
+// long intervals.  The intervals passed are equivalent to the stake difficulty
+// window sizes, that is, one interval is 144 blocks on mainnet.  The rolling
+// tally this is called on must be a completed tally, that is, it must be the
+// last block in the interval voting window.
 func (r *RollingVotingPrefixTally) GenerateSummedTally(intervalCache RollingVotingPrefixTallyCache, dbTx database.Tx, intervals uint32, params *chaincfg.Params) (*RollingSummedTally, error) {
 	// Summed tallies should only be generated from tallies that are the
 	// last block in the window period.  If this is not at the correct
@@ -756,13 +761,47 @@ func (r *RollingVotingPrefixTally) GenerateSummedTally(intervalCache RollingVoti
 	return tallySum, nil
 }
 
+// Verdict is a voting outcome for a single interval.  It indicates whether or
+// not the voters have come to a consensus in this interval, and what the
+// consensus is.
+type Verdict uint8
+
+// String satisfies the stringer interface for a Verdict.
+func (v Verdict) String() string {
+	switch v {
+	case VerdictUndecided:
+		return "undecided"
+	case VerdictYes:
+		return "yes"
+	case VerdictNo:
+		return "no"
+	}
+
+	return "error (unknown verdict type)"
+}
+
+const (
+	// VerdictUndecided indicates that the voters for this interval have
+	// not yet come to a consensus.
+	VerdictUndecided = iota
+
+	// VerdictYes indicates that the voters for this interval have come to
+	// the consensus 'yes'.
+	VerdictYes
+
+	// VerdictNo indicates that the voters for this interval have come to
+	// the consensus 'no'.
+	VerdictNo
+)
+
 // VotingResults
 type VotingResults struct {
 	CurrentIntervalBlock BlockKey
 	LastIntervalBlock    BlockKey
 	BlockValid           uint64
 	Unused               uint64
-	Issues               [issuesLen][]bool
+	Issues               [issuesLen][]Verdict
+	Verdict              [issuesLen]Verdict
 }
 
 // determineIssueStatus determines whether or not an issue has been voted yes
@@ -772,7 +811,7 @@ type VotingResults struct {
 // For example, if we had a 75% threshold and a total of 720 yes votes and no
 // votes total, we would use 3 as the numerator multiplier and 4 as the
 // denominator to yield (3*720)/4 = 540 yes votes required to pass the issue.
-func (r *RollingVotingPrefixTally) determineIssueStatus(issue int, numeratorMul, denominator uint16) bool {
+func (r *RollingVotingPrefixTally) determineIssueStatus(issue int, numeratorMul, denominator uint16) Verdict {
 	// Only yes or no votes count.
 	total := r.Issues[issue][IssueVoteYes] +
 		r.Issues[issue][IssueVoteNo]
@@ -787,13 +826,23 @@ func (r *RollingVotingPrefixTally) determineIssueStatus(issue int, numeratorMul,
 	}
 
 	if r.Issues[issue][IssueVoteYes] >= needed {
-		return true
+		return VerdictYes
+	}
+	if r.Issues[issue][IssueVoteNo] >= needed {
+		return VerdictNo
 	}
 
-	return false
+	return VerdictUndecided
 }
 
-// GenerateVotingResults
+// GenerateVotingResults generates voting results from the passed interval
+// window's tally forward through the number of intervals in the past that
+// are requested.  For each issue, it creates a slice of verdicts for each
+// interval, and sets the verdict to be yes if the issue meets the network
+// requirements for having been voted yes, no if the same is true for no.
+// If consensus has not yet been met on the issue, it returns an undecided
+// verdict. The rolling tally this is called on must be a completed tally,
+// that is, it must be the last block in the interval voting window.
 func (r *RollingVotingPrefixTally) GenerateVotingResults(intervalCache RollingVotingPrefixTallyCache, dbTx database.Tx, intervals int, params *chaincfg.Params) (*VotingResults, error) {
 	// Summed tallies should only be generated from tallies that are the
 	// last block in the window period.  If this is not at the correct
@@ -815,7 +864,7 @@ func (r *RollingVotingPrefixTally) GenerateVotingResults(intervalCache RollingVo
 
 	votingResults := new(VotingResults)
 	for i := 0; i < issuesLen; i++ {
-		votingResults.Issues[i] = make([]bool, intervals, intervals)
+		votingResults.Issues[i] = make([]Verdict, intervals, intervals)
 	}
 
 	// Loop through the remaining intervals, going backwards through the
@@ -825,11 +874,16 @@ func (r *RollingVotingPrefixTally) GenerateVotingResults(intervalCache RollingVo
 	var err error
 	for i := intervals - 1; i >= 0; i-- {
 		for j := 0; j < issuesLen; j++ {
-			votingResults.Issues[j][i] = tallyLocal.determineIssueStatus(j, 3, 4)
+			votingResults.Issues[j][i] = tallyLocal.determineIssueStatus(j,
+				params.VotingIssueMultiplier, params.VotingIssueDivisor)
 		}
 		currentKey = &tallyLocal.LastIntervalBlock
-		votingResults.CurrentIntervalBlock = tallyLocal.CurrentIntervalBlock
 		votingResults.LastIntervalBlock = tallyLocal.LastIntervalBlock
+
+		// Preserve the first interval used in the verdict determination.
+		if i == intervals-1 {
+			votingResults.CurrentIntervalBlock = tallyLocal.CurrentIntervalBlock
+		}
 
 		// Get the next tally in the linked list if we're not at
 		// the last entry.
@@ -838,6 +892,39 @@ func (r *RollingVotingPrefixTally) GenerateVotingResults(intervalCache RollingVo
 				params)
 			if err != nil {
 				return nil, err
+			}
+		}
+	}
+
+	// Calculate the 'verdict' by checking to see if the it's
+	// entirely set to either 'yes' or 'no' for all of the
+	// intervals for the issue.
+	for j := 0; j < issuesLen; j++ {
+		votingResults.Verdict[j] = VerdictUndecided
+		allYes := true
+		allNo := true
+		for i := intervals - 1; i >= 0; i-- {
+			if votingResults.Issues[j][i] == VerdictNo ||
+				votingResults.Issues[j][i] == VerdictUndecided {
+				allYes = false
+			}
+			if votingResults.Issues[j][i] == VerdictYes ||
+				votingResults.Issues[j][i] == VerdictUndecided {
+				allNo = false
+			}
+
+			// Both yes and no can not be set to true.  This is an error
+			// if it occurs.
+			if allYes == true && allYes == allNo {
+				return nil, stakeRuleError(ErrMemoryCorruption, "a verdict "+
+					"returned both yes and no, which should be impossible")
+			}
+
+			if allYes {
+				votingResults.Verdict[j] = VerdictYes
+			}
+			if allNo {
+				votingResults.Verdict[j] = VerdictNo
 			}
 		}
 	}
