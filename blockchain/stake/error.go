@@ -189,11 +189,6 @@ const (
 	// interval period was missing from the cache or database.
 	ErrMissingTally
 
-	// ErrSumIncompleteTally indicates that the caller is attempting
-	// to sum a rolling tally from a block that does not correspond
-	// to the final block in the interval period.
-	ErrSumIncompleteTally
-
 	// ErrTallyingIntervals indicates that an invalid number of tallying
 	// intervals to sum was passed by the caller.
 	ErrTallyingIntervals
@@ -243,7 +238,6 @@ var errorCodeStrings = map[ErrorCode]string{
 	ErrBadVotingConnectBlock: "ErrBadVotingConnectBlock",
 	ErrBadVotingRemoveBlock:  "ErrBadVotingRemoveBlock",
 	ErrMissingTally:          "ErrMissingTally",
-	ErrSumIncompleteTally:    "ErrSumIncompleteTally",
 	ErrTallyingIntervals:     "ErrTallyingIntervals",
 }
 

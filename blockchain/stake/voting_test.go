@@ -115,6 +115,20 @@ func TestDecodingAndEncodingVoteBits(t *testing.T) {
 				},
 			},
 		},
+		{
+			"yes and issue 3 yes, issue 4 no",
+			0x0241,
+			DecodedVoteBitsPrefix{
+				BlockValid: true,
+				Unused:     false,
+				Issues: [7]IssueVote{
+					IssueVoteUndefined, IssueVoteUndefined,
+					IssueVoteYes, IssueVoteNo,
+					IssueVoteUndefined, IssueVoteUndefined,
+					IssueVoteUndefined,
+				},
+			},
+		},
 	}
 
 	// Encoding.
@@ -414,7 +428,6 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 	err = testDb.Update(func(dbTx database.Tx) error {
 		for i := 1; i < numBlocks; i++ {
 			if int64(i) >= chaincfg.MainNetParams.StakeValidationHeight {
-				vbSlice = []uint16{0x6665, 0x6665, 0x6665, 0x6665, 0x6665}
 				switch i % 5 {
 				case 0:
 					vbSlice = []uint16{0x6665, 0x2345, 0x9999, 0xa0a1, 0xc432}
@@ -472,7 +485,6 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected fetching votingResults: %v", err)
 	}
-	t.Errorf("%v", votingResults)
 
 	// Go backwards, seeing if the state can be reverted.
 	var talliesBackward [numTallies]RollingVotingPrefixTally
@@ -481,7 +493,6 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 			vbSlice = []uint16{}
 		}
 		if int64(i) >= chaincfg.MainNetParams.StakeValidationHeight {
-			vbSlice = []uint16{0x6665, 0x6665, 0x6665, 0x6665, 0x6665}
 			switch i % 5 {
 			case 0:
 				vbSlice = []uint16{0x6665, 0x2345, 0x9999, 0xa0a1, 0xc432}
@@ -546,7 +557,6 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 				vbSlice = []uint16{}
 			}
 			if int64(i) >= chaincfg.MainNetParams.StakeValidationHeight {
-				vbSlice = []uint16{0x6665, 0x6665, 0x6665, 0x6665, 0x6665}
 				switch i % 5 {
 				case 0:
 					vbSlice = []uint16{0x6665, 0x2345, 0x9999, 0xa0a1, 0xc432}
@@ -589,6 +599,282 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 			t.Fatalf("non-equivalent disconnection tallies at height %v:"+
 				" backward %v, forward %v", i, talliesBackward[i],
 				talliesForward[i])
+		}
+	}
+}
+
+// TestTallyingAndVerdicts tests the tallying and verdict supplying functions
+// to ensure that the operate correctly, even in edge cases.
+func TestTallyingAndVerdicts(t *testing.T) {
+	t.Parallel()
+	params := &chaincfg.MainNetParams
+
+	tests := []struct {
+		name      string
+		numBlocks int64
+		intervals int
+		votebits  func(int64, int64) []uint16
+		verdict   [issuesLen]Verdict
+		err       error
+	}{
+		{
+			"issue #1 is no, issue #2 is no, issue #3 is yes, issue #4 is no",
+			49968, // 347 intervals
+			params.VotingIntervals,
+			func(i, numBlocks int64) []uint16 {
+				if i >= chaincfg.MainNetParams.StakeValidationHeight {
+					switch i % 5 {
+					case 0:
+						return []uint16{0x0241, 0x0241, 0x0241, 0x0241, 0xc432}
+					case 1:
+						return []uint16{0x0241, 0x0241, 0x0241, 0x0241, 0x66e1}
+					case 2:
+						return []uint16{0x0241, 0x0241, 0x0241, 0x0241, 0xaaaa}
+					case 3:
+						return []uint16{0x0241, 0x0241, 0x0241, 0x0241, 0x0901}
+					case 4:
+						return []uint16{0x0241, 0x0241, 0x0241, 0x90bb}
+					}
+				}
+
+				return []uint16{}
+			},
+			[issuesLen]Verdict{VerdictNo, VerdictNo,
+				VerdictYes, VerdictNo, VerdictUndecided,
+				VerdictUndecided, VerdictUndecided},
+			nil,
+		},
+		{
+			"issue #3 is yes, issue #4 is no by 1 vote",
+			49968, // 347 intervals
+			params.VotingIntervals,
+			func(i, numBlocks int64) []uint16 {
+				if i >= chaincfg.MainNetParams.StakeValidationHeight {
+					if i == numBlocks-1 {
+						return []uint16{0x0141, 0x0141, 0x0141, 0x0241, 0x0241}
+					}
+
+					switch i % 4 {
+					case 0:
+						return []uint16{0x0241, 0x0241, 0x0241, 0x0241, 0x0241}
+					case 1:
+						return []uint16{0x0241, 0x0241, 0x0241, 0x0241, 0x0241}
+					case 2:
+						return []uint16{0x0141, 0x0141, 0x0241, 0x0241, 0x0241}
+					case 3:
+						return []uint16{0x0141, 0x0141, 0x0141, 0x0241, 0x0241}
+					}
+				}
+
+				return []uint16{}
+			},
+			[issuesLen]Verdict{VerdictUndecided, VerdictUndecided,
+				VerdictYes, VerdictNo, VerdictUndecided,
+				VerdictUndecided, VerdictUndecided},
+			nil,
+		},
+		{
+			"issue #3 is yes, issue #4 is undecided by 1 vote",
+			49968, // 347 intervals
+			params.VotingIntervals,
+			func(i, numBlocks int64) []uint16 {
+				if i >= chaincfg.MainNetParams.StakeValidationHeight {
+					if i == numBlocks-1 {
+						return []uint16{0x0141, 0x0141, 0x0141, 0x0241, 0x0141}
+					}
+
+					switch i % 4 {
+					case 0:
+						return []uint16{0x0241, 0x0241, 0x0241, 0x0241, 0x0241}
+					case 1:
+						return []uint16{0x0241, 0x0241, 0x0241, 0x0241, 0x0241}
+					case 2:
+						return []uint16{0x0141, 0x0141, 0x0241, 0x0241, 0x0241}
+					case 3:
+						return []uint16{0x0141, 0x0141, 0x0141, 0x0241, 0x0241}
+					}
+				}
+
+				return []uint16{}
+			},
+			[issuesLen]Verdict{VerdictUndecided, VerdictUndecided,
+				VerdictYes, VerdictUndecided, VerdictUndecided,
+				VerdictUndecided, VerdictUndecided},
+			nil,
+		},
+		{
+			"issue #3 single yes vote, rest abstain leading to yes",
+			49968, // 347 intervals
+			params.VotingIntervals,
+			func(i, numBlocks int64) []uint16 {
+				if i >= chaincfg.MainNetParams.StakeValidationHeight {
+					switch i % 144 {
+					case 0:
+						return []uint16{0x0041, 0x00c1, 0x00c1, 0x00c1, 0x00c1}
+					default:
+						return []uint16{0x00c1, 0x00c1, 0x00c1, 0x00c1, 0x00c1}
+					}
+				}
+
+				return []uint16{}
+			},
+			[issuesLen]Verdict{VerdictUndecided, VerdictUndecided,
+				VerdictYes, VerdictUndecided, VerdictUndecided,
+				VerdictUndecided, VerdictUndecided},
+			nil,
+		},
+		{
+			"issue #3 single no vote, rest abstain leading to no",
+			49968, // 347 intervals
+			params.VotingIntervals,
+			func(i, numBlocks int64) []uint16 {
+				if i >= chaincfg.MainNetParams.StakeValidationHeight {
+					switch i % 144 {
+					case 0:
+						return []uint16{0x0081, 0x00c1, 0x00c1, 0x00c1, 0x00c1}
+					default:
+						return []uint16{0x00c1, 0x00c1, 0x00c1, 0x00c1, 0x00c1}
+					}
+				}
+
+				return []uint16{}
+			},
+			[issuesLen]Verdict{VerdictUndecided, VerdictUndecided,
+				VerdictNo, VerdictUndecided, VerdictUndecided,
+				VerdictUndecided, VerdictUndecided},
+			nil,
+		},
+		{
+			"all issues yes",
+			49968, // 347 intervals
+			params.VotingIntervals,
+			func(i, numBlocks int64) []uint16 {
+				if i >= chaincfg.MainNetParams.StakeValidationHeight {
+					return []uint16{0x5555, 0x5555, 0x5555, 0x5555, 0x5555}
+				}
+
+				return []uint16{}
+			},
+			[issuesLen]Verdict{VerdictYes, VerdictYes,
+				VerdictYes, VerdictYes, VerdictYes,
+				VerdictYes, VerdictYes},
+			nil,
+		},
+		{
+			"all issues no",
+			49968, // 347 intervals
+			params.VotingIntervals,
+			func(i, numBlocks int64) []uint16 {
+				if i >= chaincfg.MainNetParams.StakeValidationHeight {
+					return []uint16{0xaaa9, 0xaaa9, 0xaaa9, 0xaaa9, 0xaaa9}
+				}
+
+				return []uint16{}
+			},
+			[issuesLen]Verdict{VerdictNo, VerdictNo,
+				VerdictNo, VerdictNo, VerdictNo,
+				VerdictNo, VerdictNo},
+			nil,
+		},
+		{
+			"only 3 of 5 voters, issue #3 is yes, issue #4 is no",
+			49968, // 347 intervals
+			params.VotingIntervals,
+			func(i, numBlocks int64) []uint16 {
+				if i >= chaincfg.MainNetParams.StakeValidationHeight {
+					switch i % 4 {
+					case 0:
+						return []uint16{0x0241, 0x0241, 0x0241}
+					case 1:
+						return []uint16{0x0241, 0x0241, 0x0241}
+					case 2:
+						return []uint16{0x0141, 0x0241, 0x0241}
+					case 3:
+						return []uint16{0x0141, 0x0141, 0x0241}
+					}
+				}
+
+				return []uint16{}
+			},
+			[issuesLen]Verdict{VerdictUndecided, VerdictUndecided,
+				VerdictYes, VerdictNo, VerdictUndecided,
+				VerdictUndecided, VerdictUndecided},
+			nil,
+		},
+		{
+			"error wrong height",
+			49967, // short 1 block, not an interval block
+			params.VotingIntervals,
+			func(i, numBlocks int64) []uint16 {
+				if i >= chaincfg.MainNetParams.StakeValidationHeight {
+					return []uint16{0x0241, 0x0241, 0x0241, 0x0241, 0x0241}
+				}
+
+				return []uint16{}
+			},
+			[issuesLen]Verdict{VerdictUndecided, VerdictUndecided,
+				VerdictYes, VerdictNo, VerdictUndecided,
+				VerdictUndecided, VerdictUndecided},
+			stakeRuleError(ErrTallyingIntervals, ""),
+		},
+		{
+			"too many voting intervals",
+			49968, // short 1 block, not an interval block
+			348,
+			func(i, numBlocks int64) []uint16 {
+				if i >= chaincfg.MainNetParams.StakeValidationHeight {
+					return []uint16{0x0241, 0x0241, 0x0241, 0x0241, 0x0241}
+				}
+
+				return []uint16{}
+			},
+			[issuesLen]Verdict{VerdictUndecided, VerdictUndecided,
+				VerdictYes, VerdictNo, VerdictUndecided,
+				VerdictUndecided, VerdictUndecided},
+			stakeRuleError(ErrTallyingIntervals, ""),
+		},
+	}
+
+	for _, test := range tests {
+		// Set up the cache and genesis block rolling tally.
+		cache := make(RollingVotingPrefixTallyCache)
+		var bestTally RollingVotingPrefixTally
+		bestTally.CurrentIntervalBlock = BlockKey{*params.GenesisHash, 0}
+
+		for i := int64(1); i < test.numBlocks; i++ {
+			// Skip using the database.
+			var err error
+			bestTally, err = bestTally.ConnectBlockToTally(cache, nil,
+				chainhash.Hash{byte(i)}, uint32(i),
+				test.votebits(i, test.numBlocks),
+				&chaincfg.MainNetParams)
+			if err != nil {
+				t.Fatalf("failed connecting tally %v", err)
+			}
+		}
+
+		verdicts, err := bestTally.GenerateVotingResults(cache,
+			nil, test.intervals, &chaincfg.MainNetParams)
+		if err != nil && test.err == nil {
+			t.Fatalf("failed generating verdicts %v", err)
+		}
+		if err != nil && test.err != nil {
+			if err.(RuleError).ErrorCode != test.err.(RuleError).ErrorCode {
+				t.Fatalf("got incorrect error for test %v; got %v, want %v",
+					test.name, err.(RuleError).ErrorCode,
+					test.err.(RuleError).ErrorCode)
+			}
+			continue
+		}
+		if err == nil && test.err != nil {
+			t.Fatalf("expecting err %v for test %v, got no error",
+				test.err.(RuleError).ErrorCode, test.name)
+			continue
+		}
+
+		if !reflect.DeepEqual(test.verdict, verdicts.Verdict) {
+			t.Fatalf("unexpected verdicts on test '%v', got %v want %v",
+				test.name, verdicts.Verdict, test.verdict)
 		}
 	}
 }

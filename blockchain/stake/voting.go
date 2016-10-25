@@ -78,7 +78,7 @@ func rotateLeft(value uint16, count uint16) uint16 {
 }
 
 // DecodeVoteBitsPrefix decodes the passed 16 vote bits into their decoded
-// structure for subsequent use in tallying or examination.
+// big endian structure for subsequent use in tallying or examination.
 func EncodeVoteBitsPrefix(voteBits DecodedVoteBitsPrefix) uint16 {
 	var val uint16
 
@@ -101,7 +101,7 @@ func EncodeVoteBitsPrefix(voteBits DecodedVoteBitsPrefix) uint16 {
 }
 
 // DecodeVoteBitsPrefix decodes the passed 16 vote bits into their decoded
-// structure for subsequent use in tallying or examination.
+// big endian structure for subsequent use in tallying or examination.
 func DecodeVoteBitsPrefix(voteBits uint16) DecodedVoteBitsPrefix {
 	var dvbs DecodedVoteBitsPrefix
 
@@ -714,6 +714,9 @@ func (r *RollingSummedTally) AddTally(tally RollingVotingPrefixTally) {
 // window sizes, that is, one interval is 144 blocks on mainnet.  The rolling
 // tally this is called on must be a completed tally, that is, it must be the
 // last block in the interval voting window.
+//
+// It is currently unused but could be used in the future for popular majority
+// votes.
 func (r *RollingVotingPrefixTally) GenerateSummedTally(intervalCache RollingVotingPrefixTallyCache, dbTx database.Tx, intervals uint32, params *chaincfg.Params) (*RollingSummedTally, error) {
 	// Summed tallies should only be generated from tallies that are the
 	// last block in the window period.  If this is not at the correct
@@ -721,11 +724,11 @@ func (r *RollingVotingPrefixTally) GenerateSummedTally(intervalCache RollingVoti
 	if ((r.CurrentBlockHeight + 1) % uint32(params.StakeDiffWindowSize)) != 0 {
 		str := fmt.Sprintf("tried to sum incomplete tally at height %v",
 			r.CurrentBlockHeight)
-		return nil, stakeRuleError(ErrSumIncompleteTally, str)
+		return nil, stakeRuleError(ErrTallyingIntervals, str)
 	}
 
-	// Must sum at least one interval, which is the current one.  You also
-	// Can not sum tallies from before the genesis block.
+	// Must sum at least one interval, which is the current one.  You
+	// can not sum tallies from before the genesis block.
 	maxIntervals := (r.CurrentBlockHeight + 1) / uint32(params.StakeDiffWindowSize)
 	if intervals == 0 || intervals > maxIntervals {
 		str := fmt.Sprintf("tried to sum incomplete tally at height %v",
@@ -798,8 +801,6 @@ const (
 type VotingResults struct {
 	CurrentIntervalBlock BlockKey
 	LastIntervalBlock    BlockKey
-	BlockValid           uint64
-	Unused               uint64
 	Issues               [issuesLen][]Verdict
 	Verdict              [issuesLen]Verdict
 }
@@ -825,6 +826,7 @@ func (r *RollingVotingPrefixTally) determineIssueStatus(issue int, numeratorMul,
 		needed++
 	}
 
+	//fmt.Printf("issue %v yes %v, no %v, needed %v\n", issue, r.Issues[issue][IssueVoteYes], r.Issues[issue][IssueVoteNo], needed)
 	if r.Issues[issue][IssueVoteYes] >= needed {
 		return VerdictYes
 	}
@@ -850,11 +852,11 @@ func (r *RollingVotingPrefixTally) GenerateVotingResults(intervalCache RollingVo
 	if ((r.CurrentBlockHeight + 1) % uint32(params.StakeDiffWindowSize)) != 0 {
 		str := fmt.Sprintf("tried to sum incomplete tally at height %v",
 			r.CurrentBlockHeight)
-		return nil, stakeRuleError(ErrSumIncompleteTally, str)
+		return nil, stakeRuleError(ErrTallyingIntervals, str)
 	}
 
-	// Must sum at least one interval, which is the current one.  You also
-	// Can not sum tallies from before the genesis block.
+	// Must sum at least one interval, which is the current one.  You
+	// can not sum tallies from before the genesis block.
 	maxIntervals := int(r.CurrentBlockHeight+1) / int(params.StakeDiffWindowSize)
 	if intervals == 0 || intervals > maxIntervals {
 		str := fmt.Sprintf("tried to sum incomplete tally at height %v",
@@ -874,6 +876,7 @@ func (r *RollingVotingPrefixTally) GenerateVotingResults(intervalCache RollingVo
 	var err error
 	for i := intervals - 1; i >= 0; i-- {
 		for j := 0; j < issuesLen; j++ {
+			//fmt.Printf("Interval #%v -->", i)
 			votingResults.Issues[j][i] = tallyLocal.determineIssueStatus(j,
 				params.VotingIssueMultiplier, params.VotingIssueDivisor)
 		}
