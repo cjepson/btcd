@@ -12,7 +12,9 @@ import (
 	"testing"
 
 	"github.com/decred/dcrd/blockchain/stake"
+	"github.com/decred/dcrd/chaincfg"
 	"github.com/decred/dcrd/chaincfg/chainhash"
+	"github.com/decred/dcrd/wire"
 	"github.com/decred/dcrutil"
 )
 
@@ -341,23 +343,186 @@ func TestReorgTestLongForStakeDataEquivalence(t *testing.T) {
 	return
 }
 
-/*
 func TestTallyingonSpoofedNodes(t *testing.T) {
+	params := &chaincfg.MainNetParams
+
 	// Create a new database and chain instance to run tests against.
-	chain, teardownFunc, err := chainSetup("stakedataequivtests",
-		TestSimNetParams)
+	chain, teardownFunc, err := chainSetup("staketallyingtests", params)
 	if err != nil {
 		t.Errorf("Failed to setup chain instance: %v", err)
 		return
 	}
 	defer teardownFunc()
 
+	numNodes := int64(49968)
+	forkHeight := int64(43056)
+
+	// Issue 3 is Yes, while Issue 4 is No, but only by a single vote in one
+	// window.
+	mainchainVoteBits := func(i int64) []uint16 {
+		if i >= params.StakeValidationHeight {
+			switch i % 4 {
+			case 0:
+				return []uint16{0x0241, 0x0241, 0x0241, 0x0241, 0x0241}
+			case 1:
+				return []uint16{0x0241, 0x0241, 0x0241, 0x0241, 0x0241}
+			case 2:
+				return []uint16{0x0141, 0x0141, 0x0241, 0x0241, 0x0241}
+			case 3:
+				return []uint16{0x0141, 0x0141, 0x0141, 0x0241, 0x0241}
+			}
+		}
+
+		return []uint16{}
+	}
+
+	// Issue 3 is Yes, while Issue 4 is Undecided, but only by a single vote
+	// in one window.
+	sidechainVoteBits := func(i int64) []uint16 {
+		if i >= params.StakeValidationHeight {
+			if i == forkHeight+3 {
+				return []uint16{0x0141, 0x0141, 0x0141, 0x0241, 0x0141}
+			}
+
+			switch i % 4 {
+			case 0:
+				return []uint16{0x0241, 0x0241, 0x0241, 0x0241, 0x0241}
+			case 1:
+				return []uint16{0x0241, 0x0241, 0x0241, 0x0241, 0x0241}
+			case 2:
+				return []uint16{0x0141, 0x0141, 0x0241, 0x0241, 0x0241}
+			case 3:
+				return []uint16{0x0141, 0x0141, 0x0141, 0x0241, 0x0241}
+			}
+		}
+
+		return []uint16{}
+	}
+
 	// Spoof a large number of nodes with varying voteBits settings
 	// and run them forwards.
+	var mainchainBest, sidechainBest *blockNode
+	for i := int64(1); i < numNodes; i++ {
+		// Make up a header.
+		header := wire.BlockHeader{
+			Version:   1,
+			PrevBlock: chain.bestNode.hash,
+			Height:    uint32(i),
+			Nonce:     uint32(0),
+		}
+
+		// Make up a node hash.
+		hB, err := header.Bytes()
+		if err != nil {
+			t.Fatalf("serialization err %v")
+		}
+		headerHash := chainhash.HashFuncH(hB)
+
+		thisNode := new(blockNode)
+		thisNode.header = header
+		thisNode.hash = headerHash
+		thisNode.height = i
+		thisNode.parent = chain.bestNode
+		thisNode.inMainChain = true
+		thisNode.voteBitsSlice = mainchainVoteBits(i)
+		chain.bestNode.children = append(chain.bestNode.children, thisNode)
+
+		thisNode.rollingTally, err = chain.fetchRollingTally(thisNode)
+		if err != nil {
+			t.Fatalf("failure fetching mainchain tally %v", err)
+		}
+
+		if thisNode.height == forkHeight {
+			sidechainBest = thisNode
+		}
+
+		chain.bestNode = thisNode
+		mainchainBest = thisNode
+	}
+
+	mainchainVerdicts, err :=
+		mainchainBest.rollingTally.GenerateVotingResults(chain.rollingTallyCache,
+			nil, params.VotingIntervals, &chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatalf("failed generating verdicts %v", err)
+	}
 
 	// Generate a side chain and attempt to get the correctly set
 	// voteBits from there.  Store the results, then drop all the
 	// block nodes.  After the block nodes are gone, recreate the
 	// sidechain and ensure that the results are the same.
+	for i := forkHeight + 1; i < numNodes; i++ {
+		// Make up a header.
+		header := wire.BlockHeader{
+			Version:   1,
+			PrevBlock: sidechainBest.hash,
+			Height:    uint32(i),
+			Nonce:     uint32(1),
+		}
+
+		// Make up a node hash.
+		hB, err := header.Bytes()
+		if err != nil {
+			t.Fatalf("serialization err %v")
+		}
+		headerHash := chainhash.HashFuncH(hB)
+
+		thisNode := new(blockNode)
+		thisNode.header = header
+		thisNode.hash = headerHash
+		thisNode.height = i
+		thisNode.parent = sidechainBest
+		thisNode.inMainChain = false
+		thisNode.voteBitsSlice = sidechainVoteBits(i)
+		chain.bestNode.children = append(sidechainBest.children, thisNode)
+
+		thisNode.rollingTally, err = chain.fetchRollingTally(thisNode)
+		if err != nil {
+			t.Fatalf("failure fetching mainchain tally %v", err)
+		}
+
+		if (i+1)%params.StakeDiffWindowSize == 0 {
+			sidechainVerdicts, err :=
+				thisNode.rollingTally.GenerateVotingResults(
+					chain.rollingTallyCache, nil, 1, &chaincfg.MainNetParams)
+			if err != nil {
+				t.Fatalf("failed generating verdicts %v", err)
+			}
+			t.Errorf("height %v verdicts %v", i, sidechainVerdicts.Verdict)
+		}
+
+		sidechainBest = thisNode
+	}
+
+	sidechainVerdicts, err :=
+		sidechainBest.rollingTally.GenerateVotingResults(chain.rollingTallyCache,
+			nil, params.VotingIntervals, &chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatalf("failed generating verdicts %v", err)
+	}
+
+	if !reflect.DeepEqual(mainchainVerdicts, sidechainVerdicts) {
+		t.Errorf("got %v  want %v", mainchainVerdicts.Verdict,
+			sidechainVerdicts.Verdict)
+	}
+
+	// Prune recursively and see if it can restore correctly.
+	chain.pruneRecursivelyTest()
+	mainchainVerdicts, err =
+		mainchainBest.rollingTally.GenerateVotingResults(chain.rollingTallyCache,
+			nil, params.VotingIntervals, &chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatalf("failed generating verdicts %v", err)
+	}
+	sidechainVerdicts, err =
+		sidechainBest.rollingTally.GenerateVotingResults(chain.rollingTallyCache,
+			nil, params.VotingIntervals, &chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatalf("failed generating verdicts %v", err)
+	}
+
+	if !reflect.DeepEqual(mainchainVerdicts, sidechainVerdicts) {
+		t.Errorf("got %v  want %v", mainchainVerdicts.Verdict,
+			sidechainVerdicts.Verdict)
+	}
 }
-*/

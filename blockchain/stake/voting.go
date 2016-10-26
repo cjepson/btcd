@@ -902,30 +902,37 @@ func (r *RollingVotingPrefixTally) GenerateVotingResults(intervalCache RollingVo
 		votingResults.Verdict[j] = VerdictUndecided
 		allYes := true
 		allNo := true
+		fmt.Printf("issue %v", j)
 		for i := intervals - 1; i >= 0; i-- {
-			if votingResults.Issues[j][i] == VerdictNo ||
-				votingResults.Issues[j][i] == VerdictUndecided {
+			fmt.Printf(" %v ", votingResults.Issues[j][i])
+			switch votingResults.Issues[j][i] {
+			case VerdictNo:
 				allYes = false
-			}
-			if votingResults.Issues[j][i] == VerdictYes ||
-				votingResults.Issues[j][i] == VerdictUndecided {
+
+			case VerdictYes:
+				allNo = false
+
+			case VerdictUndecided:
+				allYes = false
 				allNo = false
 			}
-
-			// Both yes and no can not be set to true.  This is an error
-			// if it occurs.
-			if allYes == true && allYes == allNo {
-				return nil, stakeRuleError(ErrMemoryCorruption, "a verdict "+
-					"returned both yes and no, which should be impossible")
-			}
-
-			if allYes {
-				votingResults.Verdict[j] = VerdictYes
-			}
-			if allNo {
-				votingResults.Verdict[j] = VerdictNo
-			}
 		}
+
+		// Both yes and no can not be set to true.  This is an error
+		// if it occurs.
+		if allYes == true && allYes == allNo {
+			return nil, stakeRuleError(ErrMemoryCorruption, "a verdict "+
+				"returned both yes and no, which should be impossible")
+		}
+
+		if allYes {
+			votingResults.Verdict[j] = VerdictYes
+		}
+		if allNo {
+			votingResults.Verdict[j] = VerdictNo
+		}
+
+		fmt.Printf("\n")
 	}
 
 	return votingResults, nil
