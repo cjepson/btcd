@@ -128,6 +128,11 @@ func (b *BlockChain) upgradeToVersion3() error {
 			return errLocal
 		}
 
+		parent, errLocal := dbFetchBlockByHeight(dbTx, 0)
+		if errLocal != nil {
+			return errLocal
+		}
+
 		for i := int64(1); i <= best.Height; i++ {
 			block, errLocal := dbFetchBlockByHeight(dbTx, i)
 			if errLocal != nil {
@@ -136,9 +141,10 @@ func (b *BlockChain) upgradeToVersion3() error {
 
 			// Iteratively connect the tallies in memory.
 			blockSha := block.Sha()
+			parentSha := parent.Sha()
 			var tally stake.RollingVotingPrefixTally
 			tally, errLocal = bestTally.ConnectBlockToTally(b.rollingTallyCache,
-				dbTx, *blockSha, uint32(block.Height()),
+				dbTx, *blockSha, *parentSha, uint32(block.Height()),
 				voteBitsForVotersInBlock(block), b.chainParams)
 			if errLocal != nil {
 				return errLocal
@@ -157,7 +163,8 @@ func (b *BlockChain) upgradeToVersion3() error {
 				b.bestNode.rollingTally = bestTally
 			}
 
-			progressLogger.LogBlockHeight(block, nil)
+			progressLogger.LogBlockHeight(block, parent)
+			parent = block
 		}
 
 		// Write the new database version.

@@ -140,7 +140,7 @@ func TestDbInfoDeserializeErrors(t *testing.T) {
 func TestBestChainStateSerialization(t *testing.T) {
 	t.Parallel()
 
-	currentTally := make([]byte, 136)
+	currentTally := make([]byte, 100)
 	currentTally[0] = 0xFF
 
 	tests := []struct {
@@ -155,7 +155,7 @@ func TestBestChainStateSerialization(t *testing.T) {
 				Height:       12323,
 				CurrentTally: currentTally,
 			},
-			serialized: hexToBytes("6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d619000000000023300000ff000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
+			serialized: hexToBytes("6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d619000000000023300000ff000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
 		},
 	}
 
@@ -264,16 +264,17 @@ func TestLiveDatabase(t *testing.T) {
 	}
 
 	// Test storing some tally data.
-	tallies := make([][136]byte, 10)
+	keys := make([][36]byte, 10)
+	tallies := make([][100]byte, 10)
 	for i := 0; i < 10; i++ {
-		tallies[i][0] = byte(i + 10)
+		keys[i][0] = byte(i + 10)
 		tallies[i][36] = byte(i + 20)
 	}
 
 	// Test put tallies.
 	err = testDb.Update(func(dbTx database.Tx) error {
 		for i := 0; i < 10; i++ {
-			err = DbPutBlockTally(dbTx, tallies[i][:])
+			err = DbPutBlockTally(dbTx, keys[i][:], tallies[i][:])
 			if err != nil {
 				return err
 			}
@@ -286,10 +287,10 @@ func TestLiveDatabase(t *testing.T) {
 	}
 
 	// Test fetch tallies.
-	talliesRead := make([][136]byte, 10)
+	talliesRead := make([][100]byte, 10)
 	err = testDb.View(func(dbTx database.Tx) error {
 		for i := 0; i < 10; i++ {
-			tally, err := DbFetchBlockTally(dbTx, tallies[i][0:36])
+			tally, err := DbFetchBlockTally(dbTx, keys[i][0:36])
 			if err != nil {
 				return err
 			}

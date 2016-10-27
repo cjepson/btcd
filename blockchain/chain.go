@@ -1405,7 +1405,7 @@ func (b *BlockChain) disconnectBlock(node *blockNode, block *dcrutil.Block,
 		}
 
 		// Write the best chain data for the vote tallying.
-		err = stake.WriteDisconnectedBlockTally(dbTx, node.hash,
+		err = stake.WriteDisconnectedBlockTally(dbTx, node.hash, node.parent.hash,
 			uint32(node.height), node.rollingTally, node.voteBitsSlice,
 			b.chainParams)
 

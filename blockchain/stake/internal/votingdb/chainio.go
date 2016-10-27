@@ -113,12 +113,12 @@ func DbFetchDatabaseInfo(dbTx database.Tx) (*DatabaseInfo, error) {
 //   Field                Type              Size
 //   block hash           chainhash.Hash    chainhash.HashSize
 //   block height         uint32            4 bytes
-//   current tally        []byte            108 bytes (preserialized)
+//   current tally        []byte            100 bytes (preserialized)
 // -----------------------------------------------------------------------------
 
 // minimumBestChainStateSize is the minimum serialized size of the best chain
 // state in bytes.
-var minimumBestChainStateSize = chainhash.HashSize + 4 + 136
+var minimumBestChainStateSize = chainhash.HashSize + 4 + 100
 
 // BestChainState represents the data to be stored the database for the current
 // best chain state.
@@ -145,7 +145,7 @@ func serializeBestChainState(state BestChainState) []byte {
 
 	// Serialize the tallies.
 	copy(serializedData[offset:], state.CurrentTally[:])
-	offset += 136
+	offset += 100
 
 	return serializedData[:]
 }
@@ -168,9 +168,9 @@ func deserializeBestChainState(serializedData []byte) (BestChainState, error) {
 	offset += chainhash.HashSize
 	state.Height = dbnamespace.ByteOrder.Uint32(serializedData[offset : offset+4])
 	offset += 4
-	state.CurrentTally = make([]byte, 136)
+	state.CurrentTally = make([]byte, 100)
 	copy(state.CurrentTally[:], serializedData[offset:])
-	offset += 136
+	offset += 100
 
 	return state, nil
 }
@@ -200,9 +200,6 @@ func DbPutBestState(dbTx database.Tx, bcs BestChainState) error {
 }
 
 // DbFetchBlockTally fetches an interval block's tally from the voting database.
-// It concatenates the first 36 bytes (the current block key) with the last
-// 72 bytes of the value, restoring the serialized tally to return to the
-// caller.
 func DbFetchBlockTally(dbTx database.Tx, blockKey []byte) ([]byte, error) {
 	meta := dbTx.Metadata()
 	bucket := meta.Bucket(dbnamespace.IntervalBlockTallyBucketName)
@@ -214,13 +211,12 @@ func DbFetchBlockTally(dbTx database.Tx, blockKey []byte) ([]byte, error) {
 	}
 
 	if len(v) < 100 {
-		return nil, votingDBError(ErrMissingKey,
+		return nil, votingDBError(ErrTallyShortRead,
 			fmt.Sprintf("short read of db tally data (got %v, min %v)",
 				len(v), 100))
 	}
-	serialized := make([]byte, 136)
-	copy(serialized[0:], blockKey[:])
-	copy(serialized[36:], v[:])
+	serialized := make([]byte, 100)
+	copy(serialized[:], v[:])
 
 	return serialized, nil
 }
@@ -228,15 +224,19 @@ func DbFetchBlockTally(dbTx database.Tx, blockKey []byte) ([]byte, error) {
 // DbPutBlockTally inserts an interval block's tally into the voting database.
 // It uses the first 36 bytes (the current block key) as the key for insertion,
 // while storing the remaining 72 bytes as the value.
-func DbPutBlockTally(dbTx database.Tx, serializedTally []byte) error {
+func DbPutBlockTally(dbTx database.Tx, key, serializedTally []byte) error {
 	meta := dbTx.Metadata()
 	bucket := meta.Bucket(dbnamespace.IntervalBlockTallyBucketName)
-	k := make([]byte, 36)
-	copy(k[:], serializedTally[0:])
-	v := make([]byte, 100)
-	copy(v[:], serializedTally[36:])
+	if len(key) < 36 {
+		return votingDBError(ErrBlockKeyShortRead, fmt.Sprintf("block key "+
+			"short read (got %v, min %v)", len(key), 36))
+	}
+	if len(serializedTally) < 100 {
+		return votingDBError(ErrTallyShortRead, fmt.Sprintf("tally "+
+			"short read (got %v, min %v)", len(serializedTally), 100))
+	}
 
-	return bucket.Put(k[:], v[:])
+	return bucket.Put(key[:], serializedTally[:])
 }
 
 // DbCreate initializes all the buckets required for the database and stores

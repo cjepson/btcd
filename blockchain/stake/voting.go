@@ -196,29 +196,29 @@ func (b *BlockKey) Deserialize(sl *[]byte, offset int) {
 
 // RollingVotingPrefixTally is a rolling tally of the decoded vote bits from
 // a series  of votes.  The tallies of the issues are arranged in a two
-// dimensional array.
+// dimensional array.  The tallies themselves are a unidirectional linked list,
+// with the LastIntervalBlock component of the struct pointing the the previous
+// item which may be looked up in the database or cache.  The cache holds tallies
+// for sidechains, while the mainchain tallies reside in the database.
 type RollingVotingPrefixTally struct {
-	CurrentIntervalBlock BlockKey
-	LastIntervalBlock    BlockKey
-	CurrentBlockHeight   uint32
-	BlockValid           uint16
-	Unused               uint16
-	Issues               [issuesLen]VotingTally
+	LastIntervalBlock  BlockKey
+	CurrentBlockHeight uint32
+	BlockValid         uint16
+	Unused             uint16
+	Issues             [issuesLen]VotingTally
 }
 
 // RollingVotingPrefixTallySize is the size of a serialized
 // RollingVotingPrefixTally The size is calculated as
-//   2x BlockKey (72 bytes) + 1x uint32 (4 bytes) +
+//   1x BlockKey (36 bytes) + 1x uint32 (4 bytes) +
 //   2x uint16s (4 bytes) + 7x VotingTallies (56 bytes)
-const RollingVotingPrefixTallySize = 72 + 4 + 4 + 56
+const RollingVotingPrefixTallySize = 36 + 4 + 4 + 56
 
 // Serialize serializes a RollingVotingPrefixTally into a contiguous slice of
 // bytes.  Integer values are serialized in little endian.
 func (r *RollingVotingPrefixTally) Serialize() []byte {
 	val := make([]byte, RollingVotingPrefixTallySize)
 	offset := 0
-	r.CurrentIntervalBlock.SerializeInto(&val, offset)
-	offset += BlockKeySize
 	r.LastIntervalBlock.SerializeInto(&val, offset)
 	offset += BlockKeySize
 
@@ -250,8 +250,6 @@ func (r *RollingVotingPrefixTally) Deserialize(val []byte) error {
 	}
 
 	offset := 0
-	r.CurrentIntervalBlock.Deserialize(&val, offset)
-	offset += BlockKeySize
 	r.LastIntervalBlock.Deserialize(&val, offset)
 	offset += BlockKeySize
 
@@ -319,7 +317,7 @@ func InitRollingTallyCache(dbTx database.Tx, params *chaincfg.Params) (RollingVo
 	buf := currentKeyB[:]
 	for i := 0; i < initCacheSize; i++ {
 		// Break if we reach the genesis block.
-		if currentKey.Hash == *params.GenesisHash {
+		if currentKey.Hash == *zeroHash {
 			break
 		}
 
@@ -346,19 +344,15 @@ func InitRollingTallyCache(dbTx database.Tx, params *chaincfg.Params) (RollingVo
 // should exist even if the block is on a sidechain.
 func FetchIntervalTally(key *BlockKey, cache RollingVotingPrefixTallyCache, dbTx database.Tx, params *chaincfg.Params) (*RollingVotingPrefixTally, error) {
 	// Exception for the genesis block window.
-	if *key == genesisKey {
+	if *key == zeroKey {
 		var tally RollingVotingPrefixTally
-		tally.CurrentIntervalBlock = BlockKey{*params.GenesisHash, 0}
+		tally.LastIntervalBlock = BlockKey{*params.GenesisHash, 0}
 		return &tally, nil
 	}
 
 	if cache != nil {
 		tally, exists := cache[*key]
 		if exists {
-			if tally.CurrentBlockHeight >= 99935 {
-				fmt.Printf("got tally %v\n", tally)
-			}
-
 			return tally, nil
 		}
 	}
@@ -394,7 +388,7 @@ func FetchIntervalTally(key *BlockKey, cache RollingVotingPrefixTallyCache, dbTx
 // to the expected next block height.  If the height is also at a key block
 // interval, it rolls over these values as well.  Finally, it increments the
 // block height.
-func (r *RollingVotingPrefixTally) rollover(blockHash chainhash.Hash, blockHeight uint32, params *chaincfg.Params) error {
+func (r *RollingVotingPrefixTally) rollover(blockHash, parentHash chainhash.Hash, blockHeight uint32, params *chaincfg.Params) error {
 	if blockHeight != r.CurrentBlockHeight+1 {
 		str := fmt.Sprintf("reset called, but next block height does not "+
 			"correspond to the expected next block height (got %v, expect %v)",
@@ -404,12 +398,12 @@ func (r *RollingVotingPrefixTally) rollover(blockHash chainhash.Hash, blockHeigh
 
 	// Last block of a window.  Update the current hash for use
 	// in storing in the database and cache.
-	if (blockHeight-1)%uint32(params.StakeDiffWindowSize) == 0 {
-		r.CurrentIntervalBlock.Hash = blockHash
-		r.CurrentIntervalBlock.Height = blockHeight
-		r.LastIntervalBlock.Hash = r.CurrentIntervalBlock.Hash
-		r.LastIntervalBlock.Height = r.CurrentIntervalBlock.Height
-	}
+	//if (blockHeight+1)%uint32(params.StakeDiffWindowSize) == 0 {
+	//r.LastIntervalBlock.Hash = r.CurrentIntervalBlock.Hash
+	//r.LastIntervalBlock.Height = r.CurrentIntervalBlock.Height
+	//	r.CurrentIntervalBlock.Hash = blockHash
+	//	r.CurrentIntervalBlock.Height = blockHeight
+	//}
 
 	// New vote tallying interval.  The fields are reset here rather
 	// than above, because this interval should always coincide with
@@ -417,6 +411,9 @@ func (r *RollingVotingPrefixTally) rollover(blockHash chainhash.Hash, blockHeigh
 	// same for params.VoteKeyBlockInterval /
 	// params.StakeDiffWindowSize many interval periods.
 	if blockHeight%uint32(params.StakeDiffWindowSize) == 0 {
+		r.LastIntervalBlock.Hash = parentHash
+		r.LastIntervalBlock.Height = blockHeight - 1
+
 		// Reset the voting fields of the struct.
 		r.BlockValid = 0
 		r.Unused = 0
@@ -482,10 +479,10 @@ func (r *RollingVotingPrefixTally) AddTally(tally RollingVotingPrefixTally) {
 //
 // The resulting RollingVotingPrefixTally is an "immutable" object similar to
 //     the stake node of tickets.go.
-func (r *RollingVotingPrefixTally) ConnectBlockToTally(intervalCache RollingVotingPrefixTallyCache, dbTx database.Tx, blockHash chainhash.Hash, blockHeight uint32, voteBitsSlice []uint16, params *chaincfg.Params) (RollingVotingPrefixTally, error) {
+func (r *RollingVotingPrefixTally) ConnectBlockToTally(intervalCache RollingVotingPrefixTallyCache, dbTx database.Tx, blockHash, parentHash chainhash.Hash, blockHeight uint32, voteBitsSlice []uint16, params *chaincfg.Params) (RollingVotingPrefixTally, error) {
 	tally := *r
 
-	err := tally.rollover(blockHash, blockHeight, params)
+	err := tally.rollover(blockHash, parentHash, blockHeight, params)
 	if err != nil {
 		return RollingVotingPrefixTally{}, err
 	}
@@ -513,7 +510,7 @@ func (r *RollingVotingPrefixTally) ConnectBlockToTally(intervalCache RollingVoti
 	// This is the final block in the interval window, so write it to the
 	// cache now.
 	if (tally.CurrentBlockHeight+1)%uint32(params.StakeDiffWindowSize) == 0 {
-		intervalCache[tally.CurrentIntervalBlock] = &tally
+		intervalCache[BlockKey{Hash: blockHash, Height: blockHeight}] = &tally
 	}
 
 	return tally, nil
@@ -559,10 +556,8 @@ func (r *RollingVotingPrefixTally) revert(blockHeight uint32, voteBitsSlice []ui
 	// a key block interval as well, so we roll back to the old state of the
 	// voting tally.
 	if (blockHeight)%uint32(params.StakeDiffWindowSize) == 0 {
-		if blockHeight > 99600 {
-			fmt.Printf("height %v, tally got %v\n", blockHeight, lastIntervalTally)
-		}
 		*r = *lastIntervalTally
+		r.CurrentBlockHeight = blockHeight - 1
 	} else {
 		r.SubtractVoteBitsSlice(voteBitsSlice)
 		r.CurrentBlockHeight--
@@ -585,9 +580,6 @@ func (r *RollingVotingPrefixTally) DisconnectBlockFromTally(intervalCache Rollin
 	if lastIntervalTally == nil &&
 		(r.CurrentBlockHeight%uint32(params.StakeDiffWindowSize)) == 0 {
 		var err error
-		if r.CurrentBlockHeight > 99600 {
-			fmt.Printf("fetching tally r.LastIntervalBlock %v\n", r.LastIntervalBlock)
-		}
 		lastIntervalTally, err = FetchIntervalTally(&r.LastIntervalBlock,
 			intervalCache, dbTx, params)
 		if err != nil {
@@ -618,7 +610,7 @@ func InitVotingDatabaseState(dbTx database.Tx, params *chaincfg.Params) (*Rollin
 	var bestTally RollingVotingPrefixTally
 	best.Hash = *params.GenesisHash
 	best.Height = 0
-	bestTally.CurrentIntervalBlock = BlockKey{best.Hash, best.Height}
+	bestTally.LastIntervalBlock = BlockKey{best.Hash, best.Height}
 	best.CurrentTally = bestTally.Serialize()
 
 	err = votingdb.DbPutBestState(dbTx, best)
@@ -653,9 +645,12 @@ func WriteConnectedBlockTally(dbTx database.Tx, blockHash chainhash.Hash, blockH
 	best.Hash = blockHash
 	best.Height = blockHeight
 	best.CurrentTally = tally.Serialize()
+	key := BlockKey{Hash: blockHash, Height: blockHeight}
+	keyB := make([]byte, BlockKeySize)
+	key.SerializeInto(&keyB, 0)
 
 	if (tally.CurrentBlockHeight+1)%uint32(params.StakeDiffWindowSize) == 0 {
-		err := votingdb.DbPutBlockTally(dbTx, best.CurrentTally)
+		err := votingdb.DbPutBlockTally(dbTx, keyB, best.CurrentTally)
 		if err != nil {
 			return err
 		}
@@ -669,7 +664,7 @@ func WriteConnectedBlockTally(dbTx database.Tx, blockHash chainhash.Hash, blockH
 // state if it falls into an interval block.  We don't need to call the cache
 // here, because we know that disconnects are only on the mainchain and that the
 // mainchain MUST have the previous interval block in it.
-func WriteDisconnectedBlockTally(dbTx database.Tx, blockHash chainhash.Hash, blockHeight uint32, tally *RollingVotingPrefixTally, voteBitsSlice []uint16, params *chaincfg.Params) error {
+func WriteDisconnectedBlockTally(dbTx database.Tx, blockHash, parentHash chainhash.Hash, blockHeight uint32, tally *RollingVotingPrefixTally, voteBitsSlice []uint16, params *chaincfg.Params) error {
 	disconnectedTally, err := tally.DisconnectBlockFromTally(nil, dbTx,
 		blockHash, blockHeight, voteBitsSlice, nil, params)
 	if err != nil {
@@ -685,7 +680,11 @@ func WriteDisconnectedBlockTally(dbTx database.Tx, blockHash chainhash.Hash, blo
 	// previous window.
 	if (disconnectedTally.CurrentBlockHeight+1)%
 		uint32(params.StakeDiffWindowSize) == 0 {
-		err = votingdb.DbPutBlockTally(dbTx, best.CurrentTally)
+		key := BlockKey{Hash: parentHash, Height: blockHeight - 1}
+		keyB := make([]byte, BlockKeySize)
+		key.SerializeInto(&keyB, 0)
+
+		err = votingdb.DbPutBlockTally(dbTx, keyB, best.CurrentTally)
 		if err != nil {
 			return err
 		}
@@ -705,12 +704,11 @@ type SummedVotingTally [4]uint64
 // tallies of the issues are arranged in a two dimensional array, compared to
 // the RollingVotingPrefixTally more generally used.
 type RollingSummedTally struct {
-	CurrentIntervalBlock BlockKey
-	LastIntervalBlock    BlockKey
-	CurrentBlockHeight   uint32
-	BlockValid           uint64
-	Unused               uint64
-	Issues               [issuesLen]SummedVotingTally
+	LastIntervalBlock  BlockKey
+	CurrentBlockHeight uint32
+	BlockValid         uint64
+	Unused             uint64
+	Issues             [issuesLen]SummedVotingTally
 }
 
 // AddTally adds two tallies together, storing the result in the original
@@ -753,9 +751,8 @@ func (r *RollingVotingPrefixTally) GenerateSummedTally(intervalCache RollingVoti
 		return nil, stakeRuleError(ErrTallyingIntervals, str)
 	}
 
-	// The current tally is the first interval.
+	// The last tally is the first interval.
 	tallySum := new(RollingSummedTally)
-	tallySum.CurrentIntervalBlock = r.CurrentIntervalBlock
 	tallySum.LastIntervalBlock = r.LastIntervalBlock
 	tallySum.CurrentBlockHeight = r.CurrentBlockHeight
 	tallySum.AddTally(*r)
@@ -774,7 +771,6 @@ func (r *RollingVotingPrefixTally) GenerateSummedTally(intervalCache RollingVoti
 
 		tallySum.AddTally(*tallyLocal)
 		currentKey = &tallyLocal.LastIntervalBlock
-		tallySum.CurrentIntervalBlock = tallyLocal.CurrentIntervalBlock
 		tallySum.LastIntervalBlock = tallyLocal.LastIntervalBlock
 	}
 
@@ -816,10 +812,10 @@ const (
 
 // VotingResults
 type VotingResults struct {
-	CurrentIntervalBlock BlockKey
-	LastIntervalBlock    BlockKey
-	Issues               [issuesLen][]Verdict
-	Verdict              [issuesLen]Verdict
+	FirstIntervalBlock BlockKey
+	LastIntervalBlock  BlockKey
+	Issues             [issuesLen][]Verdict
+	Verdict            [issuesLen]Verdict
 }
 
 // determineIssueStatus determines whether or not an issue has been voted yes
@@ -886,11 +882,11 @@ func (r *RollingVotingPrefixTally) GenerateVotingResults(intervalCache RollingVo
 	}
 
 	// Preserve the first interval used in the verdict determination.
-	votingResults.CurrentIntervalBlock = r.CurrentIntervalBlock
+	votingResults.FirstIntervalBlock = r.LastIntervalBlock
 
 	// Loop through the remaining intervals, going backwards through the
 	// chain until you successfully add all of the tallies.
-	currentKey := &r.CurrentIntervalBlock
+	currentKey := &r.LastIntervalBlock
 	tallyLocal := r
 	var err error
 	for i := intervals - 1; i >= 0; i-- {
@@ -898,11 +894,8 @@ func (r *RollingVotingPrefixTally) GenerateVotingResults(intervalCache RollingVo
 			votingResults.Issues[j][i] = tallyLocal.determineIssueStatus(j,
 				params.VotingIssueMultiplier, params.VotingIssueDivisor)
 		}
-		//fmt.Printf("interval %v: %v (%v)\n", i, currentKey, tallyLocal.CurrentIntervalBlock)
-		//fmt.Printf("cur %v, last %v\n", tallyLocal.CurrentIntervalBlock, tallyLocal.LastIntervalBlock)
 		currentKey = &tallyLocal.LastIntervalBlock
 		votingResults.LastIntervalBlock = tallyLocal.LastIntervalBlock
-		//fmt.Printf("update %v: %v\n", i, currentKey)
 
 		// Get the next tally in the linked list if we're not at
 		// the last entry.
@@ -922,9 +915,7 @@ func (r *RollingVotingPrefixTally) GenerateVotingResults(intervalCache RollingVo
 		votingResults.Verdict[j] = VerdictUndecided
 		allYes := true
 		allNo := true
-		//fmt.Printf("issue %v", j)
 		for i := intervals - 1; i >= 0; i-- {
-			//fmt.Printf(" %v ", votingResults.Issues[j][i])
 			switch votingResults.Issues[j][i] {
 			case VerdictNo:
 				allYes = false
@@ -951,8 +942,6 @@ func (r *RollingVotingPrefixTally) GenerateVotingResults(intervalCache RollingVo
 		if allNo {
 			votingResults.Verdict[j] = VerdictNo
 		}
-
-		//fmt.Printf("\n")
 	}
 
 	return votingResults, nil

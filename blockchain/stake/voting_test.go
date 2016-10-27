@@ -165,11 +165,10 @@ func TestRollingVotingPrefixTallySerializing(t *testing.T) {
 		{
 			"no and all undefined",
 			RollingVotingPrefixTally{
-				CurrentIntervalBlock: BlockKey{Hash: chainhash.Hash{byte(0x01)}, Height: 38829},
-				LastIntervalBlock:    BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
-				CurrentBlockHeight:   10200,
-				BlockValid:           213,
-				Unused:               492,
+				LastIntervalBlock:  BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
+				CurrentBlockHeight: 10200,
+				BlockValid:         213,
+				Unused:             492,
 				Issues: [7]VotingTally{
 					VotingTally{123, 321, 324, 2819},
 					VotingTally{523, 2355, 0, 0},
@@ -180,7 +179,7 @@ func TestRollingVotingPrefixTallySerializing(t *testing.T) {
 					VotingTally{867, 1, 444, 33},
 				},
 			},
-			bytesFromHex("0100000000000000000000000000000000000000000000000000000000000000ad9700000200000000000000000000000000000000000000000000000000000000000000cb970000d8270000d500ec017b0041014401030b0b02330900000000600130098a092c00ea0000002c0058010b02df008500740d00002c00a10cb00163030100bc012100"),
+			bytesFromHex("0200000000000000000000000000000000000000000000000000000000000000cb970000d8270000d500ec017b0041014401030b0b02330900000000600130098a092c00ea0000002c0058010b02df008500740d00002c00a10cb00163030100bc012100"),
 		},
 	}
 
@@ -235,11 +234,10 @@ func TestBitsSliceAddingAndSubstracting(t *testing.T) {
 		{
 			"simple addition of 5 votebits",
 			RollingVotingPrefixTally{
-				CurrentIntervalBlock: BlockKey{Hash: chainhash.Hash{byte(0x01)}, Height: 38829},
-				LastIntervalBlock:    BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
-				CurrentBlockHeight:   10200,
-				BlockValid:           6,
-				Unused:               7,
+				LastIntervalBlock:  BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
+				CurrentBlockHeight: 10200,
+				BlockValid:         6,
+				Unused:             7,
 				Issues: [7]VotingTally{
 					VotingTally{5, 4, 3, 2},
 					VotingTally{5, 4, 3, 2},
@@ -260,11 +258,10 @@ func TestBitsSliceAddingAndSubstracting(t *testing.T) {
 			//   +1 Abstain on all even issues
 			[]uint16{0x6665, 0xBBB9, 0x0003, 0x6665, 0x6665},
 			RollingVotingPrefixTally{
-				CurrentIntervalBlock: BlockKey{Hash: chainhash.Hash{byte(0x01)}, Height: 38829},
-				LastIntervalBlock:    BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
-				CurrentBlockHeight:   10200,
-				BlockValid:           6 + 5,
-				Unused:               7 + 1,
+				LastIntervalBlock:  BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
+				CurrentBlockHeight: 10200,
+				BlockValid:         6 + 5,
+				Unused:             7 + 1,
 				Issues: [7]VotingTally{
 					VotingTally{5 + 1, 4 + 3, 3 + 1, 2}, // #1
 					VotingTally{5 + 1, 4, 3 + 3, 2 + 1}, // #2
@@ -308,11 +305,10 @@ func TestAddingTallies(t *testing.T) {
 		{
 			"simple addition of 1 or 2 to every field",
 			RollingVotingPrefixTally{
-				CurrentIntervalBlock: BlockKey{Hash: chainhash.Hash{byte(0x01)}, Height: 38829},
-				LastIntervalBlock:    BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
-				CurrentBlockHeight:   10200,
-				BlockValid:           6,
-				Unused:               7,
+				LastIntervalBlock:  BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
+				CurrentBlockHeight: 10200,
+				BlockValid:         6,
+				Unused:             7,
 				Issues: [7]VotingTally{
 					VotingTally{5, 4, 3, 2},
 					VotingTally{5, 4, 3, 2},
@@ -324,11 +320,10 @@ func TestAddingTallies(t *testing.T) {
 				},
 			},
 			RollingVotingPrefixTally{
-				CurrentIntervalBlock: BlockKey{Hash: chainhash.Hash{byte(0x01)}, Height: 38829},
-				LastIntervalBlock:    BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
-				CurrentBlockHeight:   10200,
-				BlockValid:           1,
-				Unused:               2,
+				LastIntervalBlock:  BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
+				CurrentBlockHeight: 10200,
+				BlockValid:         1,
+				Unused:             2,
 				Issues: [7]VotingTally{
 					VotingTally{1, 2, 1, 2},
 					VotingTally{2, 1, 2, 1},
@@ -340,11 +335,10 @@ func TestAddingTallies(t *testing.T) {
 				},
 			},
 			RollingVotingPrefixTally{
-				CurrentIntervalBlock: BlockKey{Hash: chainhash.Hash{byte(0x01)}, Height: 38829},
-				LastIntervalBlock:    BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
-				CurrentBlockHeight:   10200,
-				BlockValid:           6 + 1,
-				Unused:               7 + 2,
+				LastIntervalBlock:  BlockKey{Hash: chainhash.Hash{byte(0x02)}, Height: 38859},
+				CurrentBlockHeight: 10200,
+				BlockValid:         6 + 1,
+				Unused:             7 + 2,
 				Issues: [7]VotingTally{
 					VotingTally{5 + 1, 4 + 2, 3 + 1, 2 + 2},
 					VotingTally{5 + 2, 4 + 1, 3 + 2, 2 + 1},
@@ -443,8 +437,8 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 			}
 
 			bestTally, err = bestTally.ConnectBlockToTally(cache, dbTx,
-				chainhash.Hash{byte(i)}, uint32(i), vbSlice,
-				&chaincfg.MainNetParams)
+				chainhash.Hash{byte(i)}, chainhash.Hash{byte(i - 1)}, uint32(i),
+				vbSlice, &chaincfg.MainNetParams)
 			if err != nil {
 				return err
 			}
@@ -515,6 +509,9 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 			chainhash.Hash{byte(i)}, uint32(i), vbSlice, nil,
 			&chaincfg.MainNetParams)
 		if err != nil {
+			//for k, _ := range cache {
+			//t.Errorf("cache key %v", k)
+			//t}
 			t.Fatalf("unexpected error removing blocks: %v", err)
 		}
 	}
@@ -584,7 +581,8 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 			}
 
 			err = WriteDisconnectedBlockTally(dbTx, chainhash.Hash{byte(i)},
-				uint32(i), &bestTallyCopy, vbSlice, &chaincfg.MainNetParams)
+				chainhash.Hash{byte(i - 1)}, uint32(i), &bestTallyCopy, vbSlice,
+				&chaincfg.MainNetParams)
 			if err != nil {
 				return err
 			}
@@ -841,13 +839,13 @@ func TestTallyingAndVerdicts(t *testing.T) {
 		// Set up the cache and genesis block rolling tally.
 		cache := make(RollingVotingPrefixTallyCache)
 		var bestTally RollingVotingPrefixTally
-		bestTally.CurrentIntervalBlock = BlockKey{*params.GenesisHash, 0}
+		bestTally.LastIntervalBlock = BlockKey{*params.GenesisHash, 0}
 
 		for i := int64(1); i < test.numBlocks; i++ {
 			// Skip using the database.
 			var err error
 			bestTally, err = bestTally.ConnectBlockToTally(cache, nil,
-				chainhash.Hash{byte(i)}, uint32(i),
+				chainhash.Hash{byte(i)}, chainhash.Hash{byte(i - 1)}, uint32(i),
 				test.votebits(i, test.numBlocks),
 				&chaincfg.MainNetParams)
 			if err != nil {

@@ -255,7 +255,7 @@ func (b *BlockChain) fetchRollingTally(node *blockNode) (*stake.RollingVotingPre
 				var err error
 				tally, err =
 					node.parent.rollingTally.ConnectBlockToTally(
-						b.rollingTallyCache, dbTx, node.hash,
+						b.rollingTallyCache, dbTx, node.hash, node.parent.hash,
 						uint32(node.height), node.voteBitsSlice,
 						b.chainParams)
 				if err != nil {
@@ -364,8 +364,8 @@ func (b *BlockChain) fetchRollingTally(node *blockNode) (*stake.RollingVotingPre
 			var errLocal error
 			if n.rollingTally == nil {
 				tally, errLocal = current.rollingTally.ConnectBlockToTally(
-					b.rollingTallyCache, dbTx, n.hash, uint32(n.height),
-					n.voteBitsSlice, b.chainParams)
+					b.rollingTallyCache, dbTx, n.hash, n.parent.hash,
+					uint32(n.height), n.voteBitsSlice, b.chainParams)
 				if errLocal != nil {
 					return errLocal
 				}

@@ -30,7 +30,7 @@ func BenchmarkFindingVerdicts(b *testing.B) {
 	params := &chaincfg.MainNetParams
 	cache := make(RollingVotingPrefixTallyCache)
 	var bestTally RollingVotingPrefixTally
-	bestTally.CurrentIntervalBlock = BlockKey{*params.GenesisHash, 0}
+	bestTally.LastIntervalBlock = BlockKey{*params.GenesisHash, 0}
 
 	// 347 intervals in blocks.
 	numBlocks := 49968
@@ -54,8 +54,8 @@ func BenchmarkFindingVerdicts(b *testing.B) {
 		// Skip using the database.
 		var err error
 		bestTally, err = bestTally.ConnectBlockToTally(cache, nil,
-			chainhash.Hash{byte(i)}, uint32(i), vbSlice,
-			&chaincfg.MainNetParams)
+			chainhash.Hash{byte(i)}, chainhash.Hash{byte(i - 1)}, uint32(i),
+			vbSlice, &chaincfg.MainNetParams)
 		if err != nil {
 			b.Fatalf("failed")
 		}
