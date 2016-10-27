@@ -11,6 +11,7 @@ import (
 	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg/chainhash"
 	"github.com/decred/dcrd/database"
+	_ "github.com/decred/dcrd/database/dummy"
 )
 
 // nodeAtHeightFromTopNode goes backwards through a node until it a reaches

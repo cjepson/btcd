@@ -732,7 +732,7 @@ func (r *RollingSummedTally) AddTally(tally RollingVotingPrefixTally) {
 //
 // It is currently unused but could be used in the future for popular majority
 // votes.
-func (r *RollingVotingPrefixTally) GenerateSummedTally(intervalCache RollingVotingPrefixTallyCache, dbTx database.Tx, intervals uint32, params *chaincfg.Params) (*RollingSummedTally, error) {
+func (r *RollingVotingPrefixTally) GenerateSummedTally(intervalCache RollingVotingPrefixTallyCache, dbTx database.Tx, intervals int, params *chaincfg.Params) (*RollingSummedTally, error) {
 	// Summed tallies should only be generated from tallies that are the
 	// last block in the window period.  If this is not at the correct
 	// height, throw an error.
@@ -745,7 +745,7 @@ func (r *RollingVotingPrefixTally) GenerateSummedTally(intervalCache RollingVoti
 	// Must sum at least one interval, which is the current one.  You
 	// can not sum tallies from before the genesis block.
 	maxIntervals := (r.CurrentBlockHeight + 1) / uint32(params.StakeDiffWindowSize)
-	if intervals == 0 || intervals > maxIntervals {
+	if intervals <= 0 || intervals > int(maxIntervals) {
 		str := fmt.Sprintf("tried to sum incomplete tally at height %v",
 			r.CurrentBlockHeight)
 		return nil, stakeRuleError(ErrTallyingIntervals, str)
@@ -762,7 +762,7 @@ func (r *RollingVotingPrefixTally) GenerateSummedTally(intervalCache RollingVoti
 	currentKey := &r.LastIntervalBlock
 	var tallyLocal *RollingVotingPrefixTally
 	var err error
-	for i := uint32(0); i < intervals-1; i++ {
+	for i := 0; i < intervals-1; i++ {
 		tallyLocal, err = FetchIntervalTally(currentKey, intervalCache, dbTx,
 			params)
 		if err != nil {
@@ -815,7 +815,7 @@ type VotingResults struct {
 	FirstIntervalBlock BlockKey
 	LastIntervalBlock  BlockKey
 	Issues             [issuesLen][]Verdict
-	Verdict            [issuesLen]Verdict
+	Verdicts           [issuesLen]Verdict
 }
 
 // determineIssueStatus determines whether or not an issue has been voted yes
@@ -912,7 +912,7 @@ func (r *RollingVotingPrefixTally) GenerateVotingResults(intervalCache RollingVo
 	// entirely set to either 'yes' or 'no' for all of the
 	// intervals for the issue.
 	for j := 0; j < issuesLen; j++ {
-		votingResults.Verdict[j] = VerdictUndecided
+		votingResults.Verdicts[j] = VerdictUndecided
 		allYes := true
 		allNo := true
 		for i := intervals - 1; i >= 0; i-- {
@@ -937,10 +937,10 @@ func (r *RollingVotingPrefixTally) GenerateVotingResults(intervalCache RollingVo
 		}
 
 		if allYes {
-			votingResults.Verdict[j] = VerdictYes
+			votingResults.Verdicts[j] = VerdictYes
 		}
 		if allNo {
-			votingResults.Verdict[j] = VerdictNo
+			votingResults.Verdicts[j] = VerdictNo
 		}
 	}
 

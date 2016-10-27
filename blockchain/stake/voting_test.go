@@ -458,29 +458,27 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 		t.Fatalf("unexpected error adding blocks: %v", err)
 	}
 
-	/*
-		var votingResults *VotingResults
-		err = testDb.View(func(dbTx database.Tx) error {
-			lastBestInterval, err :=
-				FetchIntervalTally(&bestTally.LastIntervalBlock, cache, dbTx,
-					&chaincfg.MainNetParams)
-			if err != nil {
-				return err
-			}
-
-			votingResults, err = lastBestInterval.GenerateVotingResults(cache,
-				dbTx, chaincfg.MainNetParams.VotingIntervals,
+	var summedTally *RollingSummedTally
+	err = testDb.View(func(dbTx database.Tx) error {
+		lastBestInterval, err :=
+			FetchIntervalTally(&bestTally.LastIntervalBlock, cache, dbTx,
 				&chaincfg.MainNetParams)
-			if err != nil {
-				return err
-			}
-
-			return nil
-		})
 		if err != nil {
-			t.Fatalf("unexpected fetching votingResults: %v", err)
+			return err
 		}
-	*/
+
+		summedTally, err = lastBestInterval.GenerateSummedTally(cache,
+			dbTx, chaincfg.MainNetParams.VotingIntervals,
+			&chaincfg.MainNetParams)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected fetching summedTally: %v", err)
+	}
 
 	// Go backwards, seeing if the state can be reverted.
 	var talliesBackward [numTallies]RollingVotingPrefixTally
@@ -872,9 +870,9 @@ func TestTallyingAndVerdicts(t *testing.T) {
 			continue
 		}
 
-		if !reflect.DeepEqual(test.verdict, verdicts.Verdict) {
+		if !reflect.DeepEqual(test.verdict, verdicts.Verdicts) {
 			t.Fatalf("unexpected verdicts on test '%v', got %v want %v",
-				test.name, verdicts.Verdict, test.verdict)
+				test.name, verdicts.Verdicts, test.verdict)
 		}
 	}
 }
