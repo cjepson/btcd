@@ -290,6 +290,7 @@ func (b *BlockChain) fetchRollingTally(node *blockNode) (*stake.RollingVotingPre
 	err = b.db.View(func(dbTx database.Tx) error {
 		for e := detachNodes.Front(); e != nil; e = e.Next() {
 			n := e.Value.(*blockNode)
+			//fmt.Printf("disconnect %v %v\n", n.height, n.hash)
 			var tally stake.RollingVotingPrefixTally
 			var errLocal error
 			if n.rollingTally == nil {
@@ -356,6 +357,8 @@ func (b *BlockChain) fetchRollingTally(node *blockNode) (*stake.RollingVotingPre
 	err = b.db.View(func(dbTx database.Tx) error {
 		for e := attachNodes.Front(); e != nil; e = e.Next() {
 			n := e.Value.(*blockNode)
+
+			//fmt.Printf("connect %v %v\n", n.height, n.hash)
 
 			var tally stake.RollingVotingPrefixTally
 			var errLocal error

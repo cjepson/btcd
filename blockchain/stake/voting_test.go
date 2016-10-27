@@ -464,27 +464,29 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 		t.Fatalf("unexpected error adding blocks: %v", err)
 	}
 
-	var votingResults *VotingResults
-	err = testDb.View(func(dbTx database.Tx) error {
-		lastBestInterval, err :=
-			FetchIntervalTally(&bestTally.LastIntervalBlock, cache, dbTx,
+	/*
+		var votingResults *VotingResults
+		err = testDb.View(func(dbTx database.Tx) error {
+			lastBestInterval, err :=
+				FetchIntervalTally(&bestTally.LastIntervalBlock, cache, dbTx,
+					&chaincfg.MainNetParams)
+			if err != nil {
+				return err
+			}
+
+			votingResults, err = lastBestInterval.GenerateVotingResults(cache,
+				dbTx, chaincfg.MainNetParams.VotingIntervals,
 				&chaincfg.MainNetParams)
-		if err != nil {
-			return err
-		}
+			if err != nil {
+				return err
+			}
 
-		votingResults, err = lastBestInterval.GenerateVotingResults(cache,
-			dbTx, chaincfg.MainNetParams.VotingIntervals,
-			&chaincfg.MainNetParams)
+			return nil
+		})
 		if err != nil {
-			return err
+			t.Fatalf("unexpected fetching votingResults: %v", err)
 		}
-
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("unexpected fetching votingResults: %v", err)
-	}
+	*/
 
 	// Go backwards, seeing if the state can be reverted.
 	var talliesBackward [numTallies]RollingVotingPrefixTally
@@ -517,7 +519,7 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 		}
 	}
 
-	for i := range talliesForward {
+	for i := len(talliesForward) - 1; i >= 0; i-- {
 		if talliesForward[i] != talliesBackward[i] {
 			t.Fatalf("non-equivalent disconnection tallies at height %v:"+
 				" backward %v, forward %v", i, talliesBackward[i],

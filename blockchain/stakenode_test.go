@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"testing"
 
 	"github.com/decred/dcrd/blockchain/stake"
@@ -343,6 +344,32 @@ func TestReorgTestLongForStakeDataEquivalence(t *testing.T) {
 	return
 }
 
+type rollingTallyCacheSliceTest []*stake.RollingVotingPrefixTally
+
+func (s rollingTallyCacheSliceTest) Len() int {
+	return len(s)
+}
+func (s rollingTallyCacheSliceTest) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+func (s rollingTallyCacheSliceTest) Less(i, j int) bool {
+	return s[i].CurrentBlockHeight < s[j].CurrentBlockHeight
+}
+
+func sortIntervalCache(cache stake.RollingVotingPrefixTallyCache) []*stake.RollingVotingPrefixTally {
+	s := make(rollingTallyCacheSliceTest, len(cache))
+
+	i := 0
+	for _, v := range cache {
+		s[i] = v
+		i++
+	}
+
+	sort.Sort(s)
+
+	return s
+}
+
 func TestTallyingonSpoofedNodes(t *testing.T) {
 	params := &chaincfg.MainNetParams
 
@@ -439,6 +466,10 @@ func TestTallyingonSpoofedNodes(t *testing.T) {
 		chain.bestNode = thisNode
 		mainchainBest = thisNode
 	}
+	fmt.Printf("sorted cache 1")
+	for _, v := range sortIntervalCache(chain.rollingTallyCache) {
+		fmt.Printf("%v\n", *v)
+	}
 
 	mainchainVerdicts, err :=
 		mainchainBest.rollingTally.GenerateVotingResults(chain.rollingTallyCache,
@@ -474,7 +505,7 @@ func TestTallyingonSpoofedNodes(t *testing.T) {
 		thisNode.parent = sidechainBest
 		thisNode.inMainChain = false
 		thisNode.voteBitsSlice = sidechainVoteBits(i)
-		chain.bestNode.children = append(sidechainBest.children, thisNode)
+		sidechainBest.children = append(sidechainBest.children, thisNode)
 
 		thisNode.rollingTally, err = chain.fetchRollingTally(thisNode)
 		if err != nil {
@@ -482,16 +513,23 @@ func TestTallyingonSpoofedNodes(t *testing.T) {
 		}
 
 		if (i+1)%params.StakeDiffWindowSize == 0 {
-			sidechainVerdicts, err :=
-				thisNode.rollingTally.GenerateVotingResults(
-					chain.rollingTallyCache, nil, 1, &chaincfg.MainNetParams)
-			if err != nil {
-				t.Fatalf("failed generating verdicts %v", err)
-			}
-			t.Errorf("height %v verdicts %v", i, sidechainVerdicts.Verdict)
+			/*
+				sidechainVerdicts, err :=
+					thisNode.rollingTally.GenerateVotingResults(
+						chain.rollingTallyCache, nil, 1, &chaincfg.MainNetParams)
+				if err != nil {
+					t.Fatalf("failed generating verdicts %v", err)
+				}
+				t.Errorf("height %v verdicts %v", i, sidechainVerdicts.Verdict)
+			*/
 		}
 
 		sidechainBest = thisNode
+	}
+
+	fmt.Printf("sorted cache 2")
+	for _, v := range sortIntervalCache(chain.rollingTallyCache) {
+		fmt.Printf("%v\n", *v)
 	}
 
 	sidechainVerdicts, err :=
@@ -507,15 +545,25 @@ func TestTallyingonSpoofedNodes(t *testing.T) {
 	}
 
 	// Prune recursively and see if it can restore correctly.
-	chain.pruneRecursivelyTest()
+	//chain.pruneRecursivelyTest()
+	mainchainBestTally, err := chain.fetchRollingTally(mainchainBest)
+	if err != nil {
+		t.Fatalf("failed fetching mainchain best tally %v", err)
+	}
+	t.Errorf("main %v %v %v", mainchainBest.height, mainchainBest.hash, mainchainBestTally)
 	mainchainVerdicts, err =
-		mainchainBest.rollingTally.GenerateVotingResults(chain.rollingTallyCache,
+		mainchainBestTally.GenerateVotingResults(chain.rollingTallyCache,
 			nil, params.VotingIntervals, &chaincfg.MainNetParams)
 	if err != nil {
 		t.Fatalf("failed generating verdicts %v", err)
 	}
+	sidechainBestTally, err := chain.fetchRollingTally(sidechainBest)
+	if err != nil {
+		t.Fatalf("failed fetching sidechain best tally %v", err)
+	}
+	t.Errorf("side %v %v %v", sidechainBest.height, sidechainBest.hash, sidechainBestTally)
 	sidechainVerdicts, err =
-		sidechainBest.rollingTally.GenerateVotingResults(chain.rollingTallyCache,
+		sidechainBestTally.GenerateVotingResults(chain.rollingTallyCache,
 			nil, params.VotingIntervals, &chaincfg.MainNetParams)
 	if err != nil {
 		t.Fatalf("failed generating verdicts %v", err)
