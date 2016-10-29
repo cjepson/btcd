@@ -11,7 +11,7 @@ import (
 	"github.com/decred/dcrd/blockchain/stake"
 	"github.com/decred/dcrd/chaincfg/chainhash"
 	"github.com/decred/dcrd/database"
-	_ "github.com/decred/dcrd/database/dummy"
+	_ "github.com/decred/dcrd/database/dummydb"
 )
 
 // nodeAtHeightFromTopNode goes backwards through a node until it a reaches
@@ -270,6 +270,10 @@ func (b *BlockChain) fetchRollingTally(node *blockNode) (*stake.RollingVotingPre
 			}
 			node.rollingTally = &tally
 
+			empty := stake.BlockKey{chainhash.Hash{}, 0}
+			if node.rollingTally.LastIntervalBlock == empty {
+				panic("dd")
+			}
 			return node.rollingTally, nil
 		}
 	}
@@ -291,7 +295,6 @@ func (b *BlockChain) fetchRollingTally(node *blockNode) (*stake.RollingVotingPre
 	err = b.db.View(func(dbTx database.Tx) error {
 		for e := detachNodes.Front(); e != nil; e = e.Next() {
 			n := e.Value.(*blockNode)
-			//fmt.Printf("disconnect %v %v\n", n.height, n.hash)
 			var tally stake.RollingVotingPrefixTally
 			var errLocal error
 			if n.rollingTally == nil {
@@ -345,8 +348,9 @@ func (b *BlockChain) fetchRollingTally(node *blockNode) (*stake.RollingVotingPre
 	if attachNodes.Len() == 0 {
 		if current.hash != node.hash ||
 			current.height != node.height {
-			return nil, AssertError("failed to restore rolling tally to " +
-				"fork point when fetching")
+			return nil, AssertError(fmt.Sprintf("failed to restore "+
+				"rolling tally to fork point when fetching (have %v, "+
+				"expect %v)", current.hash, node.hash))
 		}
 
 		return current.rollingTally, nil
@@ -358,8 +362,6 @@ func (b *BlockChain) fetchRollingTally(node *blockNode) (*stake.RollingVotingPre
 	err = b.db.View(func(dbTx database.Tx) error {
 		for e := attachNodes.Front(); e != nil; e = e.Next() {
 			n := e.Value.(*blockNode)
-
-			//fmt.Printf("connect %v %v\n", n.height, n.hash)
 
 			var tally stake.RollingVotingPrefixTally
 			var errLocal error

@@ -414,7 +414,7 @@ var MainNetParams = Params{
 	StakeEnabledHeight:    256 + 256, // CoinbaseMaturity + TicketMaturity
 	StakeValidationHeight: 4096,      // ~14 days
 	StakeBaseSigScript:    []byte{0x00, 0x00},
-	VotingIntervals:       60, // 144 blocks * 60 = 8640 blocks or ~30 days
+	VotingIntervals:       56, // 144 blocks * 56 = 8064 blocks or ~28 days
 	VotingIssueMultiplier: 3,
 	VotingIssueDivisor:    4, // 3 / 4 = 0.75 or 75% for a majority
 

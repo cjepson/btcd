@@ -4,6 +4,7 @@ package blockchain
 import (
 	"bytes"
 	"compress/bzip2"
+	"encoding/binary"
 	"encoding/gob"
 	"fmt"
 	"os"
@@ -345,18 +346,27 @@ func TestReorgTestLongForStakeDataEquivalence(t *testing.T) {
 	return
 }
 
+// rollingTallyCacheSliceTest is a sortable rolling tally cache used for
+// debugging the rolling tally cache.
 type rollingTallyCacheSliceTest []*stake.RollingVotingPrefixTally
 
+// Len satisfies the sort interface.
 func (s rollingTallyCacheSliceTest) Len() int {
 	return len(s)
 }
+
+// Swap satisfies the sort interface.
 func (s rollingTallyCacheSliceTest) Swap(i, j int) {
 	s[i], s[j] = s[j], s[i]
 }
+
+// Less satisfies the sort interface.
 func (s rollingTallyCacheSliceTest) Less(i, j int) bool {
 	return s[i].CurrentBlockHeight < s[j].CurrentBlockHeight
 }
 
+// sortIntervalCache takes a RollingVotingPrefixTallyCache and returns a sorted
+// slice of all the elements, sorting by height.
 func sortIntervalCache(cache stake.RollingVotingPrefixTallyCache) []*stake.RollingVotingPrefixTally {
 	s := make(rollingTallyCacheSliceTest, len(cache))
 
@@ -371,8 +381,10 @@ func sortIntervalCache(cache stake.RollingVotingPrefixTallyCache) []*stake.Rolli
 	return s
 }
 
-// chainSetupNoDBOrAccessories
-func chainSetupNoDBOrAccessories(params *chaincfg.Params) *BlockChain {
+// chainSetupForTallying sets up a blockchain to use in testing the evaluation
+// of the tallying of votes for stake nodes.  Importantly, it loads the dummy
+// database driver that is used
+func chainSetupForTallying(params *chaincfg.Params) *BlockChain {
 	// Generate a checkpoint by height map from the provided checkpoints.
 	var checkpointsByHeight map[int64]*chaincfg.Checkpoint
 	if len(params.Checkpoints) > 0 {
@@ -383,7 +395,7 @@ func chainSetupNoDBOrAccessories(params *chaincfg.Params) *BlockChain {
 		}
 	}
 
-	ndb, err := database.Create("dummy")
+	ndb, err := database.Create("dummydb")
 	if err != nil {
 		panic(fmt.Sprintf("%v", err))
 	}
@@ -421,14 +433,22 @@ func chainSetupNoDBOrAccessories(params *chaincfg.Params) *BlockChain {
 	blockSize := uint64(genesisBlock.MsgBlock().SerializeSize())
 	b.stateSnapshot = newBestState(b.bestNode, blockSize, numTxns, numTxns, 0)
 
+	// Need the first tally.
+	var tally stake.RollingVotingPrefixTally
+	tally.LastIntervalBlock = stake.BlockKey{Hash: *params.GenesisHash, Height: 0}
+	b.bestNode.rollingTally = &tally
+
 	return &b
 }
 
+// TestTallyingonSpoofedNodes is a test for the verdicts derived from tallies
+// using a tally cache and a spoofed blockchain.  The blockchain uses a dummy
+// database and nodes that are pruned of most elements except for the necessary
+// architectural ones, votebits, and the block tallies.  The tests generate
+// very long sidechains and ensure that the evaluations of the data for the
+// sidechains returns the correct verdicts even after pruning.
 func TestTallyingonSpoofedNodes(t *testing.T) {
 	params := &chaincfg.MainNetParams
-	//numNodes := int64(49968)
-	//forkHeight := int64(43056)
-
 	tests := []struct {
 		name         string
 		intervals    int
@@ -442,7 +462,67 @@ func TestTallyingonSpoofedNodes(t *testing.T) {
 		err          error
 	}{
 		{
-			"main chain issue #3 is yes, issue #4 is no by 1 vote; sidechain same but issue #4 undecided by 1 vote in middle of intervals",
+			"main chain issue #3 is yes, issue #4 is no by 1 vote; sidechain same but issue #4 no by 1 vote in last interval",
+			params.VotingIntervals,
+			49968, // 347 intervals
+			48000,
+			49824 + 3*6,
+			func(i int64) []uint16 {
+				if i >= params.StakeValidationHeight {
+					switch i % 4 {
+					case 0:
+						return []uint16{0x0241, 0x0241, 0x0241, 0x0241, 0x0241}
+					case 1:
+						return []uint16{0x0241, 0x0241, 0x0241, 0x0241, 0x0241}
+					case 2:
+						return []uint16{0x0141, 0x0141, 0x0241, 0x0241, 0x0241}
+					case 3:
+						return []uint16{0x0141, 0x0141, 0x0141, 0x0241, 0x0241}
+					}
+				}
+
+				return []uint16{}
+			},
+			func(i, tweakHeight int64) []uint16 {
+				if i == tweakHeight {
+					return []uint16{0x0141, 0x0141, 0x0141, 0x0241, 0x0141}
+				}
+
+				switch i % 4 {
+				case 0:
+					return []uint16{0x0241, 0x0241, 0x0241, 0x0241, 0x0241}
+				case 1:
+					return []uint16{0x0241, 0x0241, 0x0241, 0x0241, 0x0241}
+				case 2:
+					return []uint16{0x0141, 0x0141, 0x0241, 0x0241, 0x0241}
+				case 3:
+					return []uint16{0x0141, 0x0141, 0x0141, 0x0241, 0x0241}
+				}
+
+				return []uint16{}
+			},
+			[7]stake.Verdict{
+				stake.VerdictUndecided,
+				stake.VerdictUndecided,
+				stake.VerdictYes,
+				stake.VerdictNo,
+				stake.VerdictUndecided,
+				stake.VerdictUndecided,
+				stake.VerdictUndecided,
+			},
+			[7]stake.Verdict{
+				stake.VerdictUndecided,
+				stake.VerdictUndecided,
+				stake.VerdictYes,
+				stake.VerdictUndecided,
+				stake.VerdictUndecided,
+				stake.VerdictUndecided,
+				stake.VerdictUndecided,
+			},
+			nil,
+		},
+		{
+			"main chain issue #3 is yes, issue #4 is no by 1 vote; sidechain same but issue #4 no by 1 vote in middle of intervals",
 			params.VotingIntervals,
 			49968, // 347 intervals
 			43056,
@@ -505,8 +585,8 @@ func TestTallyingonSpoofedNodes(t *testing.T) {
 			"main chain issue #3 is yes, issue #4 is no by 1 vote; sidechain same but issue #4 undecided by 1 vote in first interval",
 			params.VotingIntervals,
 			49968, // 347 intervals
-			41328,
-			41328 + 3,
+			41903,
+			41904,
 			func(i int64) []uint16 {
 				if i >= params.StakeValidationHeight {
 					switch i % 4 {
@@ -525,7 +605,7 @@ func TestTallyingonSpoofedNodes(t *testing.T) {
 			},
 			func(i, tweakHeight int64) []uint16 {
 				if i == tweakHeight {
-					return []uint16{0x0141, 0x0141, 0x0141, 0x0241, 0x0141}
+					return []uint16{0x0241, 0x0241, 0x0241, 0x0241, 0x0141}
 				}
 
 				switch i % 4 {
@@ -561,62 +641,117 @@ func TestTallyingonSpoofedNodes(t *testing.T) {
 			},
 			nil,
 		},
+		{
+			"main chain issue #3 is yes, issue #4 is no by 1 vote; sidechain same because tweak affects block before last window",
+			params.VotingIntervals,
+			49968, // 347 intervals
+			41326,
+			41327,
+			func(i int64) []uint16 {
+				if i >= params.StakeValidationHeight {
+					switch i % 4 {
+					case 0:
+						return []uint16{0x0241, 0x0241, 0x0241, 0x0241, 0x0241}
+					case 1:
+						return []uint16{0x0241, 0x0241, 0x0241, 0x0241, 0x0241}
+					case 2:
+						return []uint16{0x0141, 0x0141, 0x0241, 0x0241, 0x0241}
+					case 3:
+						return []uint16{0x0141, 0x0141, 0x0141, 0x0241, 0x0241}
+					}
+				}
+
+				return []uint16{}
+			},
+			func(i, tweakHeight int64) []uint16 {
+				if i == tweakHeight {
+					return []uint16{0x0241, 0x0241, 0x0241, 0x0241, 0x0141}
+				}
+
+				switch i % 4 {
+				case 0:
+					return []uint16{0x0241, 0x0241, 0x0241, 0x0241, 0x0241}
+				case 1:
+					return []uint16{0x0241, 0x0241, 0x0241, 0x0241, 0x0241}
+				case 2:
+					return []uint16{0x0141, 0x0141, 0x0241, 0x0241, 0x0241}
+				case 3:
+					return []uint16{0x0141, 0x0141, 0x0141, 0x0241, 0x0241}
+				}
+
+				return []uint16{}
+			},
+			[7]stake.Verdict{
+				stake.VerdictUndecided,
+				stake.VerdictUndecided,
+				stake.VerdictYes,
+				stake.VerdictNo,
+				stake.VerdictUndecided,
+				stake.VerdictUndecided,
+				stake.VerdictUndecided,
+			},
+			[7]stake.Verdict{
+				stake.VerdictUndecided,
+				stake.VerdictUndecided,
+				stake.VerdictYes,
+				stake.VerdictNo,
+				stake.VerdictUndecided,
+				stake.VerdictUndecided,
+				stake.VerdictUndecided,
+			},
+			nil,
+		},
+		{
+			"main chain issues all yes, sidechain issues all no",
+			params.VotingIntervals,
+			49968, // 347 intervals
+			41327,
+			0, // No tweaks
+			func(i int64) []uint16 {
+				if i >= params.StakeValidationHeight {
+					return []uint16{0x5555, 0x5555, 0x5555, 0x5555}
+				}
+
+				return []uint16{}
+			},
+			func(i, tweakHeight int64) []uint16 {
+				return []uint16{0xaaa9, 0xaaa9, 0xaaa9}
+			},
+			[7]stake.Verdict{
+				stake.VerdictYes,
+				stake.VerdictYes,
+				stake.VerdictYes,
+				stake.VerdictYes,
+				stake.VerdictYes,
+				stake.VerdictYes,
+				stake.VerdictYes,
+			},
+			[7]stake.Verdict{
+				stake.VerdictNo,
+				stake.VerdictNo,
+				stake.VerdictNo,
+				stake.VerdictNo,
+				stake.VerdictNo,
+				stake.VerdictNo,
+				stake.VerdictNo,
+			},
+			nil,
+		},
 	}
 
-	/*
-		// Issue 3 is Yes, while Issue 4 is No, but only by a single vote in one
-		// window.
-		mainchainVoteBits := func(i int64) []uint16 {
-			if i >= params.StakeValidationHeight {
-				switch i % 4 {
-				case 0:
-					return []uint16{0x0241, 0x0241, 0x0241, 0x0241, 0x0241}
-				case 1:
-					return []uint16{0x0241, 0x0241, 0x0241, 0x0241, 0x0241}
-				case 2:
-					return []uint16{0x0141, 0x0141, 0x0241, 0x0241, 0x0241}
-				case 3:
-					return []uint16{0x0141, 0x0141, 0x0141, 0x0241, 0x0241}
-				}
-			}
+	hashForHeight := func(sidechain bool, height uint32) chainhash.Hash {
+		var h chainhash.Hash
+		binary.LittleEndian.PutUint32(h[0:4], height)
 
-			return []uint16{}
+		if sidechain {
+			h[4] = 0x01
 		}
 
-		// Issue 3 is Yes, while Issue 4 is Undecided, but only by a single vote
-		// in one window.
-		sidechainVoteBits := func(i int64) []uint16 {
-			if i >= params.StakeValidationHeight {
-				if i == forkHeight+3 {
-					return []uint16{0x0141, 0x0141, 0x0141, 0x0241, 0x0141}
-				}
+		return h
+	}
 
-				switch i % 4 {
-				case 0:
-					return []uint16{0x0241, 0x0241, 0x0241, 0x0241, 0x0241}
-				case 1:
-					return []uint16{0x0241, 0x0241, 0x0241, 0x0241, 0x0241}
-				case 2:
-					return []uint16{0x0141, 0x0141, 0x0241, 0x0241, 0x0241}
-				case 3:
-					return []uint16{0x0141, 0x0141, 0x0141, 0x0241, 0x0241}
-				}
-			}
-
-			return []uint16{}
-		}
-	*/
 	for _, test := range tests {
-		/*
-			// Create a new database and chain instance to run tests against.
-			testDbName := fmt.Sprintf("staketallyingtests_%d", i)
-			chain, teardownFunc, err := chainSetup(testDbName, params)
-			if err != nil {
-				t.Errorf("Failed to setup chain instance: %v", err)
-				return
-			}
-		*/
-		chain := chainSetupNoDBOrAccessories(params)
+		chain := chainSetupForTallying(params)
 
 		// Reset the cache each time.
 		chain.rollingTallyCache = make(stake.RollingVotingPrefixTallyCache)
@@ -634,11 +769,7 @@ func TestTallyingonSpoofedNodes(t *testing.T) {
 			}
 
 			// Make up a node hash.
-			hB, err := header.Bytes()
-			if err != nil {
-				t.Fatalf("serialization err %v", err)
-			}
-			headerHash := chainhash.HashFuncH(hB)
+			headerHash := hashForHeight(false, uint32(i))
 
 			thisNode := new(blockNode)
 			thisNode.header = header
@@ -649,9 +780,10 @@ func TestTallyingonSpoofedNodes(t *testing.T) {
 			thisNode.voteBitsSlice = test.votebitsMain(i)
 			chain.bestNode.children = append(chain.bestNode.children, thisNode)
 
+			var err error
 			thisNode.rollingTally, err = chain.fetchRollingTally(thisNode)
 			if err != nil {
-				t.Fatalf("test %v: failure fetching mainchain tally for "+
+				t.Fatalf("test %v failure fetching mainchain tally for "+
 					"height %v: %v", test.name, i, err)
 			}
 
@@ -685,11 +817,7 @@ func TestTallyingonSpoofedNodes(t *testing.T) {
 			}
 
 			// Make up a node hash.
-			hB, err := header.Bytes()
-			if err != nil {
-				t.Fatalf("serialization err %v", err)
-			}
-			headerHash := chainhash.HashFuncH(hB)
+			headerHash := hashForHeight(true, uint32(i))
 
 			thisNode := new(blockNode)
 			thisNode.header = header
@@ -699,11 +827,10 @@ func TestTallyingonSpoofedNodes(t *testing.T) {
 			thisNode.inMainChain = false
 			thisNode.voteBitsSlice = test.votebitsSide(i, test.tweakHeight)
 			sidechainBest.children = append(sidechainBest.children, thisNode)
-
 			thisNode.rollingTally, err = chain.fetchRollingTally(thisNode)
 			if err != nil {
-				t.Fatalf("test %v: failure fetching mainchain tally %v",
-					test.name, err)
+				t.Fatalf("test %v block %v: failure fetching mainchain tally %v",
+					test.name, i, err)
 			}
 
 			sidechainBest = thisNode
@@ -719,11 +846,11 @@ func TestTallyingonSpoofedNodes(t *testing.T) {
 
 		if !reflect.DeepEqual(mainchainVerdicts.Verdicts, test.verdictsMain) {
 			t.Errorf("test %v: mainchain verdicts: got %v want %v",
-				test.name, mainchainVerdicts, test.verdictsMain)
+				test.name, mainchainVerdicts.Verdicts, test.verdictsMain)
 		}
 		if !reflect.DeepEqual(sidechainVerdicts.Verdicts, test.verdictsSide) {
-			t.Errorf("test %v: mainchain verdicts: got %v want %v",
-				test.name, mainchainVerdicts, test.verdictsMain)
+			t.Errorf("test %v: sidechain verdicts: got %v want %v",
+				test.name, sidechainVerdicts.Verdicts, test.verdictsSide)
 		}
 
 		// Prune recursively and see if it can restore correctly.
@@ -733,7 +860,6 @@ func TestTallyingonSpoofedNodes(t *testing.T) {
 			t.Fatalf("test %v: failed fetching mainchain best tally %v",
 				test.name, err)
 		}
-		//t.Errorf("main %v %v %v", mainchainBest.height, mainchainBest.hash, mainchainBestTally)
 		mainchainVerdicts, err =
 			mainchainBestTally.GenerateVotingResults(chain.rollingTallyCache,
 				nil, params.VotingIntervals, &chaincfg.MainNetParams)
@@ -745,23 +871,21 @@ func TestTallyingonSpoofedNodes(t *testing.T) {
 			t.Fatalf("test %v: failed fetching sidechain best tally %v",
 				test.name, err)
 		}
-		//t.Errorf("side %v %v %v", sidechainBest.height, sidechainBest.hash, sidechainBestTally)
 		sidechainVerdicts, err =
 			sidechainBestTally.GenerateVotingResults(chain.rollingTallyCache,
 				nil, params.VotingIntervals, &chaincfg.MainNetParams)
 		if err != nil {
-			t.Fatalf("test %v: failed generating verdicts %v", test.name, err)
+			t.Fatalf("test %v: failed generating verdicts after prune: %v",
+				test.name, err)
 		}
 
 		if !reflect.DeepEqual(mainchainVerdicts.Verdicts, test.verdictsMain) {
-			t.Errorf("test %v: mainchain verdicts: got %v want %v",
-				test.name, mainchainVerdicts, test.verdictsMain)
+			t.Errorf("test %v: mainchain verdicts after prune: got %v want %v",
+				test.name, mainchainVerdicts.Verdicts, test.verdictsMain)
 		}
 		if !reflect.DeepEqual(sidechainVerdicts.Verdicts, test.verdictsSide) {
-			t.Errorf("test %v: mainchain verdicts: got %v want %v",
-				test.name, mainchainVerdicts, test.verdictsMain)
+			t.Errorf("test %v: sidechain verdicts after prune: got %v want %v",
+				test.name, sidechainVerdicts.Verdicts, test.verdictsSide)
 		}
-
-		// teardownFunc()
 	}
 }

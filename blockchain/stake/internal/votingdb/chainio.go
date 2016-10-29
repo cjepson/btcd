@@ -222,8 +222,6 @@ func DbFetchBlockTally(dbTx database.Tx, blockKey []byte) ([]byte, error) {
 }
 
 // DbPutBlockTally inserts an interval block's tally into the voting database.
-// It uses the first 36 bytes (the current block key) as the key for insertion,
-// while storing the remaining 72 bytes as the value.
 func DbPutBlockTally(dbTx database.Tx, key, serializedTally []byte) error {
 	meta := dbTx.Metadata()
 	bucket := meta.Bucket(dbnamespace.IntervalBlockTallyBucketName)
@@ -237,6 +235,23 @@ func DbPutBlockTally(dbTx database.Tx, key, serializedTally []byte) error {
 	}
 
 	return bucket.Put(key[:], serializedTally[:])
+}
+
+// DbDeleteBlockTally deletes an interval block's tally from the voting database.
+func DbDeleteBlockTally(dbTx database.Tx, key []byte) error {
+	meta := dbTx.Metadata()
+	bucket := meta.Bucket(dbnamespace.IntervalBlockTallyBucketName)
+	if len(key) < 36 {
+		return votingDBError(ErrBlockKeyShortRead, fmt.Sprintf("block key "+
+			"short read (got %v, min %v)", len(key), 36))
+	}
+	v := bucket.Get(key[:])
+	if v == nil {
+		return votingDBError(ErrMissingKey,
+			fmt.Sprintf("missing key %x for db tally", key))
+	}
+
+	return bucket.Delete(key[:])
 }
 
 // DbCreate initializes all the buckets required for the database and stores

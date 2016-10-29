@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"testing"
 
 	"github.com/decred/dcrd/chaincfg"
@@ -129,6 +130,34 @@ func TestDecodingAndEncodingVoteBits(t *testing.T) {
 				},
 			},
 		},
+		{
+			"yes on blocks, all issues yes",
+			0x5555,
+			DecodedVoteBitsPrefix{
+				BlockValid: true,
+				Unused:     false,
+				Issues: [7]IssueVote{
+					IssueVoteYes, IssueVoteYes,
+					IssueVoteYes, IssueVoteYes,
+					IssueVoteYes, IssueVoteYes,
+					IssueVoteYes,
+				},
+			},
+		},
+		{
+			"yes on blocks, all issues no",
+			0xaaa9,
+			DecodedVoteBitsPrefix{
+				BlockValid: true,
+				Unused:     false,
+				Issues: [7]IssueVote{
+					IssueVoteNo, IssueVoteNo,
+					IssueVoteNo, IssueVoteNo,
+					IssueVoteNo, IssueVoteNo,
+					IssueVoteNo,
+				},
+			},
+		},
 	}
 
 	// Encoding.
@@ -136,8 +165,8 @@ func TestDecodingAndEncodingVoteBits(t *testing.T) {
 		test := tests[i]
 		in := EncodeVoteBitsPrefix(test.out)
 		if !reflect.DeepEqual(in, test.in) {
-			t.Errorf("bad result on EncodeVoteBitsPrefix test %v: got %v, "+
-				"want %v", test.name, in, test.in)
+			t.Errorf("bad result on EncodeVoteBitsPrefix test %v: got %04x, "+
+				"want %04x", test.name, in, test.in)
 		}
 	}
 
@@ -248,7 +277,9 @@ func TestBitsSliceAddingAndSubstracting(t *testing.T) {
 					VotingTally{5, 4, 3, 2},
 				},
 			},
-			// Add 3x "yes and odd issues yes, even issues no", 1x "yes and odd issues no, even issues abstain", 1x "yes and unused yes, rest undeclared"
+			// Add 3x "yes and odd issues yes, even issues no", 1x "yes and odd
+			// issues no, even issues abstain", 1x "yes and unused yes,
+			// rest undeclared"
 			// Total:
 			//   +5 BlockValid
 			//   +1 Unused
@@ -362,21 +393,75 @@ func TestAddingTallies(t *testing.T) {
 	}
 }
 
-// numBlocks is the number of "blocks" to add/remove below, including the
-// genesis block which is automatically skipped.
-const numBlocks = 1 + 99999
+// pruneTallyCache prunes old blocks from a cache that are more than initCacheSize
+// blocks ago.
+func pruneTallyCache(cache RollingVotingPrefixTallyCache, height int64, params *chaincfg.Params) {
+	toRemove := make([]BlockKey, 0)
+	cutoff := uint32(0)
+	if height-params.StakeDiffWindowSize*initCacheSize > 0 {
+		cutoff = uint32(height - params.StakeDiffWindowSize*initCacheSize)
+	}
+	for k, _ := range cache {
+		if k.Height <= cutoff {
+			toRemove = append(toRemove, k)
+		}
+	}
 
-// numTallies is the number of tallies to store and assess for correctness.
-const numTallies = numBlocks - 1
+	for _, k := range toRemove {
+		delete(cache, k)
+	}
+}
+
+// rollingTallyCacheSliceTest is a sortable rolling tally cache used for
+// debugging the rolling tally cache.
+type rollingTallyCacheSliceTest []RollingVotingPrefixTally
+
+// Len satisfies the sort interface.
+func (s rollingTallyCacheSliceTest) Len() int {
+	return len(s)
+}
+
+// Swap satisfies the sort interface.
+func (s rollingTallyCacheSliceTest) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+
+// Less satisfies the sort interface.
+func (s rollingTallyCacheSliceTest) Less(i, j int) bool {
+	return s[i].CurrentBlockHeight < s[j].CurrentBlockHeight
+}
+
+// numBlocks is the number of "blocks" to add/remove below, including the
+// genesis block (added as 1 below) which is automatically skipped.  That is,
+// if you want to generate 8064 blocks on top of the genesis block, use
+// 8064 below.
+const numBlocks = 99934
+
+// sortIntervalCache takes a RollingVotingPrefixTallyCache and returns a sorted
+// slice of all the elements, sorting by height.
+func sortIntervalCache(cache RollingVotingPrefixTallyCache) []RollingVotingPrefixTally {
+	s := make(rollingTallyCacheSliceTest, len(cache))
+
+	i := 0
+	for _, v := range cache {
+		s[i] = *v
+		i++
+	}
+
+	sort.Sort(s)
+
+	return s
+}
 
 // TestVotingDbAndSpoofedChain tests block connection, disconnect, and
 // a spoofed blockchain.
 func TestVotingDbAndSpoofedChain(t *testing.T) {
 	// Setup the database.
+	params := &chaincfg.MainNetParams
 	dbName := "ffldb_votingtest"
 	dbPath := filepath.Join(testDbRoot, dbName)
 	_ = os.RemoveAll(dbPath)
-	testDb, err := database.Create(testDbType, dbPath, chaincfg.MainNetParams.Net)
+	testDb, err := database.Create(testDbType, dbPath, params.Net)
 	if err != nil {
 		t.Fatalf("error creating db: %v", err)
 	}
@@ -390,7 +475,7 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 	// block.
 	var tally *RollingVotingPrefixTally
 	err = testDb.Update(func(dbTx database.Tx) error {
-		tally, err = InitVotingDatabaseState(dbTx, &chaincfg.MainNetParams)
+		tally, err = InitVotingDatabaseState(dbTx, params)
 		if err != nil {
 			return err
 		}
@@ -404,7 +489,7 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 	// Load the cache.
 	var cache RollingVotingPrefixTallyCache
 	err = testDb.View(func(dbTx database.Tx) error {
-		cache, err = InitRollingTallyCache(dbTx, &chaincfg.MainNetParams)
+		cache, err = InitRollingTallyCache(dbTx, params)
 		if err != nil {
 			return err
 		}
@@ -417,10 +502,10 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 
 	// Start adding some "blocks".
 	bestTally := *tally
-	var talliesForward [numTallies]RollingVotingPrefixTally
+	var talliesForward [numBlocks]RollingVotingPrefixTally
 	vbSlice := []uint16{}
 	err = testDb.Update(func(dbTx database.Tx) error {
-		for i := 1; i < numBlocks; i++ {
+		for i := 1; i <= numBlocks; i++ {
 			if int64(i) >= chaincfg.MainNetParams.StakeValidationHeight {
 				switch i % 5 {
 				case 0:
@@ -438,7 +523,7 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 
 			bestTally, err = bestTally.ConnectBlockToTally(cache, dbTx,
 				chainhash.Hash{byte(i)}, chainhash.Hash{byte(i - 1)}, uint32(i),
-				vbSlice, &chaincfg.MainNetParams)
+				vbSlice, params)
 			if err != nil {
 				return err
 			}
@@ -446,7 +531,7 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 			talliesForward[i-1] = bestTally
 
 			err = WriteConnectedBlockTally(dbTx, chainhash.Hash{byte(i)},
-				uint32(i), &bestTally, &chaincfg.MainNetParams)
+				uint32(i), &bestTally, params)
 			if err != nil {
 				return err
 			}
@@ -462,14 +547,14 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 	err = testDb.View(func(dbTx database.Tx) error {
 		lastBestInterval, err :=
 			FetchIntervalTally(&bestTally.LastIntervalBlock, cache, dbTx,
-				&chaincfg.MainNetParams)
+				params)
 		if err != nil {
 			return err
 		}
 
 		summedTally, err = lastBestInterval.GenerateSummedTally(cache,
 			dbTx, chaincfg.MainNetParams.VotingIntervals,
-			&chaincfg.MainNetParams)
+			params)
 		if err != nil {
 			return err
 		}
@@ -481,8 +566,8 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 	}
 
 	// Go backwards, seeing if the state can be reverted.
-	var talliesBackward [numTallies]RollingVotingPrefixTally
-	for i := numBlocks - 1; i >= 1; i-- {
+	var talliesBackward [numBlocks]RollingVotingPrefixTally
+	for i := numBlocks; i >= 1; i-- {
 		if int64(i) < chaincfg.MainNetParams.StakeValidationHeight {
 			vbSlice = []uint16{}
 		}
@@ -505,11 +590,8 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 
 		bestTally, err = bestTally.DisconnectBlockFromTally(cache, nil,
 			chainhash.Hash{byte(i)}, uint32(i), vbSlice, nil,
-			&chaincfg.MainNetParams)
+			params)
 		if err != nil {
-			//for k, _ := range cache {
-			//t.Errorf("cache key %v", k)
-			//t}
 			t.Fatalf("unexpected error removing blocks: %v", err)
 		}
 	}
@@ -523,9 +605,13 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 	}
 
 	// Do it again, loading from the database and going backwards this
-	// time.  Reload the cache and the best tally manually.
+	// time.  Reload the cache and the best tally manually.  Prune the
+	// old cache according to height and make sure it's 1:1 with the
+	// previously generated cache.
+	pruneTallyCache(cache, numBlocks, params)
+	oldBestCache := cache
 	err = testDb.View(func(dbTx database.Tx) error {
-		cache, err = InitRollingTallyCache(dbTx, &chaincfg.MainNetParams)
+		cache, err = InitRollingTallyCache(dbTx, params)
 		if err != nil {
 			return err
 		}
@@ -535,6 +621,11 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error initializing cache going backwards: %v", err)
 	}
+	if !reflect.DeepEqual(oldBestCache, cache) {
+		t.Fatalf("caches aren't same: got %v, want %v",
+			sortIntervalCache(oldBestCache), sortIntervalCache(cache))
+	}
+
 	err = testDb.View(func(dbTx database.Tx) error {
 		bestTallyPtr, err := LoadVotingDatabaseState(dbTx)
 		if err != nil {
@@ -549,7 +640,7 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 	}
 
 	err = testDb.Update(func(dbTx database.Tx) error {
-		for i := numBlocks - 1; i >= 1; i-- {
+		for i := numBlocks; i >= 1; i-- {
 			if int64(i) < chaincfg.MainNetParams.StakeValidationHeight {
 				vbSlice = []uint16{}
 			}
@@ -573,14 +664,14 @@ func TestVotingDbAndSpoofedChain(t *testing.T) {
 
 			bestTally, err = bestTally.DisconnectBlockFromTally(cache, dbTx,
 				chainhash.Hash{byte(i)}, uint32(i), vbSlice, nil,
-				&chaincfg.MainNetParams)
+				params)
 			if err != nil {
 				return err
 			}
 
 			err = WriteDisconnectedBlockTally(dbTx, chainhash.Hash{byte(i)},
 				chainhash.Hash{byte(i - 1)}, uint32(i), &bestTallyCopy, vbSlice,
-				&chaincfg.MainNetParams)
+				params)
 			if err != nil {
 				return err
 			}

@@ -272,10 +272,9 @@ func (r *RollingVotingPrefixTally) Deserialize(val []byte) error {
 
 // RollingVotingPrefixTallyCache is a cache of voting tallies for interval
 // blocks containing intermediate tallies.  On connection of the last block
-// in the interval period, the final tally is written with the key being
-// the first block in the interval.
-// TODO This cache stores the block key twice, to cut down on memory usage
-// in the future you could reconstruct from the k->v like database does.
+// in the interval period, the final tally is written with a block key
+// pointing to the block to look up for the last interval period, connecting the
+// unidirectional linked list.
 type RollingVotingPrefixTallyCache map[BlockKey]*RollingVotingPrefixTally
 
 // initCacheSize is how many interval windows into the past the cache should
@@ -283,16 +282,14 @@ type RollingVotingPrefixTallyCache map[BlockKey]*RollingVotingPrefixTally
 // mainnet.
 const initCacheSize = 240
 
+// zeroKey is a placeholder for the determining if we reach the special case
+// of the genesis block when iterating backwards.
 var zeroKey = BlockKey{chainhash.Hash{0x00}, 0}
-
-var genesisKey BlockKey
 
 // InitRollingTallyCache initializes a rolling tally cache from the stored
 // tallies in the database.  It loads the best state, then restores the past
 // tallies by iterating backwards over the records.
 func InitRollingTallyCache(dbTx database.Tx, params *chaincfg.Params) (RollingVotingPrefixTallyCache, error) {
-	genesisKey = BlockKey{Hash: *params.GenesisHash, Height: 0}
-
 	best, err := votingdb.DbFetchBestState(dbTx)
 	if err != nil {
 		return nil, err
@@ -317,8 +314,18 @@ func InitRollingTallyCache(dbTx database.Tx, params *chaincfg.Params) (RollingVo
 	buf := currentKeyB[:]
 	for i := 0; i < initCacheSize; i++ {
 		// Break if we reach the genesis block.
-		if currentKey.Hash == *zeroHash {
+		if currentKey.Hash == *zeroHash ||
+			currentKey.Hash == *params.GenesisHash {
 			break
+		}
+
+		// The initially loaded block is at the very end of an interval.  Load
+		// this tally into the cache as the first element, then continue loading
+		// by going backwards in time through the linked list.
+		if (best.Height+1)%uint32(params.StakeDiffWindowSize) == 0 && i == 0 {
+			key := BlockKey{Hash: best.Hash, Height: best.Height}
+			cache[key] = &bestTally
+			continue
 		}
 
 		currentKey.SerializeInto(&buf, 0)
@@ -344,7 +351,7 @@ func InitRollingTallyCache(dbTx database.Tx, params *chaincfg.Params) (RollingVo
 // should exist even if the block is on a sidechain.
 func FetchIntervalTally(key *BlockKey, cache RollingVotingPrefixTallyCache, dbTx database.Tx, params *chaincfg.Params) (*RollingVotingPrefixTally, error) {
 	// Exception for the genesis block window.
-	if *key == zeroKey {
+	if *key == zeroKey || key.Hash == *params.GenesisHash {
 		var tally RollingVotingPrefixTally
 		tally.LastIntervalBlock = BlockKey{*params.GenesisHash, 0}
 		return &tally, nil
@@ -395,15 +402,6 @@ func (r *RollingVotingPrefixTally) rollover(blockHash, parentHash chainhash.Hash
 			blockHeight, r.CurrentBlockHeight+1)
 		return stakeRuleError(ErrBadVotingConnectBlock, str)
 	}
-
-	// Last block of a window.  Update the current hash for use
-	// in storing in the database and cache.
-	//if (blockHeight+1)%uint32(params.StakeDiffWindowSize) == 0 {
-	//r.LastIntervalBlock.Hash = r.CurrentIntervalBlock.Hash
-	//r.LastIntervalBlock.Height = r.CurrentIntervalBlock.Height
-	//	r.CurrentIntervalBlock.Hash = blockHash
-	//	r.CurrentIntervalBlock.Height = blockHeight
-	//}
 
 	// New vote tallying interval.  The fields are reset here rather
 	// than above, because this interval should always coincide with
@@ -623,6 +621,11 @@ func InitVotingDatabaseState(dbTx database.Tx, params *chaincfg.Params) (*Rollin
 
 // LoadVotingDatabaseState loads the best chain state of the voting datatabase.
 func LoadVotingDatabaseState(dbTx database.Tx) (*RollingVotingPrefixTally, error) {
+	info, err := votingdb.DbFetchDatabaseInfo(dbTx)
+	if err != nil {
+		return nil, err
+	}
+
 	best, err := votingdb.DbFetchBestState(dbTx)
 	if err != nil {
 		return nil, err
@@ -633,6 +636,8 @@ func LoadVotingDatabaseState(dbTx database.Tx) (*RollingVotingPrefixTally, error
 	if err != nil {
 		return nil, err
 	}
+
+	log.Infof("Voting tally database version %v loaded", info.Version)
 
 	return &bestTally, nil
 }
@@ -676,15 +681,14 @@ func WriteDisconnectedBlockTally(dbTx database.Tx, blockHash, parentHash chainha
 	best.Height = blockHeight
 	best.CurrentTally = disconnectedTally.Serialize()
 
-	// Overwrite the previous best if we're disconnecting into a
+	// Delete the previous best tally if we're disconnecting into a
 	// previous window.
-	if (disconnectedTally.CurrentBlockHeight+1)%
-		uint32(params.StakeDiffWindowSize) == 0 {
-		key := BlockKey{Hash: parentHash, Height: blockHeight - 1}
+	if (blockHeight+1)%uint32(params.StakeDiffWindowSize) == 0 {
+		key := BlockKey{Hash: blockHash, Height: blockHeight}
 		keyB := make([]byte, BlockKeySize)
 		key.SerializeInto(&keyB, 0)
 
-		err = votingdb.DbPutBlockTally(dbTx, keyB, best.CurrentTally)
+		err = votingdb.DbDeleteBlockTally(dbTx, keyB)
 		if err != nil {
 			return err
 		}
@@ -746,8 +750,8 @@ func (r *RollingVotingPrefixTally) GenerateSummedTally(intervalCache RollingVoti
 	// can not sum tallies from before the genesis block.
 	maxIntervals := (r.CurrentBlockHeight + 1) / uint32(params.StakeDiffWindowSize)
 	if intervals <= 0 || intervals > int(maxIntervals) {
-		str := fmt.Sprintf("tried to sum incomplete tally at height %v",
-			r.CurrentBlockHeight)
+		str := fmt.Sprintf("invalid tally intervals: got %v, max %v",
+			intervals, maxIntervals)
 		return nil, stakeRuleError(ErrTallyingIntervals, str)
 	}
 
@@ -829,6 +833,9 @@ func (r *RollingVotingPrefixTally) determineIssueStatus(issue int, numeratorMul,
 	// Only yes or no votes count.
 	total := r.Issues[issue][IssueVoteYes] +
 		r.Issues[issue][IssueVoteNo]
+	if total == 0 {
+		return VerdictUndecided
+	}
 
 	needed := (numeratorMul * total) / denominator
 
@@ -871,8 +878,8 @@ func (r *RollingVotingPrefixTally) GenerateVotingResults(intervalCache RollingVo
 	// can not sum tallies from before the genesis block.
 	maxIntervals := int(r.CurrentBlockHeight+1) / int(params.StakeDiffWindowSize)
 	if intervals == 0 || intervals > maxIntervals {
-		str := fmt.Sprintf("tried to sum incomplete tally at height %v",
-			r.CurrentBlockHeight)
+		str := fmt.Sprintf("invalid tally intervals: got %v, max %v",
+			intervals, maxIntervals)
 		return nil, stakeRuleError(ErrTallyingIntervals, str)
 	}
 
