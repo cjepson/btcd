@@ -679,7 +679,6 @@ func (sn *Node) ConnectNode(header wire.BlockHeader, ticketsSpentInBlock, revoke
 // tickets from the database.
 func disconnectNode(node *Node, parentHeader wire.BlockHeader, parentUtds UndoTicketDataSlice, parentTickets []chainhash.Hash, dbTx database.Tx) (*Node, error) {
 	if node == nil {
-		panic("tickets")
 		return nil, fmt.Errorf("missing stake node pointer input when " +
 			"disconnecting")
 	}

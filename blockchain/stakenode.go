@@ -270,10 +270,6 @@ func (b *BlockChain) fetchRollingTally(node *blockNode) (*stake.RollingVotingPre
 			}
 			node.rollingTally = &tally
 
-			empty := stake.BlockKey{chainhash.Hash{}, 0}
-			if node.rollingTally.LastIntervalBlock == empty {
-				panic("dd")
-			}
 			return node.rollingTally, nil
 		}
 	}

@@ -462,7 +462,8 @@ func TestTallyingonSpoofedNodes(t *testing.T) {
 		err          error
 	}{
 		{
-			"main chain issue #3 is yes, issue #4 is no by 1 vote; sidechain same but issue #4 no by 1 vote in last interval",
+			"main chain issue #3 is yes, issue #4 is no by 1 vote; " +
+				"sidechain same but issue #4 no by 1 vote in last interval",
 			params.VotingIntervals,
 			49968, // 347 intervals
 			48000,
@@ -522,7 +523,8 @@ func TestTallyingonSpoofedNodes(t *testing.T) {
 			nil,
 		},
 		{
-			"main chain issue #3 is yes, issue #4 is no by 1 vote; sidechain same but issue #4 no by 1 vote in middle of intervals",
+			"main chain issue #3 is yes, issue #4 is no by 1 vote; sidechain " +
+				"same but issue #4 no by 1 vote in middle of intervals",
 			params.VotingIntervals,
 			49968, // 347 intervals
 			43056,
@@ -582,7 +584,9 @@ func TestTallyingonSpoofedNodes(t *testing.T) {
 			nil,
 		},
 		{
-			"main chain issue #3 is yes, issue #4 is no by 1 vote; sidechain same but issue #4 undecided by 1 vote in first interval",
+			"main chain issue #3 is yes, issue #4 is no by 1 vote; " +
+				"sidechain same but issue #4 undecided by 1 vote in " +
+				"first interval",
 			params.VotingIntervals,
 			49968, // 347 intervals
 			41903,
@@ -642,7 +646,8 @@ func TestTallyingonSpoofedNodes(t *testing.T) {
 			nil,
 		},
 		{
-			"main chain issue #3 is yes, issue #4 is no by 1 vote; sidechain same because tweak affects block before last window",
+			"main chain issue #3 is yes, issue #4 is no by 1 vote; " +
+				"sidechain same because tweak affects block before last window",
 			params.VotingIntervals,
 			49968, // 347 intervals
 			41326,

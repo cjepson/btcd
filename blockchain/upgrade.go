@@ -99,7 +99,7 @@ func (b *BlockChain) upgradeToVersion2() error {
 		return err
 	}
 
-	log.Infof("Upgrade to new stake database was successful!")
+	log.Infof("Upgrade to new stake ticket database was successful!")
 
 	return nil
 }

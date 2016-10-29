@@ -666,7 +666,6 @@ func (b *BlockChain) getPrevNodeFromNode(node *blockNode) (*blockNode, error) {
 
 	// Genesis block.
 	if node.hash == *b.chainParams.GenesisHash {
-		//fmt.Printf("node.hash %v, genesis hash %v\n", node.hash, *b.chainParams.GenesisHash)
 		return nil, nil
 	}
 
